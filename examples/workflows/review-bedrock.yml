@@ -3,7 +3,7 @@
 # Amazon Bedrock (keyless, via GitHub OIDC). No AWS key in secrets.
 # Set an AWS_ROLE_ARN secret pointing at an IAM role whose trust policy is
 # scoped to this repo and which has bedrock:InvokeModel* on the model ARNs.
-# See manual-steps.md section B for the one-time AWS setup.
+# See manual-steps.md section A for the one-time AWS setup.
 name: lgtmaybe (bedrock)
 
 on:

@@ -1,15 +1,11 @@
 # lgtmaybe — manual steps
 
-things an agent cant do for you. work top to bottom; each block says *when* in the build it's needed.
+things an agent cant do for you — provider-side cloud trust, registry config, and
+marketplace listing. work top to bottom.
 
 ---
 
-## A. before any code (day one)
-- [ x ] create github org/repo `lgtmaybe` (confirm `lgtm-ai` isnt yours — it's a different project).
-- [ x ] `pip install build twine` and push a `0.0.1` placeholder to pypi to hold the name. real release comes later.
-- [ x ] enable branch protection on `main`: require CI green, require a PR.
-
-## B. provider credentials (needed to run a real review)
+## A. provider credentials (needed to run a real review)
 pick whichever providers you'll actually demo. you do **not** need all five.
 
 ### key-based (openai / openrouter / anthropic)
@@ -29,34 +25,24 @@ pick whichever providers you'll actually demo. you do **not** need all five.
 - [ ] grant the github principal permission to impersonate that SA, scoped to your repo.
 - [ ] note the **WIF provider resource name** — it becomes `gcp_wif_provider`.
 
-## C. repo permissions for the action
+## B. repo permissions for the action
 - [ ] the workflow needs `permissions: id-token: write` (for OIDC) and `pull-requests: write` (to post comments).
 - [ ] decide the trigger: `pull_request_target` (so secrets are available) — and confirm the action never checks out PR code, only reads the diff.
 
-## D. publishing (step 4 of the plan)
+## C. publishing
 
-the release workflow is `.github/workflows/release.yml`; it fires on a `v*.*.*`
-tag and runs four jobs: guard (tag == pyproject version) → pypi + ghcr → release
-(github release + moves the floating `v1` tag).
+`.github/workflows/release.yml` does the work on a `v*.*.*` tag (guard → pypi +
+ghcr → github release + floating `v1`). The human-only pieces:
 
-### pypi CLI via trusted publishing (no token in secrets)
-- [ ] on pypi, add a **trusted publisher** for this repo with:
-  - workflow filename: `release.yml`
-  - environment name: `pypi`
-- [ ] create a repo **environment** named `pypi` (Settings → Environments).
-- [ ] no `PYPI_TOKEN` secret needed — the release workflow authenticates via OIDC (`id-token: write`).
-- [ ] before tagging, bump `version` in `pyproject.toml` to match the tag (the guard job enforces this).
+### one-time setup
+- [ ] on pypi, add a **trusted publisher** for this repo: workflow `release.yml`, environment `pypi` (no `PYPI_TOKEN` secret — auth is via OIDC).
+- [ ] create the repo **environment** named `pypi` (Settings → Environments).
+- [ ] after the first release, set the **GHCR package visibility to public** so consumers can `docker pull` it (Packages → lgtmaybe → Package settings).
+- [ ] first release only: from the release page, tick **"Publish this Action to the GitHub Marketplace"**, accept terms, pick categories (`code-review`, `continuous-integration`).
 
-### GHCR image
-- [ ] nothing manual beyond `packages: write` (already in `release.yml`); GHCR uses the built-in `GITHUB_TOKEN`. The image is pushed as `{{version}}`, `v{major}`, and `latest`.
-- [ ] after the first push, set the GHCR package **visibility to public** so consumers' runners can `docker pull` it without auth (Packages → lgtmaybe → Package settings → Change visibility).
+### each release
+- [ ] bump `version` in `pyproject.toml`, then push a matching tag (e.g. `v1.0.0`) — the guard job rejects a mismatch.
 
-### marketplace listing
-- [ ] `action.yml` is in the repo root with `name`, `description`, `branding` (icon `check-circle`, colour `purple`) — already done.
-- [ ] push a `v1.0.0` tag; the workflow publishes and moves the floating `v1`.
-- [ ] from the release page, tick **"Publish this Action to the GitHub Marketplace"**, accept terms, pick categories (`code-review`, `continuous-integration`).
-
-## E. before you announce / blog it
-- [ ] run lgtmaybe on its own repo (dogfood) so the README screenshot is real.
-- [ ] write the data/privacy statement: which provider sees the diff, and that cloud variants send no static keys.
-- [ ] sanity-check the least-privilege IAM/WIF scopes one more time before the repo goes public.
+## D. before you go public
+- [ ] dogfood lgtmaybe on its own PRs so the README example is real.
+- [ ] re-check the least-privilege IAM/WIF scopes before the repo goes public.

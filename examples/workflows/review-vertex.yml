@@ -3,7 +3,7 @@
 # Google Vertex AI (keyless, via Workload Identity Federation). No GCP key in
 # secrets. Set GCP_WIF_PROVIDER (the provider resource name) and
 # GCP_SERVICE_ACCOUNT (the SA email to impersonate) repo secrets.
-# See manual-steps.md section B for the one-time GCP setup.
+# See manual-steps.md section A for the one-time GCP setup.
 name: lgtmaybe (vertex)
 
 on:
