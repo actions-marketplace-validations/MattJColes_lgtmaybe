@@ -4,7 +4,7 @@ Use this guide to add lgtmaybe to a repository as a GitHub Actions workflow
 that reviews pull requests automatically.
 
 Ready-to-copy workflows for every provider live in
-[`examples/workflows/`](../../examples/workflows/).
+[`examples/workflows/`](https://github.com/MattJColes/lgtmaybe/tree/main/examples/workflows).
 
 ## Security requirement: pull_request_target
 

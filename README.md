@@ -3,6 +3,8 @@
 Provider-agnostic PR reviewer. Five providers, one flag, no static keys for
 cloud providers. Posts inline review comments and a summary.
 
+📖 **Full documentation:** <https://mattjcoles.github.io/lgtmaybe/>
+
 ## What it reviews
 
 lgtmaybe reviews the **changed lines in a pull request** — nothing else. It
@@ -60,6 +62,9 @@ walkthrough.
 | `ollama` | None — local only, zero cost |
 
 ## Documentation
+
+Browse the rendered docs at <https://mattjcoles.github.io/lgtmaybe/>, or read the
+Markdown sources below.
 
 **Tutorial** — learn by doing
 
