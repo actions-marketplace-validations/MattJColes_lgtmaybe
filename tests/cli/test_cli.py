@@ -266,4 +266,4 @@ class TestBuildAdapters:
 
         _github, _engine, provider = build_review_context(cfg, runtime)
 
-        assert provider.fallback_model == "llama2"
+        assert provider.fallback_model == "ollama/llama2"
