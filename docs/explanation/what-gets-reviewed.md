@@ -11,6 +11,14 @@ API and **never checks out or executes your code**, so a malicious PR can't run
 anything in the reviewer's environment. The diff is treated as untrusted input
 throughout, including against prompt-injection attempts hidden in PR text.
 
+To review changes in context rather than in isolation, lgtmaybe also pads each
+changed hunk with a few **surrounding lines** read from the head revision of the
+changed file. The model uses these to understand the change — the enclosing
+function, nearby definitions — but only ever comments on the changed lines. How
+many lines are added is budget-scaled and capped by `context_lines` (default 20,
+`0` disables it). This content is fetched read-only via the API and redacted
+like the diff.
+
 Before the diff reaches the model it is cleaned:
 
 - **Non-reviewable files are skipped** — lockfiles, minified/bundled assets,
@@ -28,6 +36,7 @@ these are configurable in `.lgtmaybe.yml` (see
 |---|---|---|
 | `max_files` | 50 | Reviews the top-N changed files; posts a "reviewed top N of M" notice if there are more. |
 | `max_input_tokens` | 100,000 | Batches the diff so each model call stays within budget. |
+| `context_lines` | 20 | Ceiling on surrounding lines added around each hunk; the budget may use fewer. `0` disables context expansion. |
 | `min_severity` | `info` | Drops findings below the chosen floor (`info` → `low` → `medium` → `high` → `critical`). |
 | `include_paths` / `exclude_paths` | — | Glob filters to focus the review. |
 

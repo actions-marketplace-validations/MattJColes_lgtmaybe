@@ -54,7 +54,13 @@ fetch → compress → prompt → parse → post
 
 2. **compress** — the diff is filtered to remove generated files, lockfiles,
    minified assets, and vendored code. Path filters from `ReviewConfig` are
-   applied. The result is truncated to `max_input_tokens` if needed.
+   applied. Each remaining hunk is then padded with surrounding context lines
+   from the head revision of the file (fetched by the gateway, never a
+   checkout), capped by `context_lines` and the remaining token budget. The
+   result is batched to fit `max_input_tokens`. The expanded diff is for the
+   model only — inline-comment positions are always rebuilt from the **real**
+   diff at post time, so a finding on an added context line maps to nothing and
+   is dropped rather than mis-posted.
 
 3. **prompt** — a structured prompt is built requesting JSON output with the
    `ReviewFinding` schema (`severity`, `file`, `line`, `body`, `suggestion`).

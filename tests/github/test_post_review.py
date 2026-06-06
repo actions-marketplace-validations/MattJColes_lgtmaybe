@@ -169,3 +169,39 @@ def test_post_review_skips_findings_outside_diff() -> None:
 
     assert len(created_bodies) == 1
     assert created_bodies[0].get("comments", []) == []
+
+
+@respx.mock
+def test_post_review_drops_finding_on_expanded_context_line() -> None:
+    """A finding on a surrounding-context line (not in the real diff) is never posted.
+
+    The engine pads hunks with extra lines for the model, but the position map is
+    built from the real diff — so a finding landing on an expanded-only line maps
+    to nothing and is dropped, never producing a bogus inline comment.
+    """
+    respx.route(method="GET", url=REVIEWS_URL).mock(return_value=httpx.Response(200, json=[]))
+
+    # SAMPLE_DIFF's hunk covers new-file lines 1..6; line 20 would only ever be
+    # visible as expanded surrounding context, not in the diff itself.
+    findings = [
+        ReviewFinding(
+            path="src/app.py",
+            line=20,
+            severity=Severity.high,
+            title="On expanded context",
+            body="Only visible via context expansion",
+        )
+    ]
+
+    created_bodies: list[dict[object, object]] = []
+
+    def capture_create(request: httpx.Request) -> httpx.Response:
+        created_bodies.append(json.loads(request.content))
+        return httpx.Response(201, json={"id": 1})
+
+    respx.route(method="POST", url=REVIEWS_URL).mock(side_effect=capture_create)
+
+    gw = RestGitHubGateway(repo=REPO, pr_number=PR_NUMBER, token=TOKEN, client=httpx.Client())
+    gw.post_review(findings, "Summary", diff=SAMPLE_DIFF)
+
+    assert created_bodies[0].get("comments", []) == []

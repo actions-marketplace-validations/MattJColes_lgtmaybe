@@ -18,7 +18,7 @@ import httpx
 from lgtmaybe.core.models import PRContext, ReviewFinding
 from lgtmaybe.core.ports import GitHubGateway
 
-from .diff import PositionMap, build_position_map
+from .diff import PositionMap, build_position_map, is_reviewable
 
 _TIMEOUT = httpx.Timeout(30.0)
 _MARKER = "<!-- lgtmaybe -->"
@@ -77,6 +77,17 @@ class RestGitHubGateway(GitHubGateway):
         )
         changed_files = self._fetch_all_files(files_url)
 
+        # Fetch head-revision text of reviewable files so the engine can pad hunks
+        # with surrounding context. Read-only API fetch — never a checkout — and
+        # the engine redacts it before it leaves the process.
+        file_contents: dict[str, str] = {}
+        for path in changed_files:
+            if not is_reviewable(path):
+                continue
+            content = self._get_file_content(path, head_sha)
+            if content is not None:
+                file_contents[path] = content
+
         return PRContext(
             diff=diff,
             changed_files=changed_files,
@@ -84,6 +95,7 @@ class RestGitHubGateway(GitHubGateway):
             head_sha=head_sha,
             repo=self._repo,
             pr_number=self._pr_number,
+            file_contents=file_contents,
         )
 
     def post_review(
@@ -164,6 +176,24 @@ class RestGitHubGateway(GitHubGateway):
         )
         resp.raise_for_status()
         return resp.json()
+
+    def _get_file_content(self, path: str, ref: str) -> str | None:
+        """Return the raw text of *path* at *ref*, or None if it can't be fetched.
+
+        Deleted/renamed-away files (404) and any other fetch error degrade to
+        None so the engine simply reviews the bare diff for that file.
+        """
+        url = f"https://api.github.com/repos/{self._repo}/contents/{path}?ref={ref}"
+        try:
+            resp = self._client.get(
+                url,
+                headers={**self._headers, "Accept": "application/vnd.github.v3.raw"},
+                timeout=_TIMEOUT,
+            )
+            resp.raise_for_status()
+        except httpx.HTTPError:
+            return None
+        return resp.text
 
     def _fetch_all_files(self, first_url: str) -> list[str]:
         """Follow Link rel=next pagination and collect all filenames."""

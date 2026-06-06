@@ -163,6 +163,53 @@ def test_summary_names_the_model_and_cost() -> None:
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# surrounding-context expansion
+# ---------------------------------------------------------------------------
+
+_FILE_TEXT = "\n".join("abcdefghij")  # lines 1..10: a, b, ... j
+
+_CTX_WITH_CONTENT = PRContext(
+    diff="diff --git a/f.py b/f.py\n@@ -5,2 +5,2 @@\n e\n+E2\n",
+    changed_files=["f.py"],
+    base_sha="abc",
+    head_sha="def",
+    repo="org/repo",
+    pr_number=9,
+    file_contents={"f.py": _FILE_TEXT},
+)
+
+
+def _first_user_diff(provider: FakeProvider) -> str:
+    return provider.calls[0]["messages"][1]["content"]
+
+
+def test_context_lines_expands_hunk_with_surrounding_lines() -> None:
+    provider = _provider_for([_HIGH], reflection_keeps_all=True)
+    engine = LLMReviewEngine(provider)
+    cfg = ReviewConfig(provider=Provider.ollama, model="llama3")  # context_lines default 20
+
+    engine.review(_CTX_WITH_CONTENT, cfg)
+
+    sent = _first_user_diff(provider)
+    # Lines surrounding the single changed line (e/E2) are now visible to the model.
+    assert "\n a\n" in sent
+    assert "\n j\n" in sent
+
+
+def test_context_lines_zero_disables_expansion() -> None:
+    provider = _provider_for([_HIGH], reflection_keeps_all=True)
+    engine = LLMReviewEngine(provider)
+    cfg = ReviewConfig(provider=Provider.ollama, model="llama3", context_lines=0)
+
+    engine.review(_CTX_WITH_CONTENT, cfg)
+
+    sent = _first_user_diff(provider)
+    # No surrounding lines added — only the original hunk content is sent.
+    assert "\n a\n" not in sent
+    assert "\n e\n" in sent
+
+
 def test_prompt_injection_in_diff_produces_normal_review() -> None:
     malicious_ctx = PRContext(
         diff=(
