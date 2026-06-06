@@ -5,9 +5,9 @@ things an agent cant do for you. work top to bottom; each block says *when* in t
 ---
 
 ## A. before any code (day one)
-- [ ] create github org/repo `lgtmaybe` (confirm `lgtm-ai` isnt yours — it's a different project).
-- [ ] `pip install build twine` and push a `0.0.1` placeholder to pypi to hold the name. real release comes later.
-- [ ] enable branch protection on `main`: require CI green, require a PR.
+- [ x ] create github org/repo `lgtmaybe` (confirm `lgtm-ai` isnt yours — it's a different project).
+- [ x ] `pip install build twine` and push a `0.0.1` placeholder to pypi to hold the name. real release comes later.
+- [ x ] enable branch protection on `main`: require CI green, require a PR.
 
 ## B. provider credentials (needed to run a real review)
 pick whichever providers you'll actually demo. you do **not** need all five.
