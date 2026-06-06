@@ -28,7 +28,6 @@ these are configurable in `.lgtmaybe.yml` (see
 |---|---|---|
 | `max_files` | 50 | Reviews the top-N changed files; posts a "reviewed top N of M" notice if there are more. |
 | `max_input_tokens` | 100,000 | Batches the diff so each model call stays within budget. |
-| `max_cost_usd` | 1.0 | Aborts the run and posts a notice if the accrued cost crosses the cap. |
 | `min_severity` | `info` | Drops findings below the chosen floor (`info` → `low` → `medium` → `high` → `critical`). |
 | `include_paths` / `exclude_paths` | — | Glob filters to focus the review. |
 
@@ -75,8 +74,8 @@ simple:
 ```
 
 If the file cap kicked in, the summary says so (e.g. "Reviewed the top 50 of 120
-changed files"). If the cost cap aborted the run, it says that too — lgtmaybe
-never fails silently; any error is surfaced back to the PR as a short comment.
+changed files"). lgtmaybe never fails silently — any error is surfaced back to
+the PR as a short comment.
 
 ### On the command line (`--dry-run`)
 
