@@ -11,7 +11,8 @@ OIDC/WIF for cloud providers), and gets a review. One core, two distribution
 variants:
 
 - **PyPI CLI** — `pip install lgtmaybe`
-- **GitHub Action** — Docker container action pulling a GHCR image
+- **GitHub Action** — composite action (`action.yml`) that does keyless OIDC/WIF
+  auth, then runs a GHCR image via the `action` entrypoint
 
 **The wedge:** first-class **Bedrock + Vertex with keyless OIDC/WIF**. Five
 providers, one flag, no keys in secrets for cloud. We win on auth + simplicity.
@@ -98,14 +99,35 @@ pattern, event bus, plugin framework.
    - **Error surfacing:** any failure posts a short "review failed" comment and
      the CLI exits non-zero (`ClickException`) — never fails silently.
    - **Cost reporting:** the summary line names the model + approx cost.
+   - **Clean review:** zero findings on a fully-reviewed PR posts `👍 LGTM!`
+     (comment only — no GitHub approval state) — still naming model + cost.
+4. **Packaging (sequential, last) — DONE:** the two distribution variants over
+   one core. Delivered in this step:
+   - **`action` entrypoint** — the container command. Routes by
+     `GITHUB_EVENT_NAME` (`issue_comment` → slash command, else → full review with
+     the PR URL derived from the event), reads inputs from `INPUT_*`. The `review`
+     / `comment` / `action` commands share `execute_review` / `execute_comment`.
+     `--fallback-model` threads through to the provider.
+   - **`action.yml`** — composite action; keyless cloud auth built in (pass
+     `aws_role_arn` / `gcp_wif_provider` and it runs the OIDC/WIF exchange), then
+     `docker run`s the GHCR image. Inputs: provider, model, fallback_model,
+     api_key, aws_role_arn, gcp_wif_provider, config_path (+ region/SA/token/image).
+   - **`Dockerfile`** — lean runtime: `uv sync --no-dev --frozen`, venv on PATH,
+     `python -m lgtmaybe` (no uv at run time).
+   - **`.github/workflows/release.yml`** — on `v*.*.*`: guard (tag == pyproject
+     version) → PyPI **trusted publishing** (OIDC, env `pypi`, no token) + GHCR
+     push (`{{version}}`, `v{major}`, `latest`) → GitHub release + floating `v1`.
+   - **`examples/workflows/`** — one per provider; `id-token: write` for cloud.
+   - **Model IDs in docs are kept current** per platform (litellm-native form).
 
 Every task carries its inputs/outputs and an acceptance test so an agent can
 self-verify without asking. The acceptance test *is* the red step — start there.
 
 ## Conventions
 
-- **Docs:** `manual-steps.md` holds the human-only setup (cloud roles,
-  registries, marketplace).
+- **Docs:** human-only setup lives in `docs/how-to/` next to the feature it
+  serves — cloud trust in the Bedrock/Vertex guides, publishing + marketplace in
+  `docs/how-to/releasing.md`.
 - Treat diff content as untrusted everywhere it flows.
 - Errors surface to the user; never swallow them.
 

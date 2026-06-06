@@ -28,7 +28,7 @@ lgtmaybe --version
 
 ```bash
 ollama serve          # starts the local server on http://localhost:11434
-ollama pull llama3    # or any model you prefer
+ollama pull qwen3.6:27b    # or any model you prefer
 ```
 
 Leave `ollama serve` running in a separate terminal.
@@ -51,12 +51,12 @@ would say:
 lgtmaybe review \
   --pr-url https://github.com/owner/repo/pull/42 \
   --provider ollama \
-  --model llama3 \
+  --model qwen3.6:27b \
   --api-base http://localhost:11434 \
   --dry-run
 ```
 
-lgtmaybe fetches the PR diff via the GitHub API, sends it to your local llama3
+lgtmaybe fetches the PR diff via the GitHub API, sends it to your local qwen3.6:27b
 instance, and prints the findings to stdout. Nothing is written to GitHub.
 
 ## Step 5 — Post a real review
@@ -67,7 +67,7 @@ Remove `--dry-run` to post the review:
 lgtmaybe review \
   --pr-url https://github.com/owner/repo/pull/42 \
   --provider ollama \
-  --model llama3 \
+  --model qwen3.6:27b \
   --api-base http://localhost:11434
 ```
 

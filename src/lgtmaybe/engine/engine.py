@@ -93,6 +93,10 @@ class LLMReviewEngine(ReviewEngine):
                 f"(file cap {cfg.max_files}). Raise max_files to review them all."
             )
             return filtered, f"{notice}\n\n{cost_line}"
+        # A genuinely clean review (nothing flagged, every file reviewed) gets an
+        # explicit thumbs-up rather than a bare "0 findings".
+        if not filtered:
+            return filtered, f"👍 LGTM!\n\n{cost_line}"
         return filtered, cost_line
 
     @staticmethod

@@ -305,3 +305,20 @@ class TestBuildAdapters:
 
         with pytest.raises(ValueError, match="OPENAI_API_KEY"):
             build_adapters(cfg, runtime)
+
+    def test_fallback_model_threads_to_provider(self, monkeypatch):
+        """A runtime fallback_model reaches the built LiteLLMProvider."""
+        from lgtmaybe.cli import build_review_context
+
+        monkeypatch.setenv("GITHUB_TOKEN", "ghp_test")
+        cfg = _default_cfg(provider="ollama", model="llama3")
+        runtime = {
+            "pr_url": "https://github.com/org/repo/pull/7",
+            "api_key": None,
+            "api_base": None,
+            "fallback_model": "llama2",
+        }
+
+        _github, _engine, provider = build_review_context(cfg, runtime)
+
+        assert provider.fallback_model == "llama2"

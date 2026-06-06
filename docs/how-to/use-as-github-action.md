@@ -1,11 +1,14 @@
 # Use lgtmaybe as a GitHub Action
 
 Use this guide to add lgtmaybe to a repository as a GitHub Actions workflow
-that runs automatically on pull requests.
+that reviews pull requests automatically.
+
+Ready-to-copy workflows for every provider live in
+[`examples/workflows/`](https://github.com/MattJColes/lgtmaybe/tree/main/examples/workflows).
 
 ## Security requirement: pull_request_target
 
-All lgtmaybe workflows must use the `pull_request_target` trigger, not
+All lgtmaybe workflows use the `pull_request_target` trigger, not
 `pull_request`. This is non-negotiable:
 
 - `pull_request_target` runs in the context of the **base branch**, so it can
@@ -14,92 +17,97 @@ All lgtmaybe workflows must use the `pull_request_target` trigger, not
   the GitHub API only. The PR author cannot inject code that runs in the
   reviewer's environment.
 
+The action derives the PR from the triggering event, so there is no `pr-url`
+input to set. On an `issue_comment` event it routes the slash command
+(`/review`, `/ask`, `/describe`, `/improve`) to the same engine.
+
+> **⚠️ Cost disclaimer.** Each run calls your chosen LLM provider and **you pay
+> for those tokens**. On a public repository the default triggers let *anyone* —
+> including strangers opening fork PRs or posting `/ask` / `/review` comments —
+> spend your provider budget, and every push to a PR triggers another run. The
+> built-in `max_files`, `max_input_tokens`, and `max_cost_usd` settings bound a
+> single run, but not the number of runs. You are responsible for your provider
+> spend: gate the workflow to trusted authors, use a cheap model, and set
+> spending limits in your provider console.
+
 ## Minimal workflow — openai
 
 ```yaml
-name: pr-review
+name: lgtmaybe
 
 on:
   pull_request_target:
-    types: [opened, synchronize, reopened]
+  issue_comment:
+    types: [created]
 
 permissions:
-  pull-requests: write
   contents: read
+  pull-requests: write
 
 jobs:
   review:
+    if: ${{ github.event_name == 'pull_request_target' || github.event.issue.pull_request }}
     runs-on: ubuntu-latest
     steps:
-      - name: Run lgtmaybe
-        uses: ghcr.io/lgtmaybe/lgtmaybe@latest
+      - uses: actions/checkout@v4 # base repo only — for .lgtmaybe.yml config
+      - uses: lgtmaybe/lgtmaybe@v1
         with:
-          pr-url: ${{ github.event.pull_request.html_url }}
           provider: openai
-          model: gpt-4o-mini
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          model: gpt-5.5
+          api_key: ${{ secrets.OPENAI_API_KEY }}
 ```
 
-## Minimal workflow — anthropic
+## Other key-based providers
+
+Swap the `provider`, `model`, and `api_key` inputs:
 
 ```yaml
-- name: Run lgtmaybe
-  uses: ghcr.io/lgtmaybe/lgtmaybe@latest
+# anthropic
+- uses: lgtmaybe/lgtmaybe@v1
   with:
-    pr-url: ${{ github.event.pull_request.html_url }}
     provider: anthropic
-    model: claude-3-5-haiku-20241022
-  env:
-    GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-    ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-```
+    model: claude-sonnet-4-6
+    api_key: ${{ secrets.ANTHROPIC_API_KEY }}
 
-## Minimal workflow — openrouter
-
-```yaml
-- name: Run lgtmaybe
-  uses: ghcr.io/lgtmaybe/lgtmaybe@latest
+# openrouter
+- uses: lgtmaybe/lgtmaybe@v1
   with:
-    pr-url: ${{ github.event.pull_request.html_url }}
     provider: openrouter
-    model: meta-llama/llama-3.3-70b-instruct
-  env:
-    GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-    OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+    model: anthropic/claude-sonnet-4-6
+    api_key: ${{ secrets.OPENROUTER_API_KEY }}
 ```
+
+For these, the one-time setup is just: generate an API key in the provider's
+console and add it as a repo secret (Settings → Secrets and variables → Actions),
+then reference it as `api_key` above.
 
 ## Keyless cloud workflows
 
-For Bedrock (AWS OIDC) and Vertex (GCP WIF) — which require no API keys in
-secrets — see the dedicated guides:
+Bedrock (AWS OIDC) and Vertex (GCP WIF) need **no API keys in secrets** — the
+action performs the keyless token exchange for you when you pass `aws_role_arn`
+or `gcp_wif_provider`. Both require `id-token: write` permission. See:
 
 - [Review with Bedrock OIDC](./review-with-bedrock-oidc.md)
 - [Review with Vertex WIF](./review-with-vertex-wif.md)
 
 ## Action inputs
 
-| Input | Required | Default | Description |
-|---|---|---|---|
-| `pr-url` | Yes | — | Full URL of the pull request |
-| `provider` | Yes | — | One of: `openai`, `openrouter`, `anthropic`, `bedrock`, `vertex`, `ollama` |
-| `model` | Yes | — | Model identifier for the chosen provider |
-| `api-base` | No | — | Custom API base URL (required for `ollama`) |
-| `config` | No | `.lgtmaybe.yml` | Path to config file relative to repo root |
-
-## Environment variables read by lgtmaybe
-
-| Variable | Provider | Description |
+| Input | Default | Description |
 |---|---|---|
-| `GITHUB_TOKEN` | All | GitHub token for reading the PR and posting the review |
-| `OPENAI_API_KEY` | openai | OpenAI API key |
-| `ANTHROPIC_API_KEY` | anthropic | Anthropic API key |
-| `OPENROUTER_API_KEY` | openrouter | OpenRouter API key |
-| `VERTEXAI_PROJECT` | vertex | GCP project ID |
-| `VERTEXAI_LOCATION` | vertex | GCP region (default: `us-central1`) |
+| `provider` | — | One of: `openai`, `openrouter`, `anthropic`, `bedrock`, `vertex`, `ollama` |
+| `model` | — | Model identifier for the chosen provider |
+| `fallback_model` | — | Model to retry with if the primary model fails |
+| `api_key` | — | API key for key-based providers (leave empty for bedrock/vertex) |
+| `aws_role_arn` | — | IAM role ARN to assume via OIDC for bedrock (keyless) |
+| `aws_region` | `us-east-1` | AWS region for bedrock |
+| `gcp_wif_provider` | — | Workload Identity Federation provider resource name for vertex |
+| `gcp_service_account` | — | GCP service account email to impersonate via WIF |
+| `config_path` | `.lgtmaybe.yml` | Path to the config file, relative to repo root |
+| `github_token` | `${{ github.token }}` | Token for reading the PR and posting the review |
+| `image` | `ghcr.io/lgtmaybe/lgtmaybe:v1` | Override the container image (advanced) |
 
-Bedrock and Vertex read ambient cloud credentials — no key variable needed.
+The action sets the `GITHUB_TOKEN` and provider credentials for the container
+itself — you do not pass them as `env`.
 
 ## Adding a config file
 
@@ -107,10 +115,11 @@ Place a `.lgtmaybe.yml` at the repo root to control severity thresholds, path
 filters, and cost caps. See
 [Configure .lgtmaybe.yml](./configure-lgtmaybe-yml.md) for all options.
 
-## Pin the action to a digest
+## Pin to a specific version
 
-For supply-chain safety, pin the image digest instead of a tag:
+`@v1` is a floating tag that tracks the latest `v1.x.x` release. To pin exactly,
+use a full version tag:
 
 ```yaml
-uses: ghcr.io/lgtmaybe/lgtmaybe@sha256:abc123...
+uses: lgtmaybe/lgtmaybe@v1.0.0
 ```

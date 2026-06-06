@@ -100,6 +100,7 @@ def build_review_context(
         cfg.model,
         api_key=auth.api_key,
         api_base=auth.api_base,
+        fallback_model=runtime.get("fallback_model"),
     )
 
     github = RestGitHubGateway(repo=repo, pr_number=pr_number, token=token)
@@ -154,6 +155,11 @@ def main() -> None:
 )
 @click.option("--model", default=None, help="Model name understood by the chosen provider")
 @click.option(
+    "--fallback-model",
+    default=None,
+    help="Model to retry with if the primary model fails",
+)
+@click.option(
     "--api-key",
     default=None,
     envvar="LGTMAYBE_API_KEY",
@@ -186,6 +192,7 @@ def review(
     pr_url: str,
     provider: str | None,
     model: str | None,
+    fallback_model: str | None,
     api_key: str | None,
     api_base: str | None,
     min_severity: str | None,
@@ -206,8 +213,17 @@ def review(
         "pr_url": pr_url,
         "api_key": api_key,
         "api_base": api_base,
+        "fallback_model": fallback_model,
     }
 
+    execute_review(cfg, runtime, dry_run=dry_run)
+
+
+def execute_review(cfg: ReviewConfig, runtime: dict[str, Any], *, dry_run: bool) -> None:
+    """Build adapters, run the review, surface failures back to the PR.
+
+    Shared by the ``review`` command and the ``action`` entrypoint.
+    """
     # Adapter construction can fail before we have any way to post (bad URL,
     # missing token/credentials). Surface those as a clean CLI error.
     try:
@@ -249,6 +265,7 @@ def _post_failure(github: GitHubGateway, exc: Exception) -> None:
 )
 @click.option("--provider", default=None, help="LLM provider override")
 @click.option("--model", default=None, help="Model name override")
+@click.option("--fallback-model", default=None, help="Model to retry with if the primary fails")
 @click.option("--api-key", default=None, envvar="LGTMAYBE_API_KEY", help="API key")
 @click.option("--api-base", default=None, help="API base URL (e.g. ollama)")
 @click.option("--config", "config_path", default=".lgtmaybe.yml", show_default=True)
@@ -256,13 +273,28 @@ def comment(
     event_path: str,
     provider: str | None,
     model: str | None,
+    fallback_model: str | None,
     api_key: str | None,
     api_base: str | None,
     config_path: str,
 ) -> None:
     """Handle an issue_comment event: route a /slash command to the engine."""
     event = json.loads(Path(event_path).read_text())
+    cfg = load_config(config_path=Path(config_path), provider=provider, model=model)
+    runtime: dict[str, Any] = {
+        "api_key": api_key,
+        "api_base": api_base,
+        "fallback_model": fallback_model,
+    }
+    execute_comment(event, cfg, runtime)
 
+
+def execute_comment(event: dict[str, Any], cfg: ReviewConfig, runtime: dict[str, Any]) -> None:
+    """Route an issue_comment event's slash command to the engine/provider.
+
+    Shared by the ``comment`` command and the ``action`` entrypoint. ``runtime``
+    supplies api_key/api_base/fallback_model; the PR URL is derived here.
+    """
     parsed = parse_command(event.get("comment", {}).get("body", ""))
     if parsed is None:
         click.echo("No lgtmaybe slash command found; ignoring.")
@@ -275,14 +307,7 @@ def comment(
 
     repo = event["repository"]["full_name"]
     pr_number = issue["number"]
-    pr_url = f"https://github.com/{repo}/pull/{pr_number}"
-
-    cfg = load_config(
-        config_path=Path(config_path),
-        provider=provider,
-        model=model,
-    )
-    runtime: dict[str, Any] = {"pr_url": pr_url, "api_key": api_key, "api_base": api_base}
+    runtime = {**runtime, "pr_url": f"https://github.com/{repo}/pull/{pr_number}"}
 
     try:
         github, engine, provider_client = build_review_context(cfg, runtime)
@@ -294,3 +319,64 @@ def comment(
     except Exception as exc:
         _post_failure(github, exc)
         raise click.ClickException(f"/{parsed.name} failed: {exc}") from exc
+
+
+def pr_url_from_event(event: dict[str, Any]) -> str:
+    """Build the PR URL from a pull_request(_target) event payload.
+
+    Uses ``GITHUB_SERVER_URL`` so it works on GitHub Enterprise too.
+    """
+    server = os.environ.get("GITHUB_SERVER_URL", "https://github.com").rstrip("/")
+    repo = event["repository"]["full_name"]
+    number = event["pull_request"]["number"]
+    return f"{server}/{repo}/pull/{number}"
+
+
+def _action_inputs() -> dict[str, str | None]:
+    """Read the action's declared inputs from the ``INPUT_*`` env vars.
+
+    GitHub sets ``INPUT_<NAME>`` for each input of a container action; empty
+    strings (an unset optional input) are normalised to ``None``.
+    """
+
+    def get(name: str) -> str | None:
+        value = os.environ.get(f"INPUT_{name}")
+        return value or None
+
+    return {
+        "provider": get("PROVIDER"),
+        "model": get("MODEL"),
+        "fallback_model": get("FALLBACK_MODEL"),
+        "api_key": get("API_KEY"),
+        "config_path": os.environ.get("INPUT_CONFIG_PATH") or ".lgtmaybe.yml",
+    }
+
+
+@main.command()
+def action() -> None:
+    """GitHub Action entrypoint: route by event, read inputs from env.
+
+    ``issue_comment`` routes a slash command; any other event (``pull_request``
+    / ``pull_request_target``) runs a full review of the triggering PR.
+    """
+    inputs = _action_inputs()
+    cfg = load_config(
+        config_path=Path(inputs["config_path"] or ".lgtmaybe.yml"),
+        provider=inputs["provider"],
+        model=inputs["model"],
+    )
+    runtime: dict[str, Any] = {
+        "api_key": inputs["api_key"],
+        "api_base": None,
+        "fallback_model": inputs["fallback_model"],
+    }
+
+    event = json.loads(Path(os.environ["GITHUB_EVENT_PATH"]).read_text())
+    event_name = os.environ.get("GITHUB_EVENT_NAME", "")
+
+    if event_name == "issue_comment":
+        execute_comment(event, cfg, runtime)
+        return
+
+    runtime["pr_url"] = pr_url_from_event(event)
+    execute_review(cfg, runtime, dry_run=False)

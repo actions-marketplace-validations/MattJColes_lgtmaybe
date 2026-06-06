@@ -6,80 +6,25 @@ Use this guide to run lgtmaybe with **AWS Bedrock** using GitHub's OIDC token
 ## How it works
 
 GitHub Actions issues a short-lived OIDC token. AWS STS exchanges that token
-for temporary IAM credentials scoped to a role you control. lgtmaybe picks up
-those ambient credentials automatically — no `AWS_ACCESS_KEY_ID` or
-`AWS_SECRET_ACCESS_KEY` in your secrets.
+for temporary IAM credentials scoped to a role you control. The action performs
+that exchange for you (pass `aws_role_arn`) and lgtmaybe picks up the ambient
+credentials automatically — no `AWS_ACCESS_KEY_ID` or `AWS_SECRET_ACCESS_KEY`
+in your secrets.
 
-## Prerequisites
+## One-time AWS setup
 
-- An AWS account with Bedrock enabled in your target region
-- An IAM role that trusts GitHub's OIDC provider and grants
-  `bedrock:InvokeModel` on the models you want to use
-- The role ARN (e.g. `arn:aws:iam::123456789012:role/lgtmaybe-bedrock`)
+This is the human-only part — do it once in your AWS account:
 
-See `manual-steps.md` for the one-time AWS and GitHub setup that a human must
-perform.
+1. Create an IAM **OIDC identity provider** for `token.actions.githubusercontent.com`.
+2. Create an IAM **role** with a trust policy scoped to your repo
+   (`repo:<org>/lgtmaybe:*`).
+3. Attach the least-privilege policy below.
+4. Confirm the models you want are enabled in the target region (model access
+   request in the Bedrock console).
+5. Note the **role ARN** (e.g. `arn:aws:iam::123456789012:role/lgtmaybe-bedrock`)
+   — it becomes the `aws_role_arn` action input. No static key is ever stored.
 
-## Workflow example
-
-```yaml
-name: pr-review
-
-on:
-  pull_request_target:
-    types: [opened, synchronize]
-
-permissions:
-  id-token: write          # required for OIDC token issuance
-  pull-requests: write     # required to post review comments
-  contents: read
-
-jobs:
-  review:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Configure AWS credentials (OIDC)
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: arn:aws:iam::123456789012:role/lgtmaybe-bedrock
-          aws-region: us-east-1
-
-      - name: Run lgtmaybe
-        uses: ghcr.io/lgtmaybe/lgtmaybe@latest
-        with:
-          pr-url: ${{ github.event.pull_request.html_url }}
-          provider: bedrock
-          model: us.anthropic.claude-3-5-sonnet-20241022-v2:0
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-```
-
-## Choosing a Bedrock model ID
-
-Use the cross-region inference profile IDs to improve availability:
-
-| Model | Bedrock model ID |
-|---|---|
-| Claude 3.5 Sonnet v2 | `us.anthropic.claude-3-5-sonnet-20241022-v2:0` |
-| Claude 3.5 Haiku | `us.anthropic.claude-3-5-haiku-20241022-v1:0` |
-| Claude 3 Haiku | `us.anthropic.claude-3-haiku-20240307-v1:0` |
-
-## Running locally with ambient AWS credentials
-
-If your local shell has AWS credentials (via `~/.aws`, SSO, or an assumed role):
-
-```bash
-lgtmaybe review \
-  --pr-url https://github.com/owner/repo/pull/42 \
-  --provider bedrock \
-  --model us.anthropic.claude-3-5-haiku-20241022-v1:0
-```
-
-lgtmaybe does not require or accept a static API key for Bedrock.
-
-## Required IAM permissions
-
-The IAM role needs:
+The role needs only:
 
 ```json
 {
@@ -93,6 +38,63 @@ The IAM role needs:
 ```
 
 Scope `Resource` to specific model ARNs for tighter least-privilege.
+
+## Workflow example
+
+The action assumes the role for you — no separate `configure-aws-credentials`
+step needed. Store the role ARN in an `AWS_ROLE_ARN` secret.
+
+```yaml
+name: lgtmaybe
+
+on:
+  pull_request_target:
+  issue_comment:
+    types: [created]
+
+permissions:
+  id-token: write          # required for the OIDC token exchange (keyless)
+  pull-requests: write     # required to post review comments
+  contents: read
+
+jobs:
+  review:
+    if: ${{ github.event_name == 'pull_request_target' || github.event.issue.pull_request }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: lgtmaybe/lgtmaybe@v1
+        with:
+          provider: bedrock
+          model: anthropic.claude-sonnet-4-6
+          aws_role_arn: ${{ secrets.AWS_ROLE_ARN }}
+          aws_region: us-east-1
+```
+
+## Choosing a Bedrock model ID
+
+| Model | Bedrock model ID |
+|---|---|
+| Claude Opus 4.8 | `anthropic.claude-opus-4-8` |
+| Claude Sonnet 4.6 | `anthropic.claude-sonnet-4-6` |
+| Claude Haiku 4.5 | `anthropic.claude-haiku-4-5` |
+
+For tighter availability across regions, prefix with a cross-region inference
+profile (e.g. `us.anthropic.claude-sonnet-4-6`) where one is enabled for your
+account.
+
+## Running locally with ambient AWS credentials
+
+If your local shell has AWS credentials (via `~/.aws`, SSO, or an assumed role):
+
+```bash
+lgtmaybe review \
+  --pr-url https://github.com/owner/repo/pull/42 \
+  --provider bedrock \
+  --model anthropic.claude-haiku-4-5
+```
+
+lgtmaybe does not require or accept a static API key for Bedrock.
 
 ## Troubleshooting
 

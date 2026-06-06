@@ -12,7 +12,7 @@ cost, zero egress, no keys required.
 ## Pull the model you want
 
 ```bash
-ollama pull llama3        # good general-purpose model
+ollama pull qwen3.6:27b        # good general-purpose model
 ollama pull codellama     # code-focused alternative
 ```
 
@@ -28,7 +28,7 @@ ollama list
 lgtmaybe review \
   --pr-url https://github.com/owner/repo/pull/42 \
   --provider ollama \
-  --model llama3 \
+  --model qwen3.6:27b \
   --api-base http://localhost:11434
 ```
 
@@ -40,7 +40,7 @@ If ollama runs on another machine (e.g. a Tailscale peer):
 lgtmaybe review \
   --pr-url https://github.com/owner/repo/pull/42 \
   --provider ollama \
-  --model llama3 \
+  --model qwen3.6:27b \
   --api-base http://100.x.x.x:11434
 ```
 
@@ -62,7 +62,7 @@ When running inside a Docker container, substitute `host.docker.internal` for
 lgtmaybe review \
   --pr-url https://github.com/owner/repo/pull/42 \
   --provider ollama \
-  --model llama3 \
+  --model qwen3.6:27b \
   --api-base http://localhost:11434 \
   --dry-run
 ```

@@ -31,6 +31,9 @@ dev = [
     "types-pyyaml>=6.0.12.20260518",
     "types-requests>=2.33.0.20260518",
 ]
+docs = [
+    "mkdocs-material>=9.5",
+]
 
 [build-system]
 requires = ["hatchling"]

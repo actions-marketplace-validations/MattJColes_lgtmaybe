@@ -80,6 +80,29 @@ def test_cost_cap_aborts_with_notice_and_no_findings() -> None:
     assert "abort" in summary.lower() or "exceed" in summary.lower()
 
 
+def test_clean_review_says_lgtm() -> None:
+    """A review with no findings posts a 👍 LGTM! summary (still naming model/cost)."""
+    provider = _Provider([], cost=0.0001)
+    engine = LLMReviewEngine(provider)
+    cfg = ReviewConfig(provider=Provider.ollama, model="llama3")
+
+    findings, summary = engine.review(_ctx(["a.py"]), cfg)
+
+    assert findings == []
+    assert "LGTM" in summary
+    assert "llama3" in summary  # cost/model line is still present
+
+
+def test_review_with_findings_does_not_say_lgtm() -> None:
+    provider = _Provider([_A_FINDING], cost=0.0001)
+    engine = LLMReviewEngine(provider)
+    cfg = ReviewConfig(provider=Provider.ollama, model="llama3")
+
+    _findings, summary = engine.review(_ctx(["a.py"]), cfg)
+
+    assert "LGTM" not in summary
+
+
 def test_under_cost_cap_returns_findings_normally() -> None:
     provider = _Provider([_A_FINDING], cost=0.0001)
     engine = LLMReviewEngine(provider)

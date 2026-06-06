@@ -1,0 +1,65 @@
+site_name: lgtmaybe
+site_description: Provider-agnostic PR reviewer — five providers, one flag, no keys in secrets for cloud.
+site_url: https://mattjcoles.github.io/lgtmaybe/
+repo_url: https://github.com/MattJColes/lgtmaybe
+repo_name: MattJColes/lgtmaybe
+edit_uri: edit/main/docs/
+
+docs_dir: docs
+# generate_reference.py lives in docs/ as the source for reference/config.md;
+# keep it out of the built site.
+exclude_docs: |
+  generate_reference.py
+
+theme:
+  name: material
+  icon:
+    repo: fontawesome/brands/github
+  palette:
+    - scheme: default
+      primary: deep purple
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+    - scheme: slate
+      primary: deep purple
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+  features:
+    - navigation.sections
+    - navigation.top
+    - navigation.instant
+    - content.code.copy
+    - search.suggest
+    - search.highlight
+
+markdown_extensions:
+  - admonition
+  - tables
+  - attr_list
+  - md_in_html
+  - toc:
+      permalink: true
+  - pymdownx.highlight
+  - pymdownx.superfences
+  - pymdownx.inlinehilite
+
+nav:
+  - Home: index.md
+  - Tutorial:
+      - Getting started: tutorial/getting-started.md
+  - How-to:
+      - Run locally with ollama: how-to/run-locally-with-ollama.md
+      - Review with Bedrock OIDC: how-to/review-with-bedrock-oidc.md
+      - Review with Vertex WIF: how-to/review-with-vertex-wif.md
+      - Use as a GitHub Action: how-to/use-as-github-action.md
+      - Configure .lgtmaybe.yml: how-to/configure-lgtmaybe-yml.md
+      - Releasing (maintainers): how-to/releasing.md
+  - Reference:
+      - Configuration: reference/config.md
+  - Explanation:
+      - What gets reviewed: explanation/what-gets-reviewed.md
+      - Architecture: explanation/architecture.md
+      - Auth model: explanation/auth-model.md
+      - Data and privacy: explanation/data-and-privacy.md
