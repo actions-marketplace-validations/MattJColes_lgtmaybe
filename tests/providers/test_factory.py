@@ -1,0 +1,64 @@
+"""Tests for the provider factory — maps (Provider, model) -> litellm model string."""
+
+from __future__ import annotations
+
+from lgtmaybe.core.models import Provider
+from lgtmaybe.providers.factory import build_provider, litellm_model_string
+
+
+class TestLiteLLMModelString:
+    def test_openai_prefix(self) -> None:
+        assert litellm_model_string(Provider.openai, "gpt-4o") == "openai/gpt-4o"
+
+    def test_anthropic_prefix(self) -> None:
+        assert (
+            litellm_model_string(Provider.anthropic, "claude-3-haiku-20240307")
+            == "anthropic/claude-3-haiku-20240307"
+        )
+
+    def test_openrouter_prefix(self) -> None:
+        assert (
+            litellm_model_string(Provider.openrouter, "meta-llama/llama-3-70b-instruct")
+            == "openrouter/meta-llama/llama-3-70b-instruct"
+        )
+
+    def test_bedrock_prefix(self) -> None:
+        assert (
+            litellm_model_string(Provider.bedrock, "anthropic.claude-3-haiku-20240307-v1:0")
+            == "bedrock/anthropic.claude-3-haiku-20240307-v1:0"
+        )
+
+    def test_vertex_prefix(self) -> None:
+        assert (
+            litellm_model_string(Provider.vertex, "gemini-2.0-flash")
+            == "vertex_ai/gemini-2.0-flash"
+        )
+
+    def test_ollama_prefix(self) -> None:
+        assert litellm_model_string(Provider.ollama, "llama2") == "ollama/llama2"
+
+
+class TestBuildProvider:
+    def test_build_provider_returns_litellm_provider(self) -> None:
+        from lgtmaybe.providers.litellm_provider import LiteLLMProvider
+
+        provider = build_provider(Provider.openai, "gpt-4o", api_key="sk-test")
+        assert isinstance(provider, LiteLLMProvider)
+
+    def test_build_provider_openai_carries_api_key(self) -> None:
+        from lgtmaybe.providers.litellm_provider import LiteLLMProvider
+
+        provider = build_provider(Provider.openai, "gpt-4o", api_key="sk-test")
+        assert isinstance(provider, LiteLLMProvider)
+        assert provider.default_opts.get("api_key") == "sk-test"
+
+    def test_build_provider_ollama_carries_api_base(self) -> None:
+        from lgtmaybe.providers.litellm_provider import LiteLLMProvider
+
+        provider = build_provider(Provider.ollama, "llama2", api_base="http://localhost:11434")
+        assert isinstance(provider, LiteLLMProvider)
+        assert provider.default_opts.get("api_base") == "http://localhost:11434"
+
+    def test_build_provider_stores_resolved_model_string(self) -> None:
+        provider = build_provider(Provider.bedrock, "anthropic.claude-3-haiku-20240307-v1:0")
+        assert provider.model == "bedrock/anthropic.claude-3-haiku-20240307-v1:0"
