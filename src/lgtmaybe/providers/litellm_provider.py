@@ -38,8 +38,11 @@ class LiteLLMProvider(ProviderClient):
     def complete(self, messages: list[Message], model: str, **opts: Any) -> ProviderResult:
         merged = {**self.default_opts, **opts}
         merged.setdefault("timeout", _DEFAULT_TIMEOUT)
+        # A factory-built provider carries the resolved litellm model string
+        # (e.g. "ollama/qwen3:27b"); prefer it over the caller's raw cfg.model.
+        effective_model = self.model or model
         try:
-            return self._complete_with_retry(messages, model, **merged)
+            return self._complete_with_retry(messages, effective_model, **merged)
         except Exception:
             if self.fallback_model is None:
                 raise

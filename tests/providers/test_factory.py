@@ -62,3 +62,25 @@ class TestBuildProvider:
     def test_build_provider_stores_resolved_model_string(self) -> None:
         provider = build_provider(Provider.bedrock, "anthropic.claude-3-haiku-20240307-v1:0")
         assert provider.model == "bedrock/anthropic.claude-3-haiku-20240307-v1:0"
+
+    def test_build_provider_resolves_fallback_model(self) -> None:
+        provider = build_provider(Provider.ollama, "qwen3:27b", fallback_model="llama2")
+        assert provider.fallback_model == "ollama/llama2"
+
+    def test_factory_provider_calls_litellm_with_resolved_model(self) -> None:
+        """The engine passes the raw cfg.model; the call must still use the
+        factory-resolved model string (regression for 'LLM Provider NOT provided')."""
+        from types import SimpleNamespace
+        from unittest.mock import patch
+
+        provider = build_provider(Provider.ollama, "qwen3:27b", api_base="http://localhost:11434")
+        response = SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content="[]"))],
+            usage=SimpleNamespace(prompt_tokens=1, completion_tokens=1),
+        )
+
+        with patch("litellm.completion", return_value=response) as mock_completion:
+            with patch("litellm.completion_cost", return_value=0.0):
+                provider.complete([{"role": "user", "content": "hi"}], model="qwen3:27b")
+
+        assert mock_completion.call_args.kwargs["model"] == "ollama/qwen3:27b"

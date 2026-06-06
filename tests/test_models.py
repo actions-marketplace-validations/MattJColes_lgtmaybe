@@ -67,6 +67,18 @@ def test_severity_is_ordered() -> None:
     assert not (Severity.low >= Severity.high)
 
 
+def test_review_config_accepts_api_base() -> None:
+    cfg = ReviewConfig(provider=Provider.ollama, model="llama3", api_base="http://localhost:11434")
+    assert cfg.api_base == "http://localhost:11434"
+    restored = ReviewConfig.model_validate_json(cfg.model_dump_json())
+    assert restored.api_base == "http://localhost:11434"
+
+
+def test_review_config_api_base_defaults_to_none() -> None:
+    cfg = ReviewConfig(provider=Provider.ollama, model="llama3")
+    assert cfg.api_base is None
+
+
 def test_extra_fields_forbidden() -> None:
     with pytest.raises(ValueError):
         ProviderResult.model_validate(

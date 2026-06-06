@@ -44,6 +44,7 @@ def build_provider(
 ) -> LiteLLMProvider:
     """Build a configured LiteLLMProvider for the given provider and model."""
     resolved_model = litellm_model_string(provider, model)
+    resolved_fallback = litellm_model_string(provider, fallback_model) if fallback_model else None
     opts: dict[str, Any] = dict(extra_opts)
 
     if api_key is not None:
@@ -55,7 +56,7 @@ def build_provider(
 
     return LiteLLMProvider(
         model=resolved_model,
-        fallback_model=fallback_model,
+        fallback_model=resolved_fallback,
         force_cost_zero=is_ollama,
         **opts,
     )

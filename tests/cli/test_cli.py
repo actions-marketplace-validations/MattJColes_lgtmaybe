@@ -26,6 +26,26 @@ def _default_cfg(**overrides: object) -> ReviewConfig:
     return ReviewConfig.model_validate(base)
 
 
+_LOCAL_CTX = PRContext(
+    diff="@@ -1 +1 @@\n-a\n+b\n",
+    changed_files=["src/app.py"],
+    base_sha="base",
+    head_sha="head",
+    repo="org/repo",
+    pr_number=0,
+)
+
+
+def _patch_local(monkeypatch, engine=None):
+    """Wire the local review command onto fakes: fake provider/engine + git context."""
+    import lgtmaybe.cli as cli_module
+
+    engine = engine if engine is not None else FakeEngine(FakeProvider())
+    monkeypatch.setattr(cli_module, "build_provider", lambda *a, **k: FakeProvider())
+    monkeypatch.setattr(cli_module, "LLMReviewEngine", lambda provider: engine)
+    monkeypatch.setattr(cli_module, "local_pr_context", lambda **kwargs: _LOCAL_CTX)
+
+
 class TestRunReview:
     def test_dry_run_does_not_post(self):
         """dry_run=True must not call post_review on the github gateway."""
@@ -72,103 +92,36 @@ class TestRunReview:
         assert posted_summary == summary
 
 
-class TestCliDryRun:
-    def test_dry_run_flag_prints_findings_to_stdout(self, monkeypatch):
-        """--dry-run prints JSON findings to stdout and posts nothing."""
-        github = FakeGitHub()
-        engine = FakeEngine(FakeProvider())
+class TestReviewCommandLocal:
+    def test_prints_findings_in_human_form(self, monkeypatch):
+        """`review` runs the local pipeline and prints findings to stdout."""
+        _patch_local(monkeypatch)
 
-        import lgtmaybe.cli as cli_module
-
-        monkeypatch.setattr(
-            cli_module,
-            "build_adapters",
-            lambda cfg, runtime: (github, engine),
-        )
-
-        runner = CliRunner()
-        result = runner.invoke(
-            main,
-            [
-                "review",
-                "--pr-url",
-                "https://github.com/org/repo/pull/1",
-                "--provider",
-                "ollama",
-                "--model",
-                "llama3",
-                "--dry-run",
-            ],
-        )
+        result = CliRunner().invoke(main, ["review", "--provider", "ollama", "--model", "llama3"])
 
         assert result.exit_code == 0, result.output
-        assert github.posted == []
-        # Output should contain structured JSON findings
         assert "canned finding" in result.output
 
-    def test_dry_run_output_is_valid_json(self, monkeypatch):
-        """--dry-run output contains parseable JSON findings."""
-        github = FakeGitHub()
-        engine = FakeEngine(FakeProvider())
+    def test_json_flag_outputs_parseable_array(self, monkeypatch):
+        """`review --json` emits a JSON array of findings."""
+        _patch_local(monkeypatch)
 
-        import lgtmaybe.cli as cli_module
-
-        monkeypatch.setattr(
-            cli_module,
-            "build_adapters",
-            lambda cfg, runtime: (github, engine),
-        )
-
-        runner = CliRunner()
-        result = runner.invoke(
-            main,
-            [
-                "review",
-                "--pr-url",
-                "https://github.com/org/repo/pull/1",
-                "--provider",
-                "ollama",
-                "--model",
-                "llama3",
-                "--dry-run",
-            ],
+        result = CliRunner().invoke(
+            main, ["review", "--provider", "ollama", "--model", "llama3", "--json"]
         )
 
         assert result.exit_code == 0, result.output
-        # Find and parse the JSON findings array line
-        lines = result.output.strip().splitlines()
-        json_line = next(line for line in lines if line.startswith("[{"))
+        json_line = next(line for line in result.output.splitlines() if line.startswith("[{"))
         parsed = json.loads(json_line)
         assert isinstance(parsed, list)
         assert parsed[0]["severity"] == "low"
 
+    def test_does_not_require_github_token(self, monkeypatch):
+        """The local review must work with no GITHUB_TOKEN in the environment."""
+        monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+        _patch_local(monkeypatch)
 
-class TestCliBedrock:
-    def test_bedrock_with_ambient_creds_does_not_require_api_key(self, monkeypatch):
-        """Invoking bedrock when ambient creds are present raises no missing-key error."""
-        github = FakeGitHub()
-        engine = FakeEngine(FakeProvider())
-
-        import lgtmaybe.cli as cli_module
-
-        monkeypatch.setattr(cli_module, "build_adapters", lambda cfg, runtime: (github, engine))
-        # Simulate ambient AWS creds present
-        monkeypatch.setattr(cli_module, "has_ambient_aws_creds", lambda: True)
-
-        runner = CliRunner()
-        result = runner.invoke(
-            main,
-            [
-                "review",
-                "--pr-url",
-                "https://github.com/org/repo/pull/1",
-                "--provider",
-                "bedrock",
-                "--model",
-                "anthropic.claude-3-5-sonnet-20241022-v2:0",
-                "--dry-run",
-            ],
-        )
+        result = CliRunner().invoke(main, ["review", "--provider", "ollama", "--model", "llama3"])
 
         assert result.exit_code == 0, result.output
 
@@ -187,63 +140,51 @@ class TestModuleEntrypoint:
         assert "comment" in result.output
 
 
-class TestErrorSurfacing:
-    def _invoke(self, monkeypatch, github, engine, *, dry_run=False):
+class TestGitHubReviewErrorSurfacing:
+    """The GitHub path (execute_review, used by the action) posts a failure notice."""
+
+    def test_engine_failure_posts_comment_and_raises(self, monkeypatch):
+        import click
+
         import lgtmaybe.cli as cli_module
 
-        monkeypatch.setattr(cli_module, "build_adapters", lambda cfg, runtime: (github, engine))
-        args = [
-            "review",
-            "--pr-url",
-            "https://github.com/org/repo/pull/1",
-            "--provider",
-            "ollama",
-            "--model",
-            "llama3",
-        ]
-        if dry_run:
-            args.append("--dry-run")
-        return CliRunner().invoke(main, args)
-
-    def test_engine_failure_posts_comment_and_exits_nonzero(self, monkeypatch):
         github = FakeGitHub()
-        result = self._invoke(monkeypatch, github, _BoomEngine())
+        monkeypatch.setattr(
+            cli_module, "build_adapters", lambda cfg, runtime: (github, _BoomEngine())
+        )
 
-        assert result.exit_code != 0
+        with pytest.raises(click.ClickException):
+            cli_module.execute_review(_default_cfg(), {"pr_url": "x"}, dry_run=False)
+
         assert len(github.posted) == 1
         posted_findings, posted_summary = github.posted[0]
         assert posted_findings == []
         assert "fail" in posted_summary.lower()
 
-    def test_dry_run_failure_does_not_post(self, monkeypatch):
-        github = FakeGitHub()
-        result = self._invoke(monkeypatch, github, _BoomEngine(), dry_run=True)
 
-        assert result.exit_code != 0
-        assert github.posted == []
-
-    def test_build_adapters_failure_exits_nonzero(self, monkeypatch):
+class TestLocalReviewErrors:
+    def test_not_a_git_repo_exits_nonzero(self, monkeypatch):
         import lgtmaybe.cli as cli_module
 
-        def boom(cfg, runtime):
-            raise ValueError("GITHUB_TOKEN is required")
+        monkeypatch.setattr(cli_module, "build_provider", lambda *a, **k: FakeProvider())
+        monkeypatch.setattr(cli_module, "LLMReviewEngine", lambda provider: FakeEngine(provider))
 
-        monkeypatch.setattr(cli_module, "build_adapters", boom)
-        result = CliRunner().invoke(
-            main,
-            [
-                "review",
-                "--pr-url",
-                "https://github.com/org/repo/pull/1",
-                "--provider",
-                "ollama",
-                "--model",
-                "llama3",
-            ],
-        )
+        def boom(**kwargs):
+            raise ValueError("not a git repository")
+
+        monkeypatch.setattr(cli_module, "local_pr_context", boom)
+
+        result = CliRunner().invoke(main, ["review", "--provider", "ollama", "--model", "llama3"])
 
         assert result.exit_code != 0
-        assert "GITHUB_TOKEN" in result.output
+        assert "not a git repository" in result.output
+
+    def test_engine_failure_exits_nonzero(self, monkeypatch):
+        _patch_local(monkeypatch, engine=_BoomEngine())
+
+        result = CliRunner().invoke(main, ["review", "--provider", "ollama", "--model", "llama3"])
+
+        assert result.exit_code != 0
 
 
 class TestParsePrUrl:
@@ -321,4 +262,4 @@ class TestBuildAdapters:
 
         _github, _engine, provider = build_review_context(cfg, runtime)
 
-        assert provider.fallback_model == "llama2"
+        assert provider.fallback_model == "ollama/llama2"

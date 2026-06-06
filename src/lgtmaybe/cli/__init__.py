@@ -16,11 +16,13 @@ from typing import Any
 import click
 
 from lgtmaybe.cli.slash import dispatch, parse_command
+from lgtmaybe.config import store
 from lgtmaybe.config.loader import load_config
 from lgtmaybe.core.models import ReviewConfig, ReviewFinding
 from lgtmaybe.core.ports import GitHubGateway, ProviderClient, ReviewEngine
 from lgtmaybe.engine import LLMReviewEngine
 from lgtmaybe.github import RestGitHubGateway
+from lgtmaybe.local import local_pr_context
 from lgtmaybe.providers.credentials import resolve_credentials
 from lgtmaybe.providers.factory import build_provider
 
@@ -68,6 +70,22 @@ def parse_pr_url(pr_url: str) -> tuple[str, int]:
             "Expected something like https://github.com/org/repo/pull/42"
         )
     return f"{match['owner']}/{match['repo']}", int(match["number"])
+
+
+def render_findings(findings: list[ReviewFinding], summary: str, *, as_json: bool) -> str:
+    """Format findings for the local CLI: JSON array, or a human listing + summary."""
+    if as_json:
+        return json.dumps([f.model_dump(mode="json") for f in findings])
+
+    lines: list[str] = []
+    for f in findings:
+        lines.append(f"{f.path}:{f.line}  [{f.severity.upper()}] {f.title}")
+        lines.append(f"  {f.body}")
+        if f.suggestion is not None:
+            lines.append(f"  suggestion: {f.suggestion}")
+        lines.append("")
+    lines.append(summary)
+    return "\n".join(lines)
 
 
 def build_review_context(
@@ -144,11 +162,6 @@ def main() -> None:
 
 @main.command()
 @click.option(
-    "--pr-url",
-    required=True,
-    help="Full GitHub PR URL, e.g. https://github.com/org/repo/pull/42",
-)
-@click.option(
     "--provider",
     default=None,
     help="LLM provider (openai, anthropic, bedrock, vertex, ollama, openrouter)",
@@ -163,7 +176,7 @@ def main() -> None:
     "--api-key",
     default=None,
     envvar="LGTMAYBE_API_KEY",
-    help="API key (not needed for bedrock/vertex with ambient creds)",
+    help="API key (not needed for bedrock/vertex with ambient creds, or ollama)",
 )
 @click.option(
     "--api-base", default=None, help="API base URL (useful for ollama: http://localhost:11434)"
@@ -176,6 +189,25 @@ def main() -> None:
 )
 @click.option("--max-files", default=None, type=int, help="Maximum number of files to review")
 @click.option(
+    "--base",
+    default=None,
+    help="Base ref to diff the current branch against "
+    "(default: the remote's default branch, else main)",
+)
+@click.option(
+    "--working",
+    is_flag=True,
+    default=False,
+    help="Review uncommitted working-tree changes instead of the branch vs base",
+)
+@click.option(
+    "--json",
+    "as_json",
+    is_flag=True,
+    default=False,
+    help="Output findings as a JSON array instead of a human listing",
+)
+@click.option(
     "--context-lines",
     default=None,
     type=int,
@@ -186,16 +218,9 @@ def main() -> None:
     "config_path",
     default=".lgtmaybe.yml",
     show_default=True,
-    help="Path to config file",
-)
-@click.option(
-    "--dry-run",
-    is_flag=True,
-    default=False,
-    help="Print findings to stdout; do not post to GitHub",
+    help="Path to a per-repo config file",
 )
 def review(
-    pr_url: str,
     provider: str | None,
     model: str | None,
     fallback_model: str | None,
@@ -203,13 +228,16 @@ def review(
     api_base: str | None,
     min_severity: str | None,
     max_files: int | None,
+    base: str | None,
+    working: bool,
+    as_json: bool,
     context_lines: int | None,
     config_path: str,
-    dry_run: bool,
 ) -> None:
-    """Review a pull request and post inline comments + a summary."""
+    """Review local git changes and print findings — no GitHub needed."""
     cfg = load_config(
         config_path=Path(config_path),
+        user_config_path=store.user_config_path(),
         provider=provider,
         model=model,
         min_severity=min_severity,
@@ -218,13 +246,48 @@ def review(
     )
 
     runtime: dict[str, Any] = {
-        "pr_url": pr_url,
         "api_key": api_key,
         "api_base": api_base,
         "fallback_model": fallback_model,
     }
 
-    execute_review(cfg, runtime, dry_run=dry_run)
+    execute_local_review(cfg, runtime, base=base, working=working, as_json=as_json)
+
+
+def execute_local_review(
+    cfg: ReviewConfig,
+    runtime: dict[str, Any],
+    *,
+    base: str | None,
+    working: bool,
+    as_json: bool,
+) -> None:
+    """Review the local git diff and print findings — no GitHub involvement.
+
+    Builds the provider straight from config/runtime (no token, no gateway),
+    runs the engine over the local diff, and prints the result. Any failure
+    surfaces as a clean CLI error — there is no PR to post a notice to.
+    """
+    try:
+        auth = resolve_credentials(
+            cfg.provider,
+            api_key=runtime.get("api_key"),
+            api_base=runtime.get("api_base") or cfg.api_base,
+        )
+        provider = build_provider(
+            cfg.provider,
+            cfg.model,
+            api_key=auth.api_key,
+            api_base=auth.api_base,
+            fallback_model=runtime.get("fallback_model"),
+        )
+        engine = LLMReviewEngine(provider)
+        ctx = local_pr_context(base=base, working=working)
+        findings, summary = engine.review(ctx, cfg)
+    except Exception as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    click.echo(render_findings(findings, summary, as_json=as_json))
 
 
 def execute_review(cfg: ReviewConfig, runtime: dict[str, Any], *, dry_run: bool) -> None:
@@ -262,6 +325,61 @@ def _post_failure(github: GitHubGateway, exc: Exception) -> None:
         # Posting the failure notice itself failed — nothing more we can do;
         # the original error is still surfaced by the caller's ClickException.
         pass
+
+
+@main.group(name="config")
+def config_cmd() -> None:
+    """Manage the user-level config (set provider/model/api_base once, reuse everywhere)."""
+
+
+@config_cmd.command("path")
+def config_path_command() -> None:
+    """Print the config file location."""
+    click.echo(str(store.user_config_path()))
+
+
+@config_cmd.command("show")
+def config_show() -> None:
+    """Print the current config."""
+    text = store.as_yaml()
+    click.echo(text if text else f"(no config yet at {store.user_config_path()})")
+
+
+@config_cmd.command("get")
+@click.argument("key")
+def config_get(key: str) -> None:
+    """Print one config value."""
+    value = store.get_key(key)
+    if value is not None:
+        click.echo(str(value))
+
+
+@config_cmd.command("set")
+@click.argument("key")
+@click.argument("value")
+def config_set(key: str, value: str) -> None:
+    """Set one config value (e.g. `config set model qwen3:27b`)."""
+    try:
+        coerced = store.set_key(key, value)
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
+    click.echo(f"{key} = {coerced}")
+
+
+@config_cmd.command("init")
+def config_init() -> None:
+    """Interactively create the config file."""
+    provider = click.prompt("Provider", default="ollama")
+    model = click.prompt("Model", default="llama3")
+    api_base = click.prompt("API base (blank for none)", default="", show_default=False)
+    try:
+        store.set_key("provider", provider)
+        store.set_key("model", model)
+        if api_base.strip():
+            store.set_key("api_base", api_base)
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
+    click.echo(f"Wrote {store.user_config_path()}")
 
 
 @main.command()
