@@ -128,6 +128,10 @@ the OIDC/WIF exchange for you (needs `id-token: write`). See
 - **CLI** — `pip install lgtmaybe`
 - **GitHub Action** — `uses: lgtmaybe/lgtmaybe@v1`
 
+## Contributing
+
+Test-first, green CI, scope is the gate. See [CONTRIBUTING.md](CONTRIBUTING.md).
+
 ## License
 
 MIT — see `LICENSE`.
