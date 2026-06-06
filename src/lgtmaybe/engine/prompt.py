@@ -39,7 +39,9 @@ severity (one of the levels above), title (string), body (string), suggestion (s
 ## Rules
 
 - Comment ONLY on changed lines shown in the diff (lines starting with + or -).
-- Do NOT comment on unchanged context lines.
+- Unchanged lines (starting with a space) are surrounding context, given only to
+  help you understand the change. Use them to reason, but NEVER raise a finding
+  on them — a comment on an unchanged line cannot be posted.
 - Do NOT comment on lines outside the diff hunk.
 - If you have no findings, return an empty array: []
 - Never output anything other than the JSON array.

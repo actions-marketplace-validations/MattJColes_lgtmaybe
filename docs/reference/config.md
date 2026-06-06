@@ -12,6 +12,7 @@ The user-facing configuration model. Fields map directly to `.lgtmaybe.yml` keys
 
 | Field | Type | Required | Default | Description |
 |---|---|---|---|---|
+| `context_lines` | integer | No | `20` | Context Lines |
 | `exclude_paths` | list[string] | No | `[]` | Exclude Paths |
 | `include_paths` | list[string] | No | `[]` | Include Paths |
 | `max_cost_usd` | number | No | `1.0` | Max Cost Usd |
@@ -78,6 +79,7 @@ Everything the engine needs about a pull request. Fetched via the GitHub REST AP
 | `base_sha` | string | Yes | — | Base Sha |
 | `changed_files` | list[string] | Yes | — | Changed Files |
 | `diff` | string | Yes | — | Diff |
+| `file_contents` | object | No | — | File Contents |
 | `head_sha` | string | Yes | — | Head Sha |
 | `pr_number` | integer | Yes | — | Pr Number |
 | `repo` | string | Yes | — | Repo |
@@ -120,6 +122,11 @@ The canonical machine-readable schemas. These are the source of truth for provid
   "additionalProperties": false,
   "description": "How to run one review: provider/model, severity floor, filters, caps.",
   "properties": {
+    "context_lines": {
+      "default": 20,
+      "title": "Context Lines",
+      "type": "integer"
+    },
     "exclude_paths": {
       "items": {
         "type": "string"
@@ -300,6 +307,13 @@ The canonical machine-readable schemas. These are the source of truth for provid
     "diff": {
       "title": "Diff",
       "type": "string"
+    },
+    "file_contents": {
+      "additionalProperties": {
+        "type": "string"
+      },
+      "title": "File Contents",
+      "type": "object"
     },
     "head_sha": {
       "title": "Head Sha",

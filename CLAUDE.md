@@ -96,6 +96,13 @@ pattern, event bus, plugin framework.
      `is_reviewable`; **file cap** reviews the top-N and posts a "reviewed top N
      of M" notice; **cost cap** aborts the run and posts a notice when the
      accrued cost crosses `max_cost_usd`.
+   - **Context expansion:** `get_pr_context` also fetches the head text of
+     reviewable files via the API (read-only, never a checkout) into
+     `PRContext.file_contents`; the engine (`compress.expand_hunks`) pads each
+     hunk with budget-scaled surrounding lines, capped by
+     `ReviewConfig.context_lines` (default 20, `0` disables), redacted like the
+     diff. Inline positions stay bound to the **real** diff, so a finding on a
+     context-only line maps to nothing and is dropped — never mis-posted.
    - **Error surfacing:** any failure posts a short "review failed" comment and
      the CLI exits non-zero (`ClickException`) — never fails silently.
    - **Cost reporting:** the summary line names the model + approx cost.

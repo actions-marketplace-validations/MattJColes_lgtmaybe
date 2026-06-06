@@ -11,6 +11,13 @@ lgtmaybe sends one request per review containing:
 - The **compressed PR diff** — the unified diff of changed files, after
   generated files, lockfiles, minified assets, and vendored code have been
   stripped.
+- **Surrounding context lines** — a budget-scaled number of unchanged lines
+  immediately above and below each changed hunk, read from the head revision of
+  the **changed files only**. This gives the model the surrounding function and
+  definitions so it makes fewer false-positive findings. The amount is capped by
+  `context_lines` (default 20, `0` disables it) and shrinks as the diff grows;
+  this content is redacted just like the diff. It is fetched read-only via the
+  GitHub API — your code is never checked out or executed.
 - **PR metadata** — the repository name, PR number, base and head SHAs, and
   the list of changed file paths.
 - A **system prompt** — the fixed instructions that tell the model to return
@@ -19,7 +26,8 @@ lgtmaybe sends one request per review containing:
 Nothing else is sent. lgtmaybe does not send:
 
 - PR title, description, or comments
-- Repository contents outside the diff
+- Repository contents beyond the changed files (only their hunks plus the
+  surrounding context lines described above)
 - Committer identity or email addresses
 - Any data from the repository's git history
 

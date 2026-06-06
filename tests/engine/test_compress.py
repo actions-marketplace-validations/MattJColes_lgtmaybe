@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from lgtmaybe.engine.compress import batch_files, count_tokens
+from lgtmaybe.engine.compress import batch_files, count_tokens, expand_hunks
 
 # ---------------------------------------------------------------------------
 # helpers
@@ -85,3 +85,45 @@ def test_dynamic_context_more_for_small_pr() -> None:
     assert ctx_small > ctx_large
     assert ctx_small >= 0
     assert ctx_large >= 0
+
+
+# ---------------------------------------------------------------------------
+# expand_hunks: pad hunks with surrounding lines from head file content
+# ---------------------------------------------------------------------------
+
+_CONTENT = "\n".join("abcdefghij")  # lines 1..10: a, b, c, ... j
+
+
+def test_expand_hunks_adds_surrounding_lines() -> None:
+    # Hunk covers new-file lines 5..6 (e, E2); ask for 2 lines either side.
+    patch = "diff --git a/f.py b/f.py\n@@ -5,2 +5,2 @@\n e\n+E2\n"
+
+    expanded = expand_hunks(patch, _CONTENT, 2)
+
+    # Two leading lines (c, d) and two trailing lines (g, h) are added as context.
+    assert "\n c\n d\n" in expanded
+    assert "\n g\n h\n" in expanded
+    # Header line/length counts are widened by the added context on both sides.
+    assert "@@ -3,6 +3,6 @@" in expanded
+
+
+def test_expand_hunks_noop_when_n_zero() -> None:
+    patch = "diff --git a/f.py b/f.py\n@@ -5,2 +5,2 @@\n e\n+E2\n"
+    assert expand_hunks(patch, _CONTENT, 0) == patch
+
+
+def test_expand_hunks_noop_when_no_content() -> None:
+    patch = "diff --git a/f.py b/f.py\n@@ -5,2 +5,2 @@\n e\n+E2\n"
+    assert expand_hunks(patch, None, 5) == patch
+
+
+def test_expand_hunks_clamps_at_file_edges() -> None:
+    # Hunk at the very top of the file: no leading context possible, and a huge
+    # n must not read past either end.
+    patch = "diff --git a/f.py b/f.py\n@@ -1,1 +1,1 @@\n a\n"
+    expanded = expand_hunks(patch, _CONTENT, 100)
+
+    # No phantom lines before line 1.
+    assert "@@ -1," in expanded
+    # Trailing context is clamped to the last real line (j) — no over-read.
+    assert expanded.rstrip().endswith(" j")

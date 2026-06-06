@@ -29,6 +29,11 @@
   "additionalProperties": false,
   "description": "How to run one review: provider/model, severity floor, filters, caps.",
   "properties": {
+    "context_lines": {
+      "default": 20,
+      "title": "Context Lines",
+      "type": "integer"
+    },
     "exclude_paths": {
       "items": {
         "type": "string"
