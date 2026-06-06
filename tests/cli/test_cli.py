@@ -97,9 +97,7 @@ class TestReviewCommandLocal:
         """`review` runs the local pipeline and prints findings to stdout."""
         _patch_local(monkeypatch)
 
-        result = CliRunner().invoke(
-            main, ["review", "--provider", "ollama", "--model", "llama3"]
-        )
+        result = CliRunner().invoke(main, ["review", "--provider", "ollama", "--model", "llama3"])
 
         assert result.exit_code == 0, result.output
         assert "canned finding" in result.output
@@ -123,9 +121,7 @@ class TestReviewCommandLocal:
         monkeypatch.delenv("GITHUB_TOKEN", raising=False)
         _patch_local(monkeypatch)
 
-        result = CliRunner().invoke(
-            main, ["review", "--provider", "ollama", "--model", "llama3"]
-        )
+        result = CliRunner().invoke(main, ["review", "--provider", "ollama", "--model", "llama3"])
 
         assert result.exit_code == 0, result.output
 
