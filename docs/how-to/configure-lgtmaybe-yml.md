@@ -8,7 +8,7 @@ provides defaults for all runs.
 
 ```yaml
 provider: openai
-model: gpt-4o-mini
+model: gpt-5.5
 min_severity: low
 include_paths:
   - "src/**"
@@ -41,12 +41,12 @@ The model identifier for the chosen provider. Format varies by provider:
 
 | Provider | Example model IDs |
 |---|---|
-| openai | `gpt-4o`, `gpt-4o-mini` |
-| anthropic | `claude-3-5-sonnet-20241022`, `claude-3-5-haiku-20241022` |
-| openrouter | `meta-llama/llama-3.3-70b-instruct` |
-| bedrock | `us.anthropic.claude-3-5-haiku-20241022-v1:0` |
-| vertex | `gemini-2.0-flash-001` |
-| ollama | `llama3`, `codellama` |
+| openai | `gpt-5.5` |
+| anthropic | `claude-sonnet-4-6`, `claude-haiku-4-5` |
+| openrouter | `anthropic/claude-sonnet-4-6` |
+| bedrock | `anthropic.claude-sonnet-4-6`, `anthropic.claude-haiku-4-5` |
+| vertex | `gemini-3-pro`, `gemini-3.5-flash` |
+| ollama | `qwen3.6:27b`, `codellama` |
 
 ### min_severity
 
@@ -115,7 +115,7 @@ Every config field can be overridden at the command line:
 lgtmaybe review \
   --pr-url https://github.com/owner/repo/pull/42 \
   --provider anthropic \
-  --model claude-3-5-haiku-20241022 \
+  --model claude-haiku-4-5 \
   --min-severity high
 ```
 

@@ -35,16 +35,25 @@ pick whichever providers you'll actually demo. you do **not** need all five.
 
 ## D. publishing (step 4 of the plan)
 
+the release workflow is `.github/workflows/release.yml`; it fires on a `v*.*.*`
+tag and runs four jobs: guard (tag == pyproject version) → pypi + ghcr → release
+(github release + moves the floating `v1` tag).
+
 ### pypi CLI via trusted publishing (no token in secrets)
-- [ ] on pypi, add a **trusted publisher** for the repo + the release workflow name + environment.
-- [ ] no `PYPI_TOKEN` secret needed — the release workflow authenticates via OIDC.
+- [ ] on pypi, add a **trusted publisher** for this repo with:
+  - workflow filename: `release.yml`
+  - environment name: `pypi`
+- [ ] create a repo **environment** named `pypi` (Settings → Environments).
+- [ ] no `PYPI_TOKEN` secret needed — the release workflow authenticates via OIDC (`id-token: write`).
+- [ ] before tagging, bump `version` in `pyproject.toml` to match the tag (the guard job enforces this).
 
 ### GHCR image
-- [ ] confirm `packages: write` permission in the release workflow; GHCR uses the built-in `GITHUB_TOKEN`, nothing manual beyond that.
+- [ ] nothing manual beyond `packages: write` (already in `release.yml`); GHCR uses the built-in `GITHUB_TOKEN`. The image is pushed as `{{version}}`, `v{major}`, and `latest`.
+- [ ] after the first push, set the GHCR package **visibility to public** so consumers' runners can `docker pull` it without auth (Packages → lgtmaybe → Package settings → Change visibility).
 
 ### marketplace listing
-- [ ] add an `action.yml` with `name`, `description`, `branding` (icon + colour).
-- [ ] tag a release (`v1.0.0`) and a floating `v1`.
+- [ ] `action.yml` is in the repo root with `name`, `description`, `branding` (icon `check-circle`, colour `purple`) — already done.
+- [ ] push a `v1.0.0` tag; the workflow publishes and moves the floating `v1`.
 - [ ] from the release page, tick **"Publish this Action to the GitHub Marketplace"**, accept terms, pick categories (`code-review`, `continuous-integration`).
 
 ## E. before you announce / blog it

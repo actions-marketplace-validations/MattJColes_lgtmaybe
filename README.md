@@ -12,7 +12,7 @@ export GITHUB_TOKEN=ghp_your_token_here
 lgtmaybe review \
   --pr-url https://github.com/owner/repo/pull/42 \
   --provider ollama \
-  --model llama3 \
+  --model qwen3.6:27b \
   --api-base http://localhost:11434 \
   --dry-run
 ```
@@ -55,10 +55,43 @@ walkthrough.
 - [Auth Model](docs/explanation/auth-model.md) — why keyless cloud, how credential resolution works
 - [Data and Privacy](docs/explanation/data-and-privacy.md) — what is sent where, secret redaction, ollama local mode
 
+## Use as a GitHub Action
+
+```yaml
+name: lgtmaybe
+
+on:
+  pull_request_target:
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  review:
+    if: ${{ github.event_name == 'pull_request_target' || github.event.issue.pull_request }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: lgtmaybe/lgtmaybe@v1
+        with:
+          provider: openai
+          model: gpt-5.5
+          api_key: ${{ secrets.OPENAI_API_KEY }}
+```
+
+Copy-paste workflows for every provider live in
+[`examples/workflows/`](examples/workflows/). Cloud providers (Bedrock, Vertex)
+are **keyless** — pass `aws_role_arn` / `gcp_wif_provider` and the action does
+the OIDC/WIF exchange for you (needs `id-token: write`). See
+[Use as a GitHub Action](docs/how-to/use-as-github-action.md).
+
 ## Distribution
 
 - **CLI** — `pip install lgtmaybe`
-- **GitHub Action** — `uses: ghcr.io/lgtmaybe/lgtmaybe@latest`
+- **GitHub Action** — `uses: lgtmaybe/lgtmaybe@v1`
 
 ## License
 

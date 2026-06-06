@@ -1,0 +1,34 @@
+# Copy into your repo at .github/workflows/lgtmaybe.yml
+#
+# Amazon Bedrock (keyless, via GitHub OIDC). No AWS key in secrets.
+# Set an AWS_ROLE_ARN secret pointing at an IAM role whose trust policy is
+# scoped to this repo and which has bedrock:InvokeModel* on the model ARNs.
+# See manual-steps.md section B for the one-time AWS setup.
+name: lgtmaybe (bedrock)
+
+on:
+  pull_request_target:
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+  pull-requests: write
+  id-token: write # required for the OIDC token exchange (keyless auth)
+
+concurrency:
+  group: lgtmaybe-${{ github.event.pull_request.number || github.event.issue.number }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    if: ${{ github.event_name == 'pull_request_target' || github.event.issue.pull_request }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: lgtmaybe/lgtmaybe@v1
+        with:
+          provider: bedrock
+          model: anthropic.claude-sonnet-4-6
+          aws_role_arn: ${{ secrets.AWS_ROLE_ARN }}
+          aws_region: us-east-1
