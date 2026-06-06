@@ -3,6 +3,35 @@
 Provider-agnostic PR reviewer. Five providers, one flag, no static keys for
 cloud providers. Posts inline review comments and a summary.
 
+## What it reviews
+
+lgtmaybe reviews the **changed lines in a pull request** — nothing else. It
+fetches the PR diff from the GitHub API (it never checks out or runs your code)
+and looks only at what the PR adds or changes, not the whole repository.
+Generated and non-reviewable files — lockfiles, minified bundles, vendored
+directories, binaries — are skipped automatically, and secrets are redacted from
+the diff before it is sent to the model.
+
+**How the scope is bounded.** Every run is capped so a large PR can't blow up
+latency or cost:
+
+- `max_files` (default 50) — reviews the top-N changed files and notes how many were skipped.
+- `max_input_tokens` (default 100k) — batches the diff to fit the model's budget.
+- `max_cost_usd` (default $1) — aborts and tells you if a run would cost more.
+- `min_severity` (default `info`) plus `include_paths` / `exclude_paths` — focus the review on what you care about.
+
+See [Configure .lgtmaybe.yml](docs/how-to/configure-lgtmaybe-yml.md) for every knob.
+
+**What you get back.** Each finding is structured data — file, line, severity, a
+title, an explanation, and an optional suggested fix — so it renders the same
+everywhere:
+
+- **On a GitHub PR** — an inline comment on the exact changed line for each finding, plus one summary comment naming the model and approximate cost. Re-running updates the same comments instead of duplicating them, and a clean PR gets a 👍 **LGTM!**.
+- **On the CLI** (`--dry-run`) — the summary line followed by the findings as a JSON array on stdout; nothing is posted to GitHub.
+
+A fuller walkthrough with example output is in
+[What gets reviewed](docs/explanation/what-gets-reviewed.md).
+
 ## Quick start (60 seconds, local, zero cost)
 
 ```bash
@@ -52,6 +81,7 @@ walkthrough.
 
 **Explanation** — understand the design
 
+- [What gets reviewed](docs/explanation/what-gets-reviewed.md) — scope, caps, and what the output looks like
 - [Architecture](docs/explanation/architecture.md) — ports and adapters, the review pipeline
 - [Auth Model](docs/explanation/auth-model.md) — why keyless cloud, how credential resolution works
 - [Data and Privacy](docs/explanation/data-and-privacy.md) — what is sent where, secret redaction, ollama local mode
