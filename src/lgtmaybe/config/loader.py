@@ -1,9 +1,10 @@
-"""Load and merge .lgtmaybe.yml with CLI overrides into a ReviewConfig.
+"""Load and merge config layers with CLI overrides into a ReviewConfig.
 
 Precedence (highest to lowest):
   1. Explicit CLI / action inputs (only keys whose value is not None)
   2. Repo config file (.lgtmaybe.yml)
-  3. Built-in defaults (provider=ollama, model=llama3)
+  3. User-level config (~/.config/lgtmaybe/config.yml), when a path is given
+  4. Built-in defaults (provider=ollama, model=llama3)
 """
 
 from __future__ import annotations
@@ -14,6 +15,7 @@ from typing import IO, Any
 import yaml
 from pydantic import ValidationError
 
+from lgtmaybe.config import store
 from lgtmaybe.core.models import ReviewConfig
 
 _DEFAULTS: dict[str, Any] = {
@@ -26,15 +28,20 @@ def load_config(
     *,
     config_path: Path | None = None,
     config_stream: IO[str] | None = None,
+    user_config_path: Path | None = None,
     **cli_inputs: Any,
 ) -> ReviewConfig:
-    """Return a ReviewConfig by merging defaults, file, and CLI inputs.
+    """Return a ReviewConfig by merging defaults, configs, and CLI inputs.
 
     Pass explicit CLI values as keyword arguments — only non-None values
-    override lower-precedence layers.  Either supply a ``config_path``
-    (reads the file if it exists) or a ``config_stream`` for testing.
+    override lower-precedence layers.  Supply a ``config_path`` (repo file) and/or
+    ``user_config_path`` (user-level file); the user layer sits below the repo
+    file. ``config_stream`` is an alternative repo-file source for testing.
     """
     merged: dict[str, Any] = dict(_DEFAULTS)
+
+    if user_config_path is not None:
+        merged.update(store.load(user_config_path))
 
     file_data = _load_file(config_path, config_stream)
     merged.update(file_data)

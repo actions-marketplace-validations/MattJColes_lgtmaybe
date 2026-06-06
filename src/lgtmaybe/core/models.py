@@ -96,6 +96,7 @@ class ReviewConfig(_Strict):
 
     provider: Provider
     model: str
+    api_base: str | None = None
     min_severity: Severity = Severity.info
     include_paths: list[str] = Field(default_factory=list)
     exclude_paths: list[str] = Field(default_factory=list)

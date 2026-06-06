@@ -77,6 +77,42 @@ def test_unknown_key_in_yaml_raises():
         load_config(config_stream=io.StringIO(yaml_content))
 
 
+def test_user_config_is_used_when_no_project_file(tmp_path):
+    """A value in the user-level config is applied when no repo file overrides it."""
+    user_cfg = tmp_path / "config.yml"
+    user_cfg.write_text("provider: anthropic\nmodel: claude-3-5-sonnet-20241022\n")
+
+    cfg = load_config(user_config_path=user_cfg)
+
+    assert cfg.provider == "anthropic"
+    assert cfg.model == "claude-3-5-sonnet-20241022"
+
+
+def test_project_file_overrides_user_config(tmp_path):
+    """The repo .lgtmaybe.yml takes precedence over the user-level config."""
+    user_cfg = tmp_path / "config.yml"
+    user_cfg.write_text("provider: anthropic\nmodel: user-model\n")
+    project_cfg = tmp_path / ".lgtmaybe.yml"
+    project_cfg.write_text("model: project-model\n")
+
+    cfg = load_config(config_path=project_cfg, user_config_path=user_cfg)
+
+    assert cfg.provider == "anthropic"  # from user config
+    assert cfg.model == "project-model"  # repo file wins
+
+
+def test_cli_overrides_user_and_project(tmp_path):
+    """An explicit CLI input beats both the project file and the user config."""
+    user_cfg = tmp_path / "config.yml"
+    user_cfg.write_text("provider: anthropic\nmodel: user-model\n")
+    project_cfg = tmp_path / ".lgtmaybe.yml"
+    project_cfg.write_text("model: project-model\n")
+
+    cfg = load_config(config_path=project_cfg, user_config_path=user_cfg, model="cli-model")
+
+    assert cfg.model == "cli-model"
+
+
 def test_none_cli_inputs_do_not_override():
     """CLI inputs that are None (not passed) do not clobber file or default values."""
     import io

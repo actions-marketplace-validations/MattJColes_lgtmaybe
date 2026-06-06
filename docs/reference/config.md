@@ -12,6 +12,7 @@ The user-facing configuration model. Fields map directly to `.lgtmaybe.yml` keys
 
 | Field | Type | Required | Default | Description |
 |---|---|---|---|---|
+| `api_base` | string / null | No | `null` | Api Base |
 | `exclude_paths` | list[string] | No | `[]` | Exclude Paths |
 | `include_paths` | list[string] | No | `[]` | Include Paths |
 | `max_cost_usd` | number | No | `1.0` | Max Cost Usd |
@@ -120,6 +121,18 @@ The canonical machine-readable schemas. These are the source of truth for provid
   "additionalProperties": false,
   "description": "How to run one review: provider/model, severity floor, filters, caps.",
   "properties": {
+    "api_base": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Api Base"
+    },
     "exclude_paths": {
       "items": {
         "type": "string"
