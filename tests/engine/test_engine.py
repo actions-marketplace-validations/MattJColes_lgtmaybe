@@ -147,6 +147,17 @@ def test_summary_mentions_finding_count_and_cost() -> None:
     assert "$" in summary or "cost" in summary.lower()
 
 
+def test_summary_names_the_model_and_cost() -> None:
+    provider = _provider_for([_HIGH], reflection_keeps_all=True)
+    engine = LLMReviewEngine(provider)
+    cfg = ReviewConfig(provider=Provider.ollama, model="llama3.1:70b")
+
+    _, summary = engine.review(_CTX, cfg)
+
+    assert "llama3.1:70b" in summary
+    assert "cost" in summary.lower()
+
+
 # ---------------------------------------------------------------------------
 # injection: malicious diff still produces normal structured review
 # ---------------------------------------------------------------------------

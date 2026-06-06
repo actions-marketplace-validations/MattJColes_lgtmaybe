@@ -14,9 +14,7 @@ variants:
 - **GitHub Action** — Docker container action pulling a GHCR image
 
 **The wedge:** first-class **Bedrock + Vertex with keyless OIDC/WIF**. Five
-providers, one flag, no keys in secrets for cloud. We do not try to out-feature
-pr-agent; we win on auth + simplicity. Reuse its proven mechanics, don't clone
-its surface.
+providers, one flag, no keys in secrets for cloud. We win on auth + simplicity.
 
 ## Non-negotiables
 
@@ -84,8 +82,22 @@ pattern, event bus, plugin framework.
      steer the reviewer), **secret redaction in diffs before they leave for the
      LLM**, fork-PR exposure (already handled by `pull_request_target` + no checkout).
    - **CLI track** — PyPI packaging, `--dry-run` for local dev.
-3. **Integration (sequential, last):** wire stages; surface errors (**a failed
-   review posts a comment, never fails silently**); fold cost into the summary.
+3. **Integration (sequential, last) — DONE:** the tracks are wired together.
+   `cli.build_review_context` swaps the fakes for the real `LiteLLMProvider` +
+   `RestGitHubGateway`; `python -m lgtmaybe` (the Docker ENTRYPOINT) is the live
+   Click CLI. Delivered in this step:
+   - **`review` command** — full PR review, posts inline comments + summary.
+   - **`comment` command** — handles the `issue_comment` event and routes slash
+     commands to the same engine/provider: `/review` + `/improve` post a review,
+     `/ask <q>` + `/describe` reply in-thread (`post_issue_comment`, an
+     adapter-only method beyond the frozen port).
+   - **Guards (in the engine):** generated/binary files skipped via
+     `is_reviewable`; **file cap** reviews the top-N and posts a "reviewed top N
+     of M" notice; **cost cap** aborts the run and posts a notice when the
+     accrued cost crosses `max_cost_usd`.
+   - **Error surfacing:** any failure posts a short "review failed" comment and
+     the CLI exits non-zero (`ClickException`) — never fails silently.
+   - **Cost reporting:** the summary line names the model + approx cost.
 
 Every task carries its inputs/outputs and an acceptance test so an agent can
 self-verify without asking. The acceptance test *is* the red step — start there.

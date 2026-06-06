@@ -1,0 +1,217 @@
+"""Slash-command parsing and dispatch (issue_comment trigger)."""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+from click.testing import CliRunner
+
+from lgtmaybe.cli import main
+from lgtmaybe.cli.slash import SlashCommand, dispatch, parse_command
+from lgtmaybe.core.models import Provider, ProviderResult, ReviewConfig
+from tests.fakes import FakeEngine, FakeGitHub, FakeProvider
+
+
+def _cfg() -> ReviewConfig:
+    return ReviewConfig(provider=Provider.ollama, model="llama3")
+
+
+class TestParseCommand:
+    def test_review(self):
+        parsed = parse_command("/review")
+        assert parsed is not None
+        assert parsed.name is SlashCommand.review
+        assert parsed.arg == ""
+
+    def test_ask_keeps_question_text(self):
+        parsed = parse_command("/ask why is this loop O(n^2)?")
+        assert parsed is not None
+        assert parsed.name is SlashCommand.ask
+        assert parsed.arg == "why is this loop O(n^2)?"
+
+    def test_improve_and_describe(self):
+        assert parse_command("/improve").name is SlashCommand.improve
+        assert parse_command("/describe").name is SlashCommand.describe
+
+    def test_leading_and_trailing_whitespace(self):
+        assert parse_command("  /review  \n").name is SlashCommand.review
+
+    def test_non_command_returns_none(self):
+        assert parse_command("looks good to me") is None
+
+    def test_unknown_command_returns_none(self):
+        assert parse_command("/frobnicate") is None
+
+
+class TestDispatch:
+    def test_review_triggers_a_posted_review(self):
+        github = FakeGitHub()
+        engine = FakeEngine(FakeProvider())
+
+        dispatch(
+            parse_command("/review"),
+            github=github,
+            engine=engine,
+            provider=FakeProvider(),
+            cfg=_cfg(),
+        )
+
+        assert len(github.posted) == 1
+        assert github.comments == []
+
+    def test_improve_triggers_a_posted_review(self):
+        github = FakeGitHub()
+        engine = FakeEngine(FakeProvider())
+
+        dispatch(
+            parse_command("/improve"),
+            github=github,
+            engine=engine,
+            provider=FakeProvider(),
+            cfg=_cfg(),
+        )
+
+        assert len(github.posted) == 1
+
+    def test_ask_replies_in_thread(self):
+        github = FakeGitHub()
+        answer = ProviderResult(
+            text="Because it re-scans the list on every iteration.",
+            input_tokens=10,
+            output_tokens=8,
+            cost_usd=0.0,
+        )
+        provider = FakeProvider(result=answer)
+
+        dispatch(
+            parse_command("/ask why is it slow?"),
+            github=github,
+            engine=FakeEngine(provider),
+            provider=provider,
+            cfg=_cfg(),
+        )
+
+        assert github.posted == []  # not a review
+        assert len(github.comments) == 1
+        assert "re-scans the list" in github.comments[0]
+
+    def test_ask_does_not_leak_the_question_back_as_an_instruction(self):
+        """The PR diff is wrapped as untrusted; the provider is actually called."""
+        github = FakeGitHub()
+        provider = FakeProvider(
+            result=ProviderResult(text="answer", input_tokens=1, output_tokens=1, cost_usd=0.0)
+        )
+
+        dispatch(
+            parse_command("/ask what does this do?"),
+            github=github,
+            engine=FakeEngine(provider),
+            provider=provider,
+            cfg=_cfg(),
+        )
+
+        sent = " ".join(m.get("content", "") for call in provider.calls for m in call["messages"])
+        assert "what does this do?" in sent
+
+    def test_describe_posts_a_comment(self):
+        github = FakeGitHub()
+        provider = FakeProvider(
+            result=ProviderResult(
+                text="## Summary\nAdds a thing.", input_tokens=1, output_tokens=1, cost_usd=0.0
+            )
+        )
+
+        dispatch(
+            parse_command("/describe"),
+            github=github,
+            engine=FakeEngine(provider),
+            provider=provider,
+            cfg=_cfg(),
+        )
+
+        assert len(github.comments) == 1
+        assert "Summary" in github.comments[0]
+
+    def test_dispatch_ignores_none(self):
+        github = FakeGitHub()
+        dispatch(
+            None,
+            github=github,
+            engine=FakeEngine(FakeProvider()),
+            provider=FakeProvider(),
+            cfg=_cfg(),
+        )
+        assert github.posted == []
+        assert github.comments == []
+
+
+def _write_event(tmp_path: Path, body: str) -> Path:
+    event = {
+        "comment": {"body": body},
+        "issue": {"number": 7, "pull_request": {"url": "x"}},
+        "repository": {"full_name": "org/repo"},
+    }
+    path = tmp_path / "event.json"
+    path.write_text(json.dumps(event))
+    return path
+
+
+class TestCommentCommand:
+    def _patch_build(self, monkeypatch, github, engine, provider):
+        import lgtmaybe.cli as cli_module
+
+        monkeypatch.setattr(
+            cli_module,
+            "build_review_context",
+            lambda cfg, runtime: (github, engine, provider),
+        )
+
+    def test_review_comment_retriggers_review(self, tmp_path, monkeypatch):
+        github = FakeGitHub()
+        provider = FakeProvider()
+        self._patch_build(monkeypatch, github, FakeEngine(provider), provider)
+        event = _write_event(tmp_path, "/review")
+
+        result = CliRunner().invoke(
+            main,
+            ["comment", "--event-path", str(event), "--provider", "ollama", "--model", "llama3"],
+        )
+
+        assert result.exit_code == 0, result.output
+        assert len(github.posted) == 1
+
+    def test_ask_comment_replies_in_thread(self, tmp_path, monkeypatch):
+        github = FakeGitHub()
+        provider = FakeProvider(
+            result=ProviderResult(
+                text="It guards against null.", input_tokens=1, output_tokens=1, cost_usd=0.0
+            )
+        )
+        self._patch_build(monkeypatch, github, FakeEngine(provider), provider)
+        event = _write_event(tmp_path, "/ask why the check?")
+
+        result = CliRunner().invoke(
+            main,
+            ["comment", "--event-path", str(event), "--provider", "ollama", "--model", "llama3"],
+        )
+
+        assert result.exit_code == 0, result.output
+        assert github.posted == []
+        assert len(github.comments) == 1
+        assert "guards against null" in github.comments[0]
+
+    def test_non_command_comment_is_ignored(self, tmp_path, monkeypatch):
+        github = FakeGitHub()
+        provider = FakeProvider()
+        self._patch_build(monkeypatch, github, FakeEngine(provider), provider)
+        event = _write_event(tmp_path, "thanks, looks good!")
+
+        result = CliRunner().invoke(
+            main,
+            ["comment", "--event-path", str(event), "--provider", "ollama", "--model", "llama3"],
+        )
+
+        assert result.exit_code == 0, result.output
+        assert github.posted == []
+        assert github.comments == []

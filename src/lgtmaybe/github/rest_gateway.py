@@ -137,6 +137,21 @@ class RestGitHubGateway(GitHubGateway):
             )
             resp.raise_for_status()
 
+    def post_issue_comment(self, body: str) -> None:
+        """Post a standalone comment to the PR conversation (in-thread reply).
+
+        Used by slash commands (/ask, /describe). Beyond the frozen GitHubGateway
+        port, which only models reviews.
+        """
+        url = f"https://api.github.com/repos/{self._repo}/issues/{self._pr_number}/comments"
+        resp = self._client.post(
+            url,
+            headers={**self._headers, "Accept": "application/vnd.github+json"},
+            json={"body": body},
+            timeout=_TIMEOUT,
+        )
+        resp.raise_for_status()
+
     # ------------------------------------------------------------------
     # Private helpers
     # ------------------------------------------------------------------

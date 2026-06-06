@@ -21,9 +21,14 @@ class FakeGitHub(GitHubGateway):
     def __init__(self, ctx: PRContext | None = None) -> None:
         self._ctx = _DEFAULT_CTX if ctx is None else ctx
         self.posted: list[tuple[list[ReviewFinding], str]] = []
+        self.comments: list[str] = []
 
     def get_pr_context(self) -> PRContext:
         return self._ctx
 
     def post_review(self, findings: list[ReviewFinding], summary: str) -> None:
         self.posted.append((findings, summary))
+
+    def post_issue_comment(self, body: str) -> None:
+        """In-thread reply — beyond the frozen port, used by slash commands."""
+        self.comments.append(body)

@@ -1,20 +1,11 @@
-"""Module entrypoint placeholder.
+"""Module entrypoint: ``python -m lgtmaybe`` and the Docker ENTRYPOINT.
 
-The real CLI is wired in the CLI track. For now this keeps `python -m lgtmaybe`
-(and the Docker ENTRYPOINT) runnable on the skeleton.
+Delegates to the Click CLI group, which handles argv and exit codes itself.
 """
 
 from __future__ import annotations
 
-import sys
-
-from . import __version__
-
-
-def main(argv: list[str] | None = None) -> int:
-    print(f"lgtmaybe {__version__} — CLI not wired yet (see CLAUDE.md)")
-    return 0
-
+from lgtmaybe.cli import main
 
 if __name__ == "__main__":
-    sys.exit(main(sys.argv[1:]))
+    main()

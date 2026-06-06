@@ -119,6 +119,25 @@ def test_post_review_updates_existing_review_on_second_call() -> None:
 
 
 @respx.mock
+def test_post_issue_comment_posts_to_issues_endpoint() -> None:
+    """post_issue_comment posts a standalone comment to the PR conversation."""
+    posted: list[dict[object, object]] = []
+
+    def capture(request: httpx.Request) -> httpx.Response:
+        posted.append(json.loads(request.content))
+        return httpx.Response(201, json={"id": 1})
+
+    respx.route(method="POST", url=COMMENTS_URL).mock(side_effect=capture)
+
+    client = httpx.Client()
+    gw = RestGitHubGateway(repo=REPO, pr_number=PR_NUMBER, token=TOKEN, client=client)
+    gw.post_issue_comment("Because it guards against null.")
+
+    assert len(posted) == 1
+    assert posted[0]["body"] == "Because it guards against null."
+
+
+@respx.mock
 def test_post_review_skips_findings_outside_diff() -> None:
     """Findings whose line has no diff position are omitted from the review comments."""
     respx.route(method="GET", url=REVIEWS_URL).mock(return_value=httpx.Response(200, json=[]))

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from lgtmaybe.core.models import PRContext, ReviewConfig, ReviewFinding
 from lgtmaybe.core.ports import Message, ProviderClient, ReviewEngine
+from lgtmaybe.github import is_reviewable
 
 from .compress import batch_files, context_lines_for_budget, count_tokens
 from .injection import wrap_diff
@@ -28,12 +29,19 @@ class LLMReviewEngine(ReviewEngine):
         # 1. Redact secrets from the diff before it leaves this process.
         clean_diff = redact(ctx.diff)
 
-        # 2. Split the diff into per-file batches that each fit under the token budget.
-        #    We parse changed_files paired with their hunks from the diff.
+        # 2. Split into per-file patches and drop generated/binary/vendored noise.
         file_patches = _split_diff_by_file(clean_diff, ctx.changed_files)
+        file_patches = [(path, patch) for path, patch in file_patches if is_reviewable(path)]
+
+        # 3. File cap: review only the first N reviewable files, note the rest.
+        total_files = len(file_patches)
+        capped_files = total_files > cfg.max_files
+        if capped_files:
+            file_patches = file_patches[: cfg.max_files]
+
         batches = batch_files(file_patches, max_tokens=cfg.max_input_tokens)
 
-        # 3. Determine how many extra context lines we can afford.
+        # 4. Determine how many extra context lines we can afford.
         used_tokens = count_tokens(clean_diff)
         remaining = max(0, cfg.max_input_tokens - used_tokens)
         _ctx_lines = context_lines_for_budget(remaining)  # available for future use
@@ -43,7 +51,8 @@ class LLMReviewEngine(ReviewEngine):
         all_findings: list[ReviewFinding] = []
         total_cost = 0.0
 
-        # 4. Run one provider call per batch (single call for most PRs).
+        # 5. Run one provider call per batch (single call for most PRs).
+        #    Stop early if the accumulated cost crosses the cap.
         for batch in batches:
             batch_diff = "\n".join(patch for _, patch in batch)
             wrapped = wrap_diff(batch_diff)
@@ -61,18 +70,38 @@ class LLMReviewEngine(ReviewEngine):
 
             all_findings.extend(findings)
 
-        # 5. Self-reflection: filter out low-confidence findings.
-        #    Pass a redacted context so secrets don't leak in the reflection prompt.
+            if total_cost > cfg.max_cost_usd:
+                return [], self._cost_cap_notice(total_cost, cfg)
+
+        # 6. Self-reflection: filter out low-confidence findings. Reflect against
+        #    only the reviewed diff — redacted, and free of skipped/over-cap files.
         if all_findings:
-            clean_ctx = ctx.model_copy(update={"diff": clean_diff})
+            reviewed_diff = "\n".join(patch for _, patch in file_patches)
+            clean_ctx = ctx.model_copy(update={"diff": reviewed_diff})
             all_findings = reflect_findings(all_findings, clean_ctx, cfg, self._provider)
 
-        # 6. Filter by min_severity.
+        # 7. Filter by min_severity.
         filtered = [f for f in all_findings if f.severity >= cfg.min_severity]
 
         plural = "s" if len(filtered) != 1 else ""
-        summary = f"{len(filtered)} finding{plural} · cost ${total_cost:.4f}"
-        return filtered, summary
+        cost_line = (
+            f"{len(filtered)} finding{plural} · model {cfg.model} · approx cost ${total_cost:.4f}"
+        )
+        if capped_files:
+            notice = (
+                f"⚠️ Reviewed the top {cfg.max_files} of {total_files} changed files "
+                f"(file cap {cfg.max_files}). Raise max_files to review them all."
+            )
+            return filtered, f"{notice}\n\n{cost_line}"
+        return filtered, cost_line
+
+    @staticmethod
+    def _cost_cap_notice(total_cost: float, cfg: ReviewConfig) -> str:
+        return (
+            f"⚠️ Review aborted: approximate cost ${total_cost:.4f} exceeded the "
+            f"cap of ${cfg.max_cost_usd:.4f} (model {cfg.model}). "
+            "Raise max_cost_usd to review the full PR."
+        )
 
 
 def _split_diff_by_file(
