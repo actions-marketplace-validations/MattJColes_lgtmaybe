@@ -1,0 +1,69 @@
+{
+  "$defs": {
+    "Severity": {
+      "description": "Finding severity, ordered low \u2192 high for `min_severity` filtering.",
+      "enum": [
+        "info",
+        "low",
+        "medium",
+        "high",
+        "critical"
+      ],
+      "title": "Severity",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "description": "A single inline review comment the model wants to post.",
+  "properties": {
+    "body": {
+      "title": "Body",
+      "type": "string"
+    },
+    "line": {
+      "title": "Line",
+      "type": "integer"
+    },
+    "path": {
+      "title": "Path",
+      "type": "string"
+    },
+    "severity": {
+      "$ref": "#/$defs/Severity"
+    },
+    "side": {
+      "default": "RIGHT",
+      "enum": [
+        "LEFT",
+        "RIGHT"
+      ],
+      "title": "Side",
+      "type": "string"
+    },
+    "suggestion": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Suggestion"
+    },
+    "title": {
+      "title": "Title",
+      "type": "string"
+    }
+  },
+  "required": [
+    "path",
+    "line",
+    "severity",
+    "title",
+    "body"
+  ],
+  "title": "ReviewFinding",
+  "type": "object"
+}

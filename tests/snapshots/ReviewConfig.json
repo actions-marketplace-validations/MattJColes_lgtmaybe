@@ -1,0 +1,79 @@
+{
+  "$defs": {
+    "Provider": {
+      "description": "The backend selected by the `--provider` flag.",
+      "enum": [
+        "openai",
+        "openrouter",
+        "anthropic",
+        "bedrock",
+        "vertex",
+        "ollama"
+      ],
+      "title": "Provider",
+      "type": "string"
+    },
+    "Severity": {
+      "description": "Finding severity, ordered low \u2192 high for `min_severity` filtering.",
+      "enum": [
+        "info",
+        "low",
+        "medium",
+        "high",
+        "critical"
+      ],
+      "title": "Severity",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "description": "How to run one review: provider/model, severity floor, filters, caps.",
+  "properties": {
+    "exclude_paths": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Exclude Paths",
+      "type": "array"
+    },
+    "include_paths": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Include Paths",
+      "type": "array"
+    },
+    "max_cost_usd": {
+      "default": 1.0,
+      "title": "Max Cost Usd",
+      "type": "number"
+    },
+    "max_files": {
+      "default": 50,
+      "title": "Max Files",
+      "type": "integer"
+    },
+    "max_input_tokens": {
+      "default": 100000,
+      "title": "Max Input Tokens",
+      "type": "integer"
+    },
+    "min_severity": {
+      "$ref": "#/$defs/Severity",
+      "default": "info"
+    },
+    "model": {
+      "title": "Model",
+      "type": "string"
+    },
+    "provider": {
+      "$ref": "#/$defs/Provider"
+    }
+  },
+  "required": [
+    "provider",
+    "model"
+  ],
+  "title": "ReviewConfig",
+  "type": "object"
+}
