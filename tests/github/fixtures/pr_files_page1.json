@@ -1,0 +1,6 @@
+[
+  {"filename": "src/app.py", "status": "modified"},
+  {"filename": "src/utils.py", "status": "modified"},
+  {"filename": "package-lock.json", "status": "modified"},
+  {"filename": "app.min.js", "status": "added"}
+]

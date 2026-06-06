@@ -1,0 +1,9 @@
+{
+  "number": 42,
+  "base": {
+    "sha": "abc1234base"
+  },
+  "head": {
+    "sha": "def5678head"
+  }
+}

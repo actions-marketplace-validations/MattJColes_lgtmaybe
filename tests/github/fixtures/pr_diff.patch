@@ -1,0 +1,21 @@
+diff --git a/src/app.py b/src/app.py
+index 0000001..0000002 100644
+--- a/src/app.py
++++ b/src/app.py
+@@ -1,4 +1,6 @@
+ import os
++import sys
+
+ def main():
+-    pass
++    print("hello")
++    return 0
+diff --git a/src/utils.py b/src/utils.py
+index 0000003..0000004 100644
+--- a/src/utils.py
++++ b/src/utils.py
+@@ -10,3 +10,4 @@ def helper():
+     x = 1
+     y = 2
+     return x + y
++    # comment added
