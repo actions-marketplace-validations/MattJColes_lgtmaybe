@@ -89,6 +89,10 @@ class PRContext(_Strict):
     head_sha: str
     repo: str
     pr_number: int
+    # Head-revision text of reviewable changed files, keyed by path. Populated by
+    # the gateway so the engine can pad hunks with surrounding lines; empty when
+    # unavailable (the engine then reviews the bare diff).
+    file_contents: dict[str, str] = Field(default_factory=dict)
 
 
 class ReviewConfig(_Strict):
@@ -103,3 +107,6 @@ class ReviewConfig(_Strict):
     max_files: int = 50
     max_input_tokens: int = 100_000
     max_cost_usd: float = 1.0
+    # Ceiling on surrounding context lines added around each hunk. The engine
+    # uses min(context_lines, what the token budget allows); 0 disables it.
+    context_lines: int = 20

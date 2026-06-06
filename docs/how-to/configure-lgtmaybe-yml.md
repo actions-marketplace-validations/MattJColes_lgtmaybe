@@ -107,6 +107,21 @@ max_cost_usd: 0.25
 
 Default: `1.0`.
 
+### context_lines
+
+Ceiling on the number of unchanged lines added above and below each changed hunk,
+read from the head revision of the file so the model can review a change in the
+context of its surrounding code. The actual number used is the smaller of this
+ceiling and what the token budget allows, so it shrinks automatically on large
+PRs. Set it to `0` to disable context expansion and review the bare diff (no
+extra file content is fetched).
+
+```yaml
+context_lines: 10   # at most 10 lines either side of each hunk; 0 disables
+```
+
+Default: `20`.
+
 ## CLI flag overrides
 
 Every config field can be overridden at the command line:

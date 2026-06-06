@@ -56,6 +56,27 @@ def test_cli_input_overrides_file_value():
     assert cfg.model == "gpt-4o"
 
 
+def test_context_lines_defaults_and_overrides():
+    """context_lines defaults to 20, is read from file, and can be overridden (incl. 0)."""
+    import io
+
+    assert (
+        load_config(config_stream=io.StringIO("provider: openai\nmodel: gpt-4o\n")).context_lines
+        == 20
+    )
+
+    from_file = load_config(
+        config_stream=io.StringIO("provider: openai\nmodel: gpt-4o\ncontext_lines: 5\n")
+    )
+    assert from_file.context_lines == 5
+
+    overridden = load_config(
+        config_stream=io.StringIO("provider: openai\nmodel: gpt-4o\ncontext_lines: 5\n"),
+        context_lines=0,
+    )
+    assert overridden.context_lines == 0
+
+
 def test_cli_input_overrides_provider():
     """A CLI --provider overrides the file's provider."""
     import io

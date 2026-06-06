@@ -41,6 +41,11 @@
       "default": null,
       "title": "Api Base"
     },
+    "context_lines": {
+      "default": 20,
+      "title": "Context Lines",
+      "type": "integer"
+    },
     "exclude_paths": {
       "items": {
         "type": "string"

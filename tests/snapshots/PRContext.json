@@ -17,6 +17,13 @@
       "title": "Diff",
       "type": "string"
     },
+    "file_contents": {
+      "additionalProperties": {
+        "type": "string"
+      },
+      "title": "File Contents",
+      "type": "object"
+    },
     "head_sha": {
       "title": "Head Sha",
       "type": "string"

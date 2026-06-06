@@ -208,6 +208,12 @@ def main() -> None:
     help="Output findings as a JSON array instead of a human listing",
 )
 @click.option(
+    "--context-lines",
+    default=None,
+    type=int,
+    help="Max unchanged lines added around each hunk for context (0 disables)",
+)
+@click.option(
     "--config",
     "config_path",
     default=".lgtmaybe.yml",
@@ -225,6 +231,7 @@ def review(
     base: str | None,
     working: bool,
     as_json: bool,
+    context_lines: int | None,
     config_path: str,
 ) -> None:
     """Review local git changes and print findings — no GitHub needed."""
@@ -235,6 +242,7 @@ def review(
         model=model,
         min_severity=min_severity,
         max_files=max_files,
+        context_lines=context_lines,
     )
 
     runtime: dict[str, Any] = {

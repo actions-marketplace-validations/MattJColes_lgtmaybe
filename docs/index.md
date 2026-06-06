@@ -1,3 +1,7 @@
+<p align="center" markdown>
+  ![lgtmaybe logo — a shrugging face with curly-brace arms](assets/logo.svg){ width="128" }
+</p>
+
 # lgtmaybe
 
 Provider-agnostic PR reviewer. Five providers, one flag, no static keys for
