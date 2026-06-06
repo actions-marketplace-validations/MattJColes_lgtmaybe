@@ -1,0 +1,43 @@
+{
+  "additionalProperties": false,
+  "description": "Everything the engine needs about a PR \u2014 fetched via API, never checkout.",
+  "properties": {
+    "base_sha": {
+      "title": "Base Sha",
+      "type": "string"
+    },
+    "changed_files": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Changed Files",
+      "type": "array"
+    },
+    "diff": {
+      "title": "Diff",
+      "type": "string"
+    },
+    "head_sha": {
+      "title": "Head Sha",
+      "type": "string"
+    },
+    "pr_number": {
+      "title": "Pr Number",
+      "type": "integer"
+    },
+    "repo": {
+      "title": "Repo",
+      "type": "string"
+    }
+  },
+  "required": [
+    "diff",
+    "changed_files",
+    "base_sha",
+    "head_sha",
+    "repo",
+    "pr_number"
+  ],
+  "title": "PRContext",
+  "type": "object"
+}
