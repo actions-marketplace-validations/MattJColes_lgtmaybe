@@ -10,7 +10,7 @@ from lgtmaybe.core.models import PRContext, ReviewConfig, ReviewFinding
 from lgtmaybe.core.ports import Message, ProviderClient, ReviewEngine
 from lgtmaybe.github import is_reviewable
 
-from .compress import batch_files, context_lines_for_budget, count_tokens
+from .compress import batch_files, context_lines_for_budget, count_tokens, expand_hunks
 from .injection import wrap_diff
 from .parse import ParseError, parse_findings
 from .prompt import build_system_prompt
@@ -39,12 +39,21 @@ class LLMReviewEngine(ReviewEngine):
         if capped_files:
             file_patches = file_patches[: cfg.max_files]
 
-        batches = batch_files(file_patches, max_tokens=cfg.max_input_tokens)
-
-        # 4. Determine how many extra context lines we can afford.
+        # 4. Pad each hunk with surrounding lines so the model sees the function
+        #    and definitions around a change. The amount is budget-scaled and
+        #    capped by cfg.context_lines; content is the head file text the
+        #    gateway fetched (redacted), and is for understanding only —
+        #    inline-comment positions are always built from the real diff.
         used_tokens = count_tokens(clean_diff)
         remaining = max(0, cfg.max_input_tokens - used_tokens)
-        _ctx_lines = context_lines_for_budget(remaining)  # available for future use
+        ctx_lines = min(cfg.context_lines, context_lines_for_budget(remaining))
+        if ctx_lines > 0 and ctx.file_contents:
+            file_patches = [
+                (path, expand_hunks(patch, redact(ctx.file_contents.get(path, "")), ctx_lines))
+                for path, patch in file_patches
+            ]
+
+        batches = batch_files(file_patches, max_tokens=cfg.max_input_tokens)
 
         system_prompt = build_system_prompt()
 

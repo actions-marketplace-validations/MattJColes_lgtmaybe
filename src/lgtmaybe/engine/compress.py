@@ -6,6 +6,11 @@ Provides a dynamic context-line calculator for the remaining budget.
 
 from __future__ import annotations
 
+import re
+
+# Hunk header: "@@ -old_start[,old_len] +new_start[,new_len] @@ optional section"
+_HUNK_HEADER = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@(.*)$")
+
 _MAX_CONTEXT_LINES = 20
 _MIN_CONTEXT_LINES = 0
 # Scale: remaining_tokens / _SCALE gives context lines, capped at _MAX_CONTEXT_LINES.
@@ -84,3 +89,57 @@ def context_lines_for_budget(remaining_tokens: int) -> int:
     # up to _MAX_CONTEXT_LINES.
     lines = remaining_tokens // _SCALE
     return min(int(lines), _MAX_CONTEXT_LINES)
+
+
+def expand_hunks(patch: str, file_content: str | None, n: int) -> str:
+    """Pad each hunk in *patch* with up to *n* surrounding lines from *file_content*.
+
+    The extra lines are drawn from the head-revision file text and rendered as
+    normal unchanged context (space-prefixed), giving the model the function and
+    definitions around a change. Hunk headers are rewritten so each hunk's
+    start/length still describes the lines it now contains.
+
+    This is best-effort: with ``n <= 0`` or no file content the patch is returned
+    unchanged, and reads are clamped to the file's bounds. The result is for the
+    model only — inline-comment positions are always computed from the real diff.
+    """
+    if n <= 0 or not file_content:
+        return patch
+
+    content_lines = file_content.splitlines()
+    out: list[str] = []
+    pending_trailing: list[str] = []
+
+    for line in patch.splitlines():
+        header = _HUNK_HEADER.match(line)
+        if header is None:
+            out.append(line)
+            continue
+
+        # A new hunk starts: flush the previous hunk's trailing context first.
+        out.extend(f" {text}" for text in pending_trailing)
+
+        old_start = int(header.group(1))
+        old_len = int(header.group(2)) if header.group(2) is not None else 1
+        new_start = int(header.group(3))
+        new_len = int(header.group(4)) if header.group(4) is not None else 1
+        section = header.group(5)
+
+        # Lines immediately before the hunk and after its last new-file line.
+        leading = [content_lines[i - 1] for i in range(max(1, new_start - n), new_start)]
+        last_new = new_start + new_len - 1
+        trailing = [
+            content_lines[i - 1]
+            for i in range(last_new + 1, min(len(content_lines), last_new + n) + 1)
+        ]
+        pending_trailing = trailing
+
+        pad = len(leading) + len(trailing)
+        out.append(
+            f"@@ -{old_start - len(leading)},{old_len + pad} "
+            f"+{new_start - len(leading)},{new_len + pad} @@{section}"
+        )
+        out.extend(f" {text}" for text in leading)
+
+    out.extend(f" {text}" for text in pending_trailing)
+    return "\n".join(out) + "\n"

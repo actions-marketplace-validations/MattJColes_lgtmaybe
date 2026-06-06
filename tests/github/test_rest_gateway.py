@@ -46,6 +46,10 @@ def test_get_pr_context_returns_expected_shas_and_diff() -> None:
         method="GET",
         url__startswith=FILES_URL,
     ).mock(return_value=httpx.Response(200, json=_load_json("pr_files_page1.json")))
+    respx.route(
+        method="GET",
+        url__startswith=f"{BASE_URL}/repos/{REPO}/contents/",
+    ).mock(return_value=httpx.Response(200, text="raw file content"))
 
     client = httpx.Client()
     gw = RestGitHubGateway(repo=REPO, pr_number=PR_NUMBER, token=TOKEN, client=client)
@@ -85,6 +89,10 @@ def test_get_pr_context_paginates_files_list() -> None:
     respx.route(method="GET", url=page2_url).mock(
         return_value=httpx.Response(200, json=_load_json("pr_files_page2.json"))
     )
+    respx.route(
+        method="GET",
+        url__startswith=f"{BASE_URL}/repos/{REPO}/contents/",
+    ).mock(return_value=httpx.Response(200, text="raw file content"))
 
     client = httpx.Client()
     gw = RestGitHubGateway(repo=REPO, pr_number=PR_NUMBER, token=TOKEN, client=client)
@@ -96,3 +104,59 @@ def test_get_pr_context_paginates_files_list() -> None:
     # Page 2 files
     assert "src/models.py" in ctx.changed_files
     assert "yarn.lock" in ctx.changed_files
+
+
+def _base_routes() -> None:
+    """Register the meta/diff/files routes shared by the file-content tests."""
+    respx.route(
+        method="GET", url=PR_URL, headers={"Accept": "application/vnd.github.v3.diff"}
+    ).mock(return_value=httpx.Response(200, content=_load("pr_diff.patch").encode()))
+    respx.route(method="GET", url=PR_URL).mock(
+        return_value=httpx.Response(200, json=_load_json("pr_detail.json"))
+    )
+    respx.route(method="GET", url__startswith=FILES_URL).mock(
+        return_value=httpx.Response(200, json=_load_json("pr_files_page1.json"))
+    )
+
+
+def _contents_route(path: str):
+    return respx.route(method="GET", url__startswith=f"{BASE_URL}/repos/{REPO}/contents/{path}")
+
+
+@respx.mock
+def test_get_pr_context_fetches_reviewable_file_contents() -> None:
+    """Head content is fetched for reviewable files and skipped for the rest."""
+    _base_routes()
+    _contents_route("src/app.py").mock(
+        return_value=httpx.Response(200, text="import os\nimport sys\n")
+    )
+    _contents_route("src/utils.py").mock(
+        return_value=httpx.Response(200, text="def helper():\n    return 1\n")
+    )
+    lock_route = _contents_route("package-lock.json").mock(
+        return_value=httpx.Response(200, text="{}")
+    )
+
+    gw = RestGitHubGateway(repo=REPO, pr_number=PR_NUMBER, token=TOKEN, client=httpx.Client())
+    ctx = gw.get_pr_context()
+
+    assert ctx.file_contents["src/app.py"] == "import os\nimport sys\n"
+    assert ctx.file_contents["src/utils.py"].startswith("def helper")
+    # Lockfiles and minified bundles are never fetched.
+    assert "package-lock.json" not in ctx.file_contents
+    assert "app.min.js" not in ctx.file_contents
+    assert not lock_route.called
+
+
+@respx.mock
+def test_get_pr_context_skips_unfetchable_file() -> None:
+    """A 404 (deleted/renamed) file is skipped, not fatal."""
+    _base_routes()
+    _contents_route("src/app.py").mock(return_value=httpx.Response(404))
+    _contents_route("src/utils.py").mock(return_value=httpx.Response(200, text="ok"))
+
+    gw = RestGitHubGateway(repo=REPO, pr_number=PR_NUMBER, token=TOKEN, client=httpx.Client())
+    ctx = gw.get_pr_context()
+
+    assert "src/app.py" not in ctx.file_contents
+    assert ctx.file_contents["src/utils.py"] == "ok"

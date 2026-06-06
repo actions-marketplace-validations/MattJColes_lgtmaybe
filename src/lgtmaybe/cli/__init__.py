@@ -176,6 +176,12 @@ def main() -> None:
 )
 @click.option("--max-files", default=None, type=int, help="Maximum number of files to review")
 @click.option(
+    "--context-lines",
+    default=None,
+    type=int,
+    help="Max unchanged lines added around each hunk for context (0 disables)",
+)
+@click.option(
     "--config",
     "config_path",
     default=".lgtmaybe.yml",
@@ -197,6 +203,7 @@ def review(
     api_base: str | None,
     min_severity: str | None,
     max_files: int | None,
+    context_lines: int | None,
     config_path: str,
     dry_run: bool,
 ) -> None:
@@ -207,6 +214,7 @@ def review(
         model=model,
         min_severity=min_severity,
         max_files=max_files,
+        context_lines=context_lines,
     )
 
     runtime: dict[str, Any] = {
