@@ -77,6 +77,10 @@ Swap the `provider`, `model`, and `api_key` inputs:
     api_key: ${{ secrets.OPENROUTER_API_KEY }}
 ```
 
+For these, the one-time setup is just: generate an API key in the provider's
+console and add it as a repo secret (Settings → Secrets and variables → Actions),
+then reference it as `api_key` above.
+
 ## Keyless cloud workflows
 
 Bedrock (AWS OIDC) and Vertex (GCP WIF) need **no API keys in secrets** — the

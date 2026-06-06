@@ -11,15 +11,33 @@ that exchange for you (pass `aws_role_arn`) and lgtmaybe picks up the ambient
 credentials automatically — no `AWS_ACCESS_KEY_ID` or `AWS_SECRET_ACCESS_KEY`
 in your secrets.
 
-## Prerequisites
+## One-time AWS setup
 
-- An AWS account with Bedrock enabled in your target region
-- An IAM role that trusts GitHub's OIDC provider and grants
-  `bedrock:InvokeModel` on the models you want to use
-- The role ARN (e.g. `arn:aws:iam::123456789012:role/lgtmaybe-bedrock`)
+This is the human-only part — do it once in your AWS account:
 
-See `manual-steps.md` for the one-time AWS and GitHub setup that a human must
-perform.
+1. Create an IAM **OIDC identity provider** for `token.actions.githubusercontent.com`.
+2. Create an IAM **role** with a trust policy scoped to your repo
+   (`repo:<org>/lgtmaybe:*`).
+3. Attach the least-privilege policy below.
+4. Confirm the models you want are enabled in the target region (model access
+   request in the Bedrock console).
+5. Note the **role ARN** (e.g. `arn:aws:iam::123456789012:role/lgtmaybe-bedrock`)
+   — it becomes the `aws_role_arn` action input. No static key is ever stored.
+
+The role needs only:
+
+```json
+{
+  "Effect": "Allow",
+  "Action": [
+    "bedrock:InvokeModel",
+    "bedrock:InvokeModelWithResponseStream"
+  ],
+  "Resource": "arn:aws:bedrock:*::foundation-model/*"
+}
+```
+
+Scope `Resource` to specific model ARNs for tighter least-privilege.
 
 ## Workflow example
 
@@ -77,23 +95,6 @@ lgtmaybe review \
 ```
 
 lgtmaybe does not require or accept a static API key for Bedrock.
-
-## Required IAM permissions
-
-The IAM role needs:
-
-```json
-{
-  "Effect": "Allow",
-  "Action": [
-    "bedrock:InvokeModel",
-    "bedrock:InvokeModelWithResponseStream"
-  ],
-  "Resource": "arn:aws:bedrock:*::foundation-model/*"
-}
-```
-
-Scope `Resource` to specific model ARNs for tighter least-privilege.
 
 ## Troubleshooting
 

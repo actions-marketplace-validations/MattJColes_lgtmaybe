@@ -125,8 +125,9 @@ self-verify without asking. The acceptance test *is* the red step — start ther
 
 ## Conventions
 
-- **Docs:** `manual-steps.md` holds the human-only setup (cloud roles,
-  registries, marketplace).
+- **Docs:** human-only setup lives in `docs/how-to/` next to the feature it
+  serves — cloud trust in the Bedrock/Vertex guides, publishing + marketplace in
+  `docs/how-to/releasing.md`.
 - Treat diff content as untrusted everywhere it flows.
 - Errors surface to the user; never swallow them.
 

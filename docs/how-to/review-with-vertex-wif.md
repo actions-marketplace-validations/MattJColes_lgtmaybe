@@ -10,16 +10,19 @@ exchanges that token for a short-lived GCP access token, impersonating a service
 account that has only the Vertex AI permissions it needs. lgtmaybe uses
 Application Default Credentials (ADC) to pick up those tokens automatically.
 
-## Prerequisites
+## One-time GCP setup
 
-- A GCP project with the Vertex AI API enabled
-- A Workload Identity Pool and Provider configured for GitHub Actions
-- A GCP service account that lgtmaybe will impersonate, with
-  `roles/aiplatform.user` on the project
-- The Workload Identity Provider resource name and the service account email
+This is the human-only part — do it once in your GCP project:
 
-See `manual-steps.md` for the one-time GCP and GitHub setup that a human must
-perform.
+1. Enable the Vertex AI API on the project.
+2. Create a **workload identity pool** + a GitHub provider in it.
+3. Create a **service account** with `roles/aiplatform.user` (or narrower — that
+   role grants `aiplatform.endpoints.predict`; do not assign broader project-level
+   roles).
+4. Grant the GitHub principal permission to impersonate that service account,
+   scoped to your repo.
+5. Note the **WIF provider resource name** (→ `gcp_wif_provider`) and the
+   **service account email** (→ `gcp_service_account`). No key file is ever stored.
 
 ## Workflow example
 
@@ -87,11 +90,6 @@ lgtmaybe review \
 ```
 
 lgtmaybe does not accept a static API key for Vertex.
-
-## Required IAM role
-
-The service account needs `roles/aiplatform.user` on the GCP project, which
-grants `aiplatform.endpoints.predict`. Do not assign broader project-level roles.
 
 ## Troubleshooting
 

@@ -44,6 +44,7 @@ walkthrough.
 - [Review with Vertex WIF](docs/how-to/review-with-vertex-wif.md)
 - [Use as a GitHub Action](docs/how-to/use-as-github-action.md)
 - [Configure .lgtmaybe.yml](docs/how-to/configure-lgtmaybe-yml.md)
+- [Releasing (maintainers)](docs/how-to/releasing.md)
 
 **Reference** — look things up
 
