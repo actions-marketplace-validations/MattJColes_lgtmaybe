@@ -21,6 +21,13 @@ _DEFAULT_OLLAMA_BASE = "http://localhost:11434"
 class AuthConfig:
     api_key: str | None = None
     api_base: str | None = None
+    # An Azure AD (Entra) bearer token for keyless Azure OpenAI — set instead of
+    # api_key when ambient cloud creds (GitHub OIDC / managed identity) are used.
+    azure_ad_token: str | None = None
+
+
+# Data-plane scope for Azure OpenAI / Cognitive Services AD tokens.
+_AZURE_OPENAI_SCOPE = "https://cognitiveservices.azure.com/.default"
 
 
 def _default_aws_probe() -> bool:
@@ -46,12 +53,40 @@ def _default_gcp_probe() -> bool:
     )
 
 
+def _default_azure_token() -> str | None:
+    """Fetch an Azure AD access token for Azure OpenAI from ambient credentials.
+
+    Uses azure-identity's ``DefaultAzureCredential``, which transparently covers
+    GitHub OIDC workload-identity federation in CI (``AZURE_FEDERATED_TOKEN_FILE``
+    + ``AZURE_CLIENT_ID`` + ``AZURE_TENANT_ID``) and local creds when developing
+    (``az login``, a managed identity, or ``AZURE_*`` env vars). Returns ``None``
+    when no ambient credential is available so the resolver can fall through to a
+    clear error.
+    """
+    try:
+        from azure.identity import DefaultAzureCredential
+    except ImportError as exc:
+        raise ValueError(
+            "keyless azure needs the azure-identity package. "
+            "Install it with 'pip install lgtmaybe[azure]' (the GitHub Action "
+            "image already bundles it)."
+        ) from exc
+
+    try:
+        credential = DefaultAzureCredential()
+        token: str = credential.get_token(_AZURE_OPENAI_SCOPE).token
+        return token
+    except Exception:
+        return None
+
+
 def resolve_credentials(
     provider: Provider,
     *,
     api_key: str | None = None,
     api_base: str | None = None,
     ambient_probe: Callable[[], bool] | None = None,
+    azure_token_provider: Callable[[], str | None] | None = None,
 ) -> AuthConfig:
     """Resolve auth for the given provider.
 
@@ -78,6 +113,39 @@ def resolve_credentials(
                 "to a service-account key file, or run 'gcloud auth application-default login'."
             )
         return AuthConfig()
+
+    if provider is Provider.azure:
+        import os
+
+        base = api_base or os.environ.get("AZURE_API_BASE")
+        if not base:
+            raise ValueError(
+                "azure requires the resource endpoint. Set the AZURE_API_BASE "
+                "environment variable (e.g. https://<resource>.openai.azure.com) "
+                "or pass --api-base."
+            )
+
+        # Key-based auth wins when a key is supplied (explicit or env).
+        key = api_key or os.environ.get("AZURE_API_KEY")
+        if key:
+            return AuthConfig(api_key=key, api_base=base)
+
+        # Keyless: ambient Azure AD creds — GitHub OIDC federation in CI, or a
+        # local 'az login' / managed identity. No static key is stored.
+        get_token = (
+            azure_token_provider if azure_token_provider is not None else _default_azure_token
+        )
+        token = get_token()
+        if token:
+            return AuthConfig(api_base=base, azure_ad_token=token)
+
+        raise ValueError(
+            "azure requires credentials. Either set AZURE_API_KEY (or pass "
+            "--api-key) for key-based auth, or configure keyless Azure AD "
+            "credentials — GitHub OIDC via azure/login (needs id-token: write "
+            "and a federated credential on your Entra app), or a local "
+            "'az login' / managed identity."
+        )
 
     if provider is Provider.ollama:
         return AuthConfig(api_base=api_base or _DEFAULT_OLLAMA_BASE)

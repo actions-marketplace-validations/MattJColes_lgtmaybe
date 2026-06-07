@@ -1,5 +1,5 @@
 site_name: lgtmaybe
-site_description: Provider-agnostic PR reviewer — five providers, one flag, no keys in secrets for cloud.
+site_description: Provider-agnostic PR reviewer — six providers, one flag, no keys in secrets for cloud.
 site_url: https://mattjcoles.github.io/lgtmaybe/
 repo_url: https://github.com/MattJColes/lgtmaybe
 repo_name: MattJColes/lgtmaybe
@@ -62,6 +62,7 @@ nav:
       - Fix findings with an AI agent: how-to/fix-findings-with-an-ai-agent.md
       - Review with Bedrock OIDC: how-to/review-with-bedrock-oidc.md
       - Review with Vertex WIF: how-to/review-with-vertex-wif.md
+      - Review with Azure OpenAI: how-to/review-with-azure.md
       - Use as a GitHub Action: how-to/use-as-github-action.md
       - Configure .lgtmaybe.yml: how-to/configure-lgtmaybe-yml.md
       - Releasing (maintainers): how-to/releasing.md

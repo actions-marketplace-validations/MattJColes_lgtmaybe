@@ -1,10 +1,12 @@
 # Auth Model
 
-lgtmaybe supports five providers with three distinct auth approaches. The design
-principle is **no static cloud credentials**: cloud providers use ambient,
-short-lived tokens; only key-based SaaS providers (openai, anthropic,
-openrouter) require an API key, and even those stay in secrets rather than being
-committed to config.
+lgtmaybe supports six providers. The design principle is **no static cloud
+credentials**: cloud providers use ambient, short-lived tokens; key-based SaaS
+providers (openai, anthropic, openrouter) require an API key that stays in
+secrets rather than being committed to config. Azure straddles both — it prefers
+ambient Azure AD (Entra) credentials but accepts a resource key — and always
+needs the resource endpoint (`AZURE_API_BASE`), since each Azure OpenAI
+deployment lives at its own URL.
 
 ## Why keyless for cloud
 
@@ -13,7 +15,8 @@ Static credentials — an AWS access key pair or a GCP service-account JSON file
 manager misconfiguration, or a compromised runner, an attacker retains access
 until the key is manually rotated.
 
-OIDC (AWS) and Workload Identity Federation (GCP) issue tokens that:
+OIDC (AWS), Workload Identity Federation (GCP), and federated credentials on an
+Entra app (Azure) issue tokens that:
 
 - Expire in minutes, not years
 - Are scoped to a single workflow run
@@ -22,7 +25,10 @@ OIDC (AWS) and Workload Identity Federation (GCP) issue tokens that:
 - Are tied to the specific repository and branch via the OIDC claim set
 
 For these reasons, lgtmaybe treats Bedrock and Vertex as **ambient-credential
-only** providers. There is no `--api-key` flag for them.
+only** providers. There is no `--api-key` flag for them. Azure defaults to the
+same keyless path (GitHub OIDC → Entra, via `azure-identity`'s
+`DefaultAzureCredential`) but additionally accepts a resource key for teams that
+can't yet adopt federation.
 
 ## Chain of responsibility
 
@@ -36,7 +42,13 @@ chain:
 3. **API key** — for openai, anthropic, and openrouter, lgtmaybe reads the
    key from the environment (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`,
    `OPENROUTER_API_KEY`). The `--api-key` flag can override this at the CLI.
-4. **None** — ollama requires no credentials. Only `--api-base` is needed
+4. **Azure** — always needs the resource endpoint (`AZURE_API_BASE` or
+   `--api-base`). For the credential it prefers a key when one is present
+   (`AZURE_API_KEY` / `--api-key`); otherwise it goes **keyless**, minting an
+   Azure AD token from ambient creds (GitHub OIDC federation in CI, or a local
+   `az login` / managed identity). If neither a key nor an ambient credential is
+   available, lgtmaybe fails with a message naming both options.
+5. **None** — ollama requires no credentials. Only `--api-base` is needed
    to reach the local or remote server.
 
 ## Provider auth summary
@@ -48,6 +60,7 @@ chain:
 | openrouter | API key | `OPENROUTER_API_KEY` env var or `--api-key` |
 | bedrock | Ambient AWS creds | GitHub OIDC role or local `~/.aws`; IAM requires only `bedrock:InvokeModel*` |
 | vertex | Ambient GCP creds | GitHub WIF or local ADC (`gcloud auth application-default login`) |
+| azure | Ambient Azure AD creds (keyless) or API key, + endpoint | GitHub OIDC → Entra federated credential, or local `az login` / managed identity; or `AZURE_API_KEY`. Always with `AZURE_API_BASE` / `--api-base` |
 | ollama | None | `--api-base` pointing to the local or remote server |
 
 ## Least-privilege IAM
@@ -58,6 +71,11 @@ permissions are needed or requested.
 
 For Vertex, `roles/aiplatform.user` on the project is sufficient.
 `roles/editor` or `roles/owner` must not be used.
+
+For Azure (keyless), the Entra app needs only the **Cognitive Services OpenAI
+User** role on the Azure OpenAI resource — enough to call deployments, not to
+manage them — plus a federated credential scoped to your repository. No owner or
+contributor role is required.
 
 ## API keys in secrets, not config
 
