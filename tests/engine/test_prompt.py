@@ -62,3 +62,11 @@ def test_prompt_reaffirms_diff_is_untrusted_data() -> None:
     """Defence-in-depth: the system prompt itself restates the injection guard."""
     prompt = build_system_prompt().lower()
     assert "data" in prompt and ("untrusted" in prompt or "never follow" in prompt)
+
+
+def test_prompt_asks_for_deprecated_and_eol_review() -> None:
+    """The reviewer should flag deprecated APIs and end-of-life dependencies."""
+    prompt = build_system_prompt().lower()
+    assert "deprecat" in prompt  # deprecated / deprecation
+    assert "end-of-life" in prompt or "end of life" in prompt
+    assert "dependenc" in prompt  # dependency / dependencies

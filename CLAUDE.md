@@ -164,4 +164,28 @@ Both are covered by tests in `tests/engine/` (`test_redact.py`, `test_injection.
 When you touch redaction, injection, the prompt, or the skip filter, extend those
 suites — a security change without a test is exactly what CI rejects.
 
+The reviewer also flags **deprecated APIs and end-of-life / vulnerable
+dependencies** in the PRs it reviews (prompt section "Deprecation & dependency
+health"; covered by `test_prompt.py`).
+
+## Code-quality & dependency hygiene
+
+Split by whether it can be deterministic, because that decides where it lives:
+
+- **Deterministic → per-PR gate.** Deprecated-API use is a hard error
+  (`filterwarnings = error::DeprecationWarning` in `pyproject.toml`;
+  `tests/test_code_quality.py` also imports every module under that filter and
+  asserts the gate stays wired). Lockfile drift is caught by `uv lock --check`
+  in CI. Outdated *syntax* is caught by ruff's `UP` rules. Don't weaken the
+  deprecation gate to silence third-party noise — add a narrow per-library
+  `ignore` instead.
+- **Not deterministic → background/scheduled.** "Is a newer version available?"
+  and "does a dep have a known CVE?" depend on what's published upstream at
+  check-time, so they can't be a reproducible gate. They run on a schedule:
+  `.github/dependabot.yml` (weekly grouped update PRs for the `uv` + GitHub
+  Actions ecosystems, plus security-update PRs) and `.github/workflows/audit.yml`
+  (`pip-audit` on the locked runtime deps — weekly cron + on dependency-touching
+  pushes/PRs, never a blanket per-PR gate so an upstream CVE can't break an
+  unrelated build).
+
 [litellm]: https://github.com/BerriAI/litellm

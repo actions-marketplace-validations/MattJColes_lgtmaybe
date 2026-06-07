@@ -1,0 +1,39 @@
+name: audit
+
+# Dependency vulnerability (CVE) scan. This is deliberately NOT a deterministic
+# per-PR gate: a CVE disclosed upstream can change the result without any code
+# change, so running it on every PR would randomly break unrelated builds.
+# Instead it runs on a weekly schedule, on pushes/PRs that actually touch the
+# dependency set, and on demand.
+on:
+  schedule:
+    - cron: "0 6 * * 1" # Mondays 06:00 UTC
+  push:
+    branches: [main]
+    paths:
+      - "pyproject.toml"
+      - "uv.lock"
+  pull_request:
+    paths:
+      - "pyproject.toml"
+      - "uv.lock"
+  workflow_dispatch:
+
+jobs:
+  pip-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+          enable-cache: true
+
+      - name: Export locked runtime dependencies
+        # Audit exactly what ships to users (runtime deps, pinned by the lockfile).
+        run: uv export --frozen --no-dev --no-emit-project --format requirements-txt -o audit-requirements.txt
+
+      - name: Audit for known vulnerabilities
+        run: uvx pip-audit --requirement audit-requirements.txt

@@ -50,6 +50,20 @@ This shapes *what* the reviewer flags. It is separate from how lgtmaybe protects
 [Data and Privacy](data-and-privacy.md) for secret redaction and prompt-injection
 defence.
 
+## Deprecation & dependency health
+
+Beyond bugs and vulnerabilities, the reviewer also flags **factually outdated**
+code when the diff shows it — these are objective, not stylistic:
+
+- deprecated language/framework APIs (with the modern replacement suggested when
+  known),
+- targeting an end-of-life runtime or language version,
+- adding or pinning an end-of-life / abandoned dependency, and
+- pinning a dependency to a version with a known security advisory.
+
+The reviewer only raises these when the diff itself shows the change; it does not
+speculate about code it cannot see.
+
 ## How the scope is bounded
 
 Every run is bounded so a large PR can't run away on latency or cost. All of
