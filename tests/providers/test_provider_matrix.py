@@ -28,6 +28,7 @@ EXPECTED_PREFIX: dict[Provider, str] = {
     Provider.anthropic: "anthropic/",
     Provider.bedrock: "bedrock/",
     Provider.vertex: "vertex_ai/",
+    Provider.azure: "azure/",
     Provider.ollama: "ollama/",
 }
 
@@ -41,6 +42,8 @@ KEY_PROVIDERS: dict[Provider, str] = {
 CLOUD_PROVIDERS = (Provider.bedrock, Provider.vertex)
 # Providers that need no auth at all.
 NO_AUTH_PROVIDERS = (Provider.ollama,)
+# Hybrid: always needs an endpoint, then EITHER a key OR an ambient AD token.
+HYBRID_PROVIDERS = (Provider.azure,)
 
 
 def test_every_provider_is_classified_exactly_once() -> None:
@@ -50,7 +53,12 @@ def test_every_provider_is_classified_exactly_once() -> None:
     it authenticates — this is what makes the matrix below truly exhaustive.
     """
     assert set(EXPECTED_PREFIX) == set(Provider)
-    auth_classes = [set(KEY_PROVIDERS), set(CLOUD_PROVIDERS), set(NO_AUTH_PROVIDERS)]
+    auth_classes = [
+        set(KEY_PROVIDERS),
+        set(CLOUD_PROVIDERS),
+        set(NO_AUTH_PROVIDERS),
+        set(HYBRID_PROVIDERS),
+    ]
     union = set().union(*auth_classes)
     assert union == set(Provider)
     # disjoint: no provider classified twice
@@ -113,3 +121,38 @@ class TestNoAuthProvider:
         built = build_provider(Provider.ollama, "llama3")
         assert built.default_opts.get("api_base")
         assert built.force_cost_zero is True
+
+
+_AZURE_BASE = "https://my-resource.openai.azure.com"
+
+
+@pytest.mark.parametrize("provider", HYBRID_PROVIDERS)
+class TestHybridProviderCredentials:
+    """Azure resolves in BOTH modes — the property that earns it its own class.
+
+    It always needs an endpoint, then either a static key or an ambient Azure AD
+    token; it fits neither the pure-key nor the pure-cloud bucket above.
+    """
+
+    def test_requires_an_endpoint(self, provider: Provider) -> None:
+        # A key but no endpoint must still fail (conftest clears AZURE_API_BASE).
+        with pytest.raises(ValueError, match=provider.value):
+            resolve_credentials(provider, api_key="k")
+
+    def test_key_mode_resolves_with_key_and_base(self, provider: Provider) -> None:
+        cfg = resolve_credentials(provider, api_key="k", api_base=_AZURE_BASE)
+        assert cfg.api_key == "k"
+        assert cfg.api_base == _AZURE_BASE
+        assert cfg.azure_ad_token is None
+
+    def test_keyless_mode_resolves_with_ambient_ad_token(self, provider: Provider) -> None:
+        cfg = resolve_credentials(
+            provider, api_base=_AZURE_BASE, azure_token_provider=lambda: "ad-token"
+        )
+        assert cfg.api_key is None
+        assert cfg.azure_ad_token == "ad-token"
+        assert cfg.api_base == _AZURE_BASE
+
+    def test_build_provider_threads_the_endpoint(self, provider: Provider) -> None:
+        built = build_provider(provider, "gpt-4o", api_key="k", api_base=_AZURE_BASE)
+        assert built.default_opts.get("api_base") == _AZURE_BASE

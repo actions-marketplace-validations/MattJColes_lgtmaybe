@@ -93,6 +93,15 @@ CASES = [
         "vertex_ai/claude-x",
         False,
     ),
+    (
+        "azure",
+        "azure",
+        "gpt-4o",
+        ["--api-key", "sk-x", "--api-base", "https://r.openai.azure.com"],
+        {},
+        "azure/gpt-4o",
+        True,
+    ),
     ("ollama", "ollama", "llama3", [], {}, "ollama/llama3", False),
 ]
 

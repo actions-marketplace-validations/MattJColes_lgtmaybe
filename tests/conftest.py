@@ -31,6 +31,12 @@ _PROVIDER_CRED_ENV = (
     "GOOGLE_APPLICATION_CREDENTIALS",
     "GOOGLE_CLOUD_PROJECT",
     "GCLOUD_PROJECT",
+    # Azure (hybrid): endpoint + key, or keyless ambient Azure AD creds
+    "AZURE_API_KEY",
+    "AZURE_API_BASE",
+    "AZURE_CLIENT_ID",
+    "AZURE_TENANT_ID",
+    "AZURE_FEDERATED_TOKEN_FILE",
 )
 
 

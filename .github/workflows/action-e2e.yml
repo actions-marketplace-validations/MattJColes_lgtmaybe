@@ -18,8 +18,9 @@
 #   OPENAI_API_KEY, ANTHROPIC_API_KEY, OPENROUTER_API_KEY  (key providers)
 #   AWS_ROLE_ARN                                           (bedrock, keyless OIDC)
 #   GCP_WIF_PROVIDER, GCP_SERVICE_ACCOUNT                  (vertex, keyless WIF)
+#   AZURE_API_BASE, AZURE_CLIENT_ID, AZURE_TENANT_ID       (azure, keyless OIDC)
 # Model ids below are illustrative cheap-tier examples — adjust to ones your
-# account/region has enabled.
+# account/region has enabled (azure `model` is your deployment name).
 name: action-e2e
 
 on:
@@ -65,6 +66,10 @@ jobs:
             model: claude-haiku-4-5
             api_key_secret: ""
             cloud: gcp
+          - provider: azure
+            model: my-gpt-4o-deployment # your Azure deployment name
+            api_key_secret: ""
+            cloud: azure
     steps:
       - uses: actions/checkout@v6
 
@@ -84,3 +89,6 @@ jobs:
           aws_region: ${{ matrix.cloud == 'aws' && 'us-east-1' || '' }}
           gcp_wif_provider: ${{ matrix.cloud == 'gcp' && secrets.GCP_WIF_PROVIDER || '' }}
           gcp_service_account: ${{ matrix.cloud == 'gcp' && secrets.GCP_SERVICE_ACCOUNT || '' }}
+          api_base: ${{ matrix.cloud == 'azure' && secrets.AZURE_API_BASE || '' }}
+          azure_client_id: ${{ matrix.cloud == 'azure' && secrets.AZURE_CLIENT_ID || '' }}
+          azure_tenant_id: ${{ matrix.cloud == 'azure' && secrets.AZURE_TENANT_ID || '' }}
