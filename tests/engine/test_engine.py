@@ -169,6 +169,19 @@ def test_summary_names_the_model_without_cost() -> None:
     assert "$" not in summary
 
 
+def test_summary_names_provider_and_model() -> None:
+    """The summary names both provider and model so concurrent multi-provider runs
+    on one PR are distinguishable."""
+    provider = _provider_for([_HIGH], reflection_keeps_all=True)
+    engine = LLMReviewEngine(provider)
+    cfg = ReviewConfig(provider=Provider.openrouter, model="openai/gpt-4.1-mini")
+
+    _, summary = engine.review(_CTX, cfg)
+
+    assert "openrouter" in summary
+    assert "openai/gpt-4.1-mini" in summary
+
+
 # ---------------------------------------------------------------------------
 # reflection toggle
 # ---------------------------------------------------------------------------

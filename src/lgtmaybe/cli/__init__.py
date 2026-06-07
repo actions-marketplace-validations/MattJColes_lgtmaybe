@@ -97,7 +97,12 @@ def build_review_context(
         )
 
     engine, provider = build_provider_engine(cfg, runtime)
-    github = RestGitHubGateway(repo=repo, pr_number=pr_number, token=token)
+    github = RestGitHubGateway(
+        repo=repo,
+        pr_number=pr_number,
+        token=token,
+        marker_key=f"{cfg.provider}/{cfg.model}",
+    )
     return github, engine, provider
 
 
