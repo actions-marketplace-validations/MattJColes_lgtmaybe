@@ -70,3 +70,37 @@ def test_prompt_asks_for_deprecated_and_eol_review() -> None:
     assert "deprecat" in prompt  # deprecated / deprecation
     assert "end-of-life" in prompt or "end of life" in prompt
     assert "dependenc" in prompt  # dependency / dependencies
+
+
+def test_prompt_asks_for_logic_and_edge_case_review() -> None:
+    """The reviewer should hunt correctness/logic bugs, not just security."""
+    prompt = build_system_prompt().lower()
+    assert "correctness" in prompt
+    assert "off-by-one" in prompt
+    assert "boundary" in prompt
+    assert "dereference" in prompt  # null/None dereferences
+
+
+def test_prompt_asks_for_test_coverage() -> None:
+    """Changed code paths shipped without a test should be flagged."""
+    prompt = build_system_prompt().lower()
+    assert "coverage" in prompt
+    assert "accompanying test" in prompt
+    assert "suggestion" in prompt  # a runnable test goes in the suggestion field
+
+
+def test_prompt_asks_for_documentation_review() -> None:
+    """Public surfaces added without docs should be flagged, restrained to public APIs."""
+    prompt = build_system_prompt().lower()
+    assert "documentation" in prompt
+    assert "docstring" in prompt
+    assert "public" in prompt
+
+
+def test_prompt_names_pii_and_secrets_in_logs() -> None:
+    """Sensitive-data exposure should name concrete PII/secret leaks into logs."""
+    prompt = build_system_prompt().lower()
+    assert "log" in prompt
+    assert "pii" in prompt
+    assert "ssn" in prompt  # SSNs
+    assert "password" in prompt

@@ -154,11 +154,18 @@ Two distinct concerns, kept separate:
   redaction before egress, structured-output schema enforcement (`extra=forbid`
   rejects drifted/injected fields), and fork safety via `pull_request_target`
   with no checkout.
-- **What the reviewer looks for** (so it catches vulns in *your* PR): the system
+- **What the reviewer looks for** (so it catches issues in *your* PR): the system
   prompt (`engine/prompt.py`) carries an **OWASP-aligned security checklist** —
   injection, XSS, hardcoded secrets, broken authn/authz, path traversal, SSRF,
-  insecure deserialization, weak crypto, sensitive-data exposure, resource/DoS
-  safety — graded `high`/`critical`.
+  insecure deserialization, weak crypto, sensitive-data exposure (secrets/PII —
+  passwords, tokens, SSNs, card data — leaking into logs), resource/DoS safety —
+  graded `high`/`critical`. Alongside security it also scans for
+  **correctness/logic bugs** (edge cases, null/None derefs, off-by-one and
+  boundary errors, mismatched/inverted ranges, unhandled error paths;
+  "Correctness & logic" section), **missing tests** for changed code paths
+  (flagged `low`/`medium`, with a runnable test in the finding's `suggestion`
+  field; "Test coverage" section), and **documentation gaps** on public APIs
+  (`info`/`low`, restrained to public surfaces; "Documentation" section).
 
 Both are covered by tests in `tests/engine/` (`test_redact.py`, `test_injection.py`,
 `test_prompt.py`, `test_parse.py`, `test_engine.py`) and `tests/github/test_diff.py`.
@@ -167,7 +174,11 @@ suites — a security change without a test is exactly what CI rejects.
 
 The reviewer also flags **deprecated APIs and end-of-life / vulnerable
 dependencies** in the PRs it reviews (prompt section "Deprecation & dependency
-health"; covered by `test_prompt.py`).
+health"; covered by `test_prompt.py`). Every scan category is asserted in
+`test_prompt.py` (`test_prompt_asks_for_logic_and_edge_case_review`,
+`test_prompt_asks_for_test_coverage`, `test_prompt_asks_for_documentation_review`,
+`test_prompt_names_pii_and_secrets_in_logs`) — extend those when you change the
+prompt's checklist.
 
 ## Code-quality & dependency hygiene
 
