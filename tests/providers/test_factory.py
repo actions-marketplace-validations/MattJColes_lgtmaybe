@@ -71,6 +71,10 @@ class TestBuildProvider:
         provider = build_provider(Provider.ollama, "llama2", timeout=600)
         assert provider.default_opts.get("timeout") == 600
 
+    def test_build_provider_threads_temperature_into_default_opts(self) -> None:
+        provider = build_provider(Provider.ollama, "llama2", temperature=0.0)
+        assert provider.default_opts.get("temperature") == 0.0
+
     def test_factory_provider_calls_litellm_with_resolved_model(self) -> None:
         """The engine passes the raw cfg.model; the call must still use the
         factory-resolved model string (regression for 'LLM Provider NOT provided')."""

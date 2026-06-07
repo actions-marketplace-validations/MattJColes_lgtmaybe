@@ -22,6 +22,8 @@ The user-facing configuration model. Fields map directly to `.lgtmaybe.yml` keys
 | `min_severity` | `critical` / `high` / `info` / `low` / `medium` | No | `info` |  |
 | `model` | string | Yes | — | Model |
 | `provider` | `anthropic` / `bedrock` / `ollama` / `openai` / `openrouter` / `vertex` | Yes | — |  |
+| `reflect` | boolean | No | `True` | Reflect |
+| `temperature` | number | No | `0.0` | Temperature |
 | `timeout` | integer | No | `60` | Timeout |
 
 ## Enums
@@ -180,6 +182,16 @@ The canonical machine-readable schemas. These are the source of truth for provid
     },
     "provider": {
       "$ref": "#/$defs/Provider"
+    },
+    "reflect": {
+      "default": true,
+      "title": "Reflect",
+      "type": "boolean"
+    },
+    "temperature": {
+      "default": 0.0,
+      "title": "Temperature",
+      "type": "number"
     },
     "timeout": {
       "default": 60,
