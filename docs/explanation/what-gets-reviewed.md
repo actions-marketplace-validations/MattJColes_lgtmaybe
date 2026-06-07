@@ -140,8 +140,9 @@ src/app.py:2  [MEDIUM] Import order
 1 finding · model qwen3.6:27b · approx cost $0.0000
 ```
 
-Add `--json` to print the findings as a JSON array instead, so the same
-structured data can be piped into other tooling:
+`--format` selects the output. `--json` is shorthand for `--format json`, which
+prints the findings as a JSON array so the same structured data can be piped into
+other tooling:
 
 ```console
 $ lgtmaybe review --provider ollama --model qwen3.6:27b --api-base http://localhost:11434 --json
@@ -149,6 +150,10 @@ $ lgtmaybe review --provider ollama --model qwen3.6:27b --api-base http://localh
   "title": "Import order", "body": "sys should be sorted before os",
   "suggestion": null}]
 ```
+
+`--format agent` turns the findings into plain correction instructions an AI
+coding agent can read and apply — a local review-and-fix loop. See
+[Fix findings with an AI agent](../how-to/fix-findings-with-an-ai-agent.md).
 
 ## See also
 

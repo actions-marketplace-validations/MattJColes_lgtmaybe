@@ -116,6 +116,19 @@ class TestReviewCommandLocal:
         assert isinstance(parsed, list)
         assert parsed[0]["severity"] == "low"
 
+    def test_format_agent_outputs_correction_instructions(self, monkeypatch):
+        """`review --format agent` emits directive instructions for an AI to apply."""
+        _patch_local(monkeypatch)
+
+        result = CliRunner().invoke(
+            main,
+            ["review", "--provider", "ollama", "--model", "llama3", "--format", "agent"],
+        )
+
+        assert result.exit_code == 0, result.output
+        assert "canned finding" in result.output
+        assert "apply" in result.output.lower()
+
     def test_does_not_require_github_token(self, monkeypatch):
         """The local review must work with no GITHUB_TOKEN in the environment."""
         monkeypatch.delenv("GITHUB_TOKEN", raising=False)

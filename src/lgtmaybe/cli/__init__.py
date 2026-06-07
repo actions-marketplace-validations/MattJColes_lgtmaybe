@@ -72,10 +72,17 @@ def parse_pr_url(pr_url: str) -> tuple[str, int]:
     return f"{match['owner']}/{match['repo']}", int(match["number"])
 
 
-def render_findings(findings: list[ReviewFinding], summary: str, *, as_json: bool) -> str:
-    """Format findings for the local CLI: JSON array, or a human listing + summary."""
-    if as_json:
+def render_findings(findings: list[ReviewFinding], summary: str, *, fmt: str = "human") -> str:
+    """Format findings for the local CLI.
+
+    ``fmt`` selects the output: ``human`` (a readable listing + summary),
+    ``json`` (a machine-readable array), or ``agent`` (directive correction
+    instructions for an AI coding agent to read and apply).
+    """
+    if fmt == "json":
         return json.dumps([f.model_dump(mode="json") for f in findings])
+    if fmt == "agent":
+        return _render_agent(findings, summary)
 
     lines: list[str] = []
     for f in findings:
@@ -85,6 +92,31 @@ def render_findings(findings: list[ReviewFinding], summary: str, *, as_json: boo
             lines.append(f"  suggestion: {f.suggestion}")
         lines.append("")
     lines.append(summary)
+    return "\n".join(lines)
+
+
+def _render_agent(findings: list[ReviewFinding], summary: str) -> str:
+    """Render findings as correction instructions for an AI agent to apply."""
+    if not findings:
+        return f"No review findings — nothing to correct. {summary}"
+
+    lines = [
+        "Code review findings for your local changes. Act as the developer and "
+        "apply each correction below: open the file at the given path and line, "
+        "fix the issue, and apply the suggested change where one is given.",
+        "",
+    ]
+    for i, f in enumerate(findings, 1):
+        lines.append(f"[{i}] {f.path}:{f.line}  ({f.severity.upper()})  {f.title}")
+        lines.append(f"    Issue: {f.body}")
+        if f.suggestion is not None:
+            lines.append("    Suggested fix:")
+            lines.extend(f"        {s}" for s in f.suggestion.splitlines() or [f.suggestion])
+        lines.append("")
+    lines.append(
+        f"{len(findings)} finding(s) to address. After applying the fixes, re-run "
+        "`lgtmaybe review` to confirm they are resolved."
+    )
     return "\n".join(lines)
 
 
@@ -201,11 +233,19 @@ def main() -> None:
     help="Review uncommitted working-tree changes instead of the branch vs base",
 )
 @click.option(
+    "--format",
+    "output_format",
+    type=click.Choice(["human", "json", "agent"]),
+    default=None,
+    help="Output format: human listing (default), json array, or agent "
+    "(correction instructions for an AI coding agent to read and apply).",
+)
+@click.option(
     "--json",
     "as_json",
     is_flag=True,
     default=False,
-    help="Output findings as a JSON array instead of a human listing",
+    help="Shorthand for --format json.",
 )
 @click.option(
     "--context-lines",
@@ -230,6 +270,7 @@ def review(
     max_files: int | None,
     base: str | None,
     working: bool,
+    output_format: str | None,
     as_json: bool,
     context_lines: int | None,
     config_path: str,
@@ -251,7 +292,8 @@ def review(
         "fallback_model": fallback_model,
     }
 
-    execute_local_review(cfg, runtime, base=base, working=working, as_json=as_json)
+    fmt = output_format or ("json" if as_json else "human")
+    execute_local_review(cfg, runtime, base=base, working=working, fmt=fmt)
 
 
 def execute_local_review(
@@ -260,7 +302,7 @@ def execute_local_review(
     *,
     base: str | None,
     working: bool,
-    as_json: bool,
+    fmt: str,
 ) -> None:
     """Review the local git diff and print findings — no GitHub involvement.
 
@@ -287,7 +329,7 @@ def execute_local_review(
     except Exception as exc:
         raise click.ClickException(str(exc)) from exc
 
-    click.echo(render_findings(findings, summary, as_json=as_json))
+    click.echo(render_findings(findings, summary, fmt=fmt))
 
 
 def execute_review(cfg: ReviewConfig, runtime: dict[str, Any], *, dry_run: bool) -> None:
