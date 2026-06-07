@@ -14,8 +14,8 @@ the findings; to post reviews on real pull requests, use the
 ## Pull the model you want
 
 ```bash
-ollama pull qwen3.6:27b        # good general-purpose model
-ollama pull codellama     # code-focused alternative
+ollama pull qwen3.6:27b        # strong all-round coding model
+ollama pull gemma4:e4b         # smaller — for devices with limited RAM
 ```
 
 List available models:
