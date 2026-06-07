@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0](https://github.com/MattJColes/lgtmaybe/compare/lgtmaybe-v0.0.2...lgtmaybe-v0.1.0) (2026-06-07)
+
+
+### Miscellaneous Chores
+
+* release 0.1.0 ([3e4fa01](https://github.com/MattJColes/lgtmaybe/commit/3e4fa017d3d79377a4a88123ad9a72b2278dd289))
+
 ## [0.0.2](https://github.com/MattJColes/lgtmaybe/compare/lgtmaybe-v0.0.1...lgtmaybe-v0.0.2) (2026-06-07)
 
 
