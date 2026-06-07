@@ -6,7 +6,7 @@
 
 </div>
 
-Provider-agnostic PR reviewer. Five providers, one flag, and no static keys for
+Provider-agnostic PR reviewer. Six providers, one flag, and no static keys for
 cloud providers. It posts inline comments and a summary straight onto the pull
 request.
 
@@ -39,7 +39,7 @@ before anything leaves for the model, and a clean PR just gets a 👍 **LGTM!**.
 <div class="grid cards" markdown>
 
 - **Tutorial** — [Getting started](tutorial/getting-started.md): your first review with ollama, locally and free.
-- **How-to** — task recipes: [run locally](how-to/run-locally-with-ollama.md), [Bedrock OIDC](how-to/review-with-bedrock-oidc.md), [Vertex WIF](how-to/review-with-vertex-wif.md), [GitHub Action](how-to/use-as-github-action.md).
+- **How-to** — task recipes: [run locally](how-to/run-locally-with-ollama.md), [Bedrock OIDC](how-to/review-with-bedrock-oidc.md), [Vertex WIF](how-to/review-with-vertex-wif.md), [Azure OpenAI](how-to/review-with-azure.md), [GitHub Action](how-to/use-as-github-action.md).
 - **Reference** — [Configuration](reference/config.md): every config field and schema.
 - **Explanation** — [What gets reviewed](explanation/what-gets-reviewed.md), [Architecture](explanation/architecture.md), [Auth model](explanation/auth-model.md), [Data & privacy](explanation/data-and-privacy.md).
 
@@ -54,4 +54,5 @@ before anything leaves for the model, and a clean PR just gets a 👍 **LGTM!**.
 | `openrouter` | `OPENROUTER_API_KEY` |
 | `bedrock` | Ambient AWS creds — GitHub OIDC, no static key |
 | `vertex` | Ambient GCP creds — Workload Identity Federation, no key |
+| `azure` | Ambient Azure AD creds — GitHub OIDC, no static key (or `AZURE_API_KEY`) + endpoint |
 | `ollama` | None — local only, zero cost |

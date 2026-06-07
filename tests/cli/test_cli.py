@@ -261,3 +261,25 @@ class TestBuildAdapters:
         _github, _engine, provider = build_review_context(cfg, runtime)
 
         assert provider.fallback_model == "ollama/llama2"
+
+    def test_azure_keyless_ad_token_threads_to_provider(self, monkeypatch):
+        """Keyless azure resolves an ambient AD token and threads it to litellm."""
+        from lgtmaybe.cli import build_review_context
+
+        monkeypatch.setenv("GITHUB_TOKEN", "ghp_test")
+        monkeypatch.delenv("AZURE_API_KEY", raising=False)
+        monkeypatch.setattr(
+            "lgtmaybe.providers.credentials._default_azure_token",
+            lambda: "ad-token-from-oidc",
+        )
+        cfg = _default_cfg(provider="azure", model="my-deployment")
+        runtime = {
+            "pr_url": "https://github.com/org/repo/pull/7",
+            "api_key": None,
+            "api_base": "https://my-resource.openai.azure.com",
+        }
+
+        _github, _engine, provider = build_review_context(cfg, runtime)
+
+        assert provider.default_opts.get("azure_ad_token") == "ad-token-from-oidc"
+        assert "api_key" not in provider.default_opts

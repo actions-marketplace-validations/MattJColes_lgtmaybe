@@ -67,6 +67,7 @@ def build_provider_engine(
         cfg.model,
         api_key=auth.api_key,
         api_base=auth.api_base,
+        azure_ad_token=auth.azure_ad_token,
         fallback_model=runtime.fallback_model,
         timeout=cfg.timeout,
         temperature=cfg.temperature,
@@ -251,6 +252,7 @@ def action_inputs() -> dict[str, str | None]:
         "model": get("MODEL"),
         "fallback_model": get("FALLBACK_MODEL"),
         "api_key": get("API_KEY"),
+        "api_base": get("API_BASE"),
         "config_path": os.environ.get("INPUT_CONFIG_PATH") or ".lgtmaybe.yml",
     }
 
