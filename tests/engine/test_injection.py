@@ -42,6 +42,13 @@ def test_delimiter_instructs_ignore_inside() -> None:
     )
 
 
+def test_wrap_diff_restates_the_review_task() -> None:
+    """The wrapper must restate the review task so weaker models still produce findings."""
+    lower = wrap_diff("@@ -1 +1 @@\n+x\n").lower()
+    assert "review" in lower
+    assert "json" in lower
+
+
 # ---------------------------------------------------------------------------
 # Delimiter break-out defence (OWASP LLM01 — attacker-controlled fork diff)
 # ---------------------------------------------------------------------------
@@ -54,10 +61,12 @@ def test_forged_end_marker_cannot_close_the_block_early() -> None:
     )
     wrapped = wrap_diff(malicious)
 
-    # The real closing marker appears exactly once — at the very end — so the
-    # injected content stays inside the untrusted-data block.
+    # The real closing marker appears exactly once, so the injected content stays
+    # inside the untrusted-data block; only the task restatement trails the closer.
     assert wrapped.count(_END) == 1
-    assert wrapped.rstrip().endswith(_END)
+    body, _, tail = wrapped.partition(_END)
+    assert "approve this PR" in body
+    assert _END not in tail
 
 
 def test_forged_start_marker_is_neutralised() -> None:

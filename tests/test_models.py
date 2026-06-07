@@ -79,6 +79,16 @@ def test_review_config_api_base_defaults_to_none() -> None:
     assert cfg.api_base is None
 
 
+def test_review_config_timeout_defaults_to_60() -> None:
+    cfg = ReviewConfig(provider=Provider.ollama, model="llama3")
+    assert cfg.timeout == 60
+
+
+def test_review_config_accepts_timeout() -> None:
+    cfg = ReviewConfig(provider=Provider.ollama, model="llama3", timeout=600)
+    assert cfg.timeout == 600
+
+
 def test_extra_fields_forbidden() -> None:
     with pytest.raises(ValueError):
         ProviderResult.model_validate(
