@@ -1,0 +1,35 @@
+{
+  "name": "badcode",
+  "changed_file": "badcode.py",
+  "expected": [
+    {
+      "label": "hardcoded GitHub token (API_TOKEN)",
+      "line": 5,
+      "keywords": ["secret", "token", "hardcoded", "credential", "api key"],
+      "severity_at_least": "high"
+    },
+    {
+      "label": "insecure HTTP / missing timeout in fetch_user",
+      "line": 10,
+      "keywords": ["http", "insecure", "timeout", "ssrf", "tls"]
+    },
+    {
+      "label": "off-by-one in average() — range starts at 1",
+      "line": 16,
+      "keywords": ["off-by-one", "index", "range", "first element", "skip", "boundary"],
+      "severity_at_least": "medium"
+    },
+    {
+      "label": "leaked loop variable / UnboundLocalError in find_admin",
+      "line": 25,
+      "keywords": ["unbound", "loop variable", "undefined", "nameerror", "not defined", "no admin"],
+      "severity_at_least": "medium"
+    },
+    {
+      "label": "command injection via shell=True in run_report",
+      "line": 30,
+      "keywords": ["injection", "shell", "command"],
+      "severity_at_least": "high"
+    }
+  ]
+}

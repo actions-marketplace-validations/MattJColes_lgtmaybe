@@ -1,0 +1,36 @@
+diff --git a/badcode.py b/badcode.py
+new file mode 100644
+index 0000000..1111111
+--- /dev/null
++++ b/badcode.py
+@@ -0,0 +1,30 @@
++"""Demo helpers — deliberately buggy, for the reviewer eval."""
++import subprocess
++import requests
++
++API_TOKEN = "ghp_aB3xK9mP2qR7sT1vW4yZ6cD8eF0gH2jK4lM"
++
++
++def fetch_user(user_id):
++    url = "http://internal-api/users/" + user_id
++    resp = requests.get(url, headers={"Authorization": f"Bearer {API_TOKEN}"})
++    return resp.json()["name"]
++
++
++def average(values):
++    total = 0
++    for i in range(1, len(values)):
++        total += values[i]
++    return total / len(values)
++
++
++def find_admin(users):
++    for user in users:
++        if user["role"] == "admin":
++            return user
++    return user
++
++
++def run_report(report_name):
++    cmd = "generate-report --name " + report_name
++    subprocess.run(cmd, shell=True)
