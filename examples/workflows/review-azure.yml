@@ -1,0 +1,36 @@
+# Copy into your repo at .github/workflows/lgtmaybe.yml
+#
+# Azure OpenAI (key-based). Add two repo secrets:
+#   AZURE_API_KEY  — a key for your Azure OpenAI resource
+#   AZURE_API_BASE — the resource endpoint, e.g. https://<resource>.openai.azure.com
+# `model` is your Azure *deployment* name, not the upstream OpenAI model name.
+name: lgtmaybe (azure)
+
+on:
+  pull_request_target:
+  issue_comment:
+    types: [created]
+
+# pull_request_target runs against the BASE repo (secrets available); the action
+# only ever reads the diff via the API and never checks out PR code.
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: lgtmaybe-${{ github.event.pull_request.number || github.event.issue.number }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    # Skip comments that aren't on a pull request.
+    if: ${{ github.event_name == 'pull_request_target' || github.event.issue.pull_request }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6 # base repo only — for .lgtmaybe.yml config
+      - uses: lgtmaybe/lgtmaybe@v1
+        with:
+          provider: azure
+          model: my-gpt-4o-deployment
+          api_key: ${{ secrets.AZURE_API_KEY }}
+          api_base: ${{ secrets.AZURE_API_BASE }}

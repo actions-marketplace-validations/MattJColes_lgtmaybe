@@ -21,7 +21,7 @@ The user-facing configuration model. Fields map directly to `.lgtmaybe.yml` keys
 | `max_input_tokens` | integer | No | `100000` | Max Input Tokens |
 | `min_severity` | `critical` / `high` / `info` / `low` / `medium` | No | `info` |  |
 | `model` | string | Yes | — | Model |
-| `provider` | `anthropic` / `bedrock` / `ollama` / `openai` / `openrouter` / `vertex` | Yes | — |  |
+| `provider` | `anthropic` / `azure` / `bedrock` / `ollama` / `openai` / `openrouter` / `vertex` | Yes | — |  |
 | `reflect` | boolean | No | `True` | Reflect |
 | `temperature` | number | No | `0.0` | Temperature |
 | `timeout` | integer | No | `60` | Timeout |
@@ -30,9 +30,10 @@ The user-facing configuration model. Fields map directly to `.lgtmaybe.yml` keys
 
 ### Provider
 
-LLM backend selected by `--provider`. Cloud providers (`bedrock`, `vertex`) use ambient credentials.
+LLM backend selected by `--provider`. Cloud providers (`bedrock`, `vertex`) use ambient credentials; `azure` uses an API key plus the resource endpoint (`--api-base`).
 
 - `anthropic`
+- `azure`
 - `bedrock`
 - `ollama`
 - `openai`
@@ -105,6 +106,7 @@ The canonical machine-readable schemas. These are the source of truth for provid
         "anthropic",
         "bedrock",
         "vertex",
+        "azure",
         "ollama"
       ],
       "title": "Provider",

@@ -79,6 +79,24 @@ def resolve_credentials(
             )
         return AuthConfig()
 
+    if provider is Provider.azure:
+        import os
+
+        key = api_key or os.environ.get("AZURE_API_KEY")
+        base = api_base or os.environ.get("AZURE_API_BASE")
+        if not key:
+            raise ValueError(
+                "azure requires an API key. Set the AZURE_API_KEY environment "
+                "variable or pass --api-key."
+            )
+        if not base:
+            raise ValueError(
+                "azure requires the resource endpoint. Set the AZURE_API_BASE "
+                "environment variable (e.g. https://<resource>.openai.azure.com) "
+                "or pass --api-base."
+            )
+        return AuthConfig(api_key=key, api_base=base)
+
     if provider is Provider.ollama:
         return AuthConfig(api_base=api_base or _DEFAULT_OLLAMA_BASE)
 

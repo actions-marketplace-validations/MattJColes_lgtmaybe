@@ -6,6 +6,7 @@ litellm model-string conventions:
   openrouter → openrouter/<model>
   bedrock    → bedrock/<model>
   vertex     → vertex_ai/<model>
+  azure      → azure/<model>   (+ api_base = resource endpoint)
   ollama     → ollama/<model>  (+ api_base)
 """
 
@@ -24,6 +25,7 @@ _PREFIXES: dict[Provider, str] = {
     Provider.openrouter: "openrouter",
     Provider.bedrock: "bedrock",
     Provider.vertex: "vertex_ai",
+    Provider.azure: "azure",
     Provider.ollama: "ollama",
 }
 
@@ -53,6 +55,10 @@ def build_provider(
     is_ollama = provider is Provider.ollama
     if is_ollama:
         opts["api_base"] = api_base or _DEFAULT_OLLAMA_BASE
+    elif api_base is not None:
+        # Azure routes to a per-resource endpoint; any other provider that
+        # supplies an explicit base (e.g. a proxy) is honoured too.
+        opts["api_base"] = api_base
 
     return LiteLLMProvider(
         model=resolved_model,

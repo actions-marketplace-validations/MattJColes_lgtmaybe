@@ -1,5 +1,5 @@
 name: lgtmaybe
-description: Provider-agnostic PR reviewer — five providers, one flag, no static keys for cloud.
+description: Provider-agnostic PR reviewer — six providers, one flag, no static keys for cloud.
 author: Matt Coles
 branding:
   icon: check-circle
@@ -7,7 +7,7 @@ branding:
 
 inputs:
   provider:
-    description: "LLM provider: openai, anthropic, openrouter, bedrock, vertex, or ollama."
+    description: "LLM provider: openai, anthropic, openrouter, bedrock, vertex, azure, or ollama."
     required: false
     default: ""
   model:
@@ -19,7 +19,11 @@ inputs:
     required: false
     default: ""
   api_key:
-    description: "API key for key-based providers (openai/anthropic/openrouter). Leave empty for bedrock/vertex/ollama."
+    description: "API key for key-based providers (openai/anthropic/openrouter/azure). Leave empty for bedrock/vertex/ollama."
+    required: false
+    default: ""
+  api_base:
+    description: "Resource endpoint for azure (https://<resource>.openai.azure.com), or a custom base URL for other providers."
     required: false
     default: ""
   aws_role_arn:
@@ -76,6 +80,7 @@ runs:
         INPUT_MODEL: ${{ inputs.model }}
         INPUT_FALLBACK_MODEL: ${{ inputs.fallback_model }}
         INPUT_API_KEY: ${{ inputs.api_key }}
+        INPUT_API_BASE: ${{ inputs.api_base }}
         INPUT_CONFIG_PATH: ${{ inputs.config_path }}
         LGTMAYBE_IMAGE: ${{ inputs.image }}
       run: |
@@ -85,7 +90,7 @@ runs:
           -e GITHUB_EVENT_NAME -e GITHUB_EVENT_PATH \
           -e GITHUB_REPOSITORY -e GITHUB_SERVER_URL \
           -e INPUT_PROVIDER -e INPUT_MODEL -e INPUT_FALLBACK_MODEL \
-          -e INPUT_API_KEY -e INPUT_CONFIG_PATH \
+          -e INPUT_API_KEY -e INPUT_API_BASE -e INPUT_CONFIG_PATH \
           -e AWS_ACCESS_KEY_ID -e AWS_SECRET_ACCESS_KEY -e AWS_SESSION_TOKEN \
           -e AWS_REGION -e AWS_DEFAULT_REGION \
           -e GOOGLE_APPLICATION_CREDENTIALS -e GOOGLE_GHA_CREDS_PATH \

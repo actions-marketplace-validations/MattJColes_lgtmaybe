@@ -4,7 +4,7 @@
 
 # lgtmaybe
 
-Provider-agnostic PR reviewer. Five providers, one flag, no static keys for
+Provider-agnostic PR reviewer. Six providers, one flag, no static keys for
 cloud providers. Posts inline review comments and a summary.
 
 📖 **Full documentation:** <https://mattjcoles.github.io/lgtmaybe/>
@@ -85,6 +85,7 @@ up the [GitHub Action](#use-as-a-github-action). See
 | `openrouter` | `OPENROUTER_API_KEY` |
 | `bedrock` | Ambient AWS creds — GitHub OIDC, no static key |
 | `vertex` | Ambient GCP creds — Workload Identity Federation, no key |
+| `azure` | `AZURE_API_KEY` + `AZURE_API_BASE` (resource endpoint) |
 | `ollama` | None — local only, zero cost |
 
 ## Documentation
@@ -101,6 +102,7 @@ Markdown sources below.
 - [Run locally with ollama](docs/how-to/run-locally-with-ollama.md)
 - [Review with Bedrock OIDC](docs/how-to/review-with-bedrock-oidc.md)
 - [Review with Vertex WIF](docs/how-to/review-with-vertex-wif.md)
+- [Review with Azure OpenAI](docs/how-to/review-with-azure.md)
 - [Use as a GitHub Action](docs/how-to/use-as-github-action.md)
 - [Configure .lgtmaybe.yml](docs/how-to/configure-lgtmaybe-yml.md)
 - [Releasing (maintainers)](docs/how-to/releasing.md)

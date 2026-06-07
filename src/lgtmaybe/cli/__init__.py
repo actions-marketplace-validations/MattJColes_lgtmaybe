@@ -198,7 +198,7 @@ def main() -> None:
 @click.option(
     "--provider",
     default=None,
-    help="LLM provider (openai, anthropic, bedrock, vertex, ollama, openrouter)",
+    help="LLM provider (openai, anthropic, bedrock, vertex, azure, ollama, openrouter)",
 )
 @click.option("--model", default=None, help="Model name understood by the chosen provider")
 @click.option(
@@ -213,7 +213,10 @@ def main() -> None:
     help="API key (not needed for bedrock/vertex with ambient creds, or ollama)",
 )
 @click.option(
-    "--api-base", default=None, help="API base URL (useful for ollama: http://localhost:11434)"
+    "--api-base",
+    default=None,
+    help="API base URL (ollama: http://localhost:11434; "
+    "azure: https://<resource>.openai.azure.com)",
 )
 @click.option(
     "--min-severity",
@@ -544,6 +547,7 @@ def _action_inputs() -> dict[str, str | None]:
         "model": get("MODEL"),
         "fallback_model": get("FALLBACK_MODEL"),
         "api_key": get("API_KEY"),
+        "api_base": get("API_BASE"),
         "config_path": os.environ.get("INPUT_CONFIG_PATH") or ".lgtmaybe.yml",
     }
 
@@ -563,7 +567,7 @@ def action() -> None:
     )
     runtime: dict[str, Any] = {
         "api_key": inputs["api_key"],
-        "api_base": None,
+        "api_base": inputs["api_base"],
         "fallback_model": inputs["fallback_model"],
     }
 

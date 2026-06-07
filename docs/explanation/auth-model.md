@@ -1,10 +1,11 @@
 # Auth Model
 
-lgtmaybe supports five providers with three distinct auth approaches. The design
+lgtmaybe supports six providers with three distinct auth approaches. The design
 principle is **no static cloud credentials**: cloud providers use ambient,
-short-lived tokens; only key-based SaaS providers (openai, anthropic,
-openrouter) require an API key, and even those stay in secrets rather than being
-committed to config.
+short-lived tokens; key-based providers (openai, anthropic, openrouter, azure)
+require an API key, and even those stay in secrets rather than being committed to
+config. Azure additionally needs the resource endpoint (`AZURE_API_BASE`), since
+each Azure OpenAI deployment lives at its own URL.
 
 ## Why keyless for cloud
 
@@ -36,7 +37,12 @@ chain:
 3. **API key** — for openai, anthropic, and openrouter, lgtmaybe reads the
    key from the environment (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`,
    `OPENROUTER_API_KEY`). The `--api-key` flag can override this at the CLI.
-4. **None** — ollama requires no credentials. Only `--api-base` is needed
+4. **API key + endpoint** — azure reads `AZURE_API_KEY` and `AZURE_API_BASE`
+   (the resource endpoint) from the environment, overridable with `--api-key`
+   and `--api-base`. litellm reads `AZURE_API_VERSION` directly (it has a
+   sensible default). If either the key or the endpoint is missing, lgtmaybe
+   fails with a message naming the one to set.
+5. **None** — ollama requires no credentials. Only `--api-base` is needed
    to reach the local or remote server.
 
 ## Provider auth summary
@@ -48,6 +54,7 @@ chain:
 | openrouter | API key | `OPENROUTER_API_KEY` env var or `--api-key` |
 | bedrock | Ambient AWS creds | GitHub OIDC role or local `~/.aws`; IAM requires only `bedrock:InvokeModel*` |
 | vertex | Ambient GCP creds | GitHub WIF or local ADC (`gcloud auth application-default login`) |
+| azure | API key + endpoint | `AZURE_API_KEY` + `AZURE_API_BASE` env vars, or `--api-key` + `--api-base` |
 | ollama | None | `--api-base` pointing to the local or remote server |
 
 ## Least-privilege IAM
