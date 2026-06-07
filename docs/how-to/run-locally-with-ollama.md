@@ -1,13 +1,15 @@
 # Run Locally with ollama
 
-Use this guide to review pull requests using a local ollama model — zero API
-cost, zero egress, no keys required.
+Use this guide to review your local changes with a local ollama model — zero API
+cost, zero egress, no keys required. The CLI reviews your `git` diff and prints
+the findings; to post reviews on real pull requests, use the
+[GitHub Action](use-as-github-action.md).
 
 ## Prerequisites
 
 - lgtmaybe installed (`pip install lgtmaybe`)
 - [ollama](https://ollama.com) installed and running
-- `GITHUB_TOKEN` set in the environment
+- A local git repository with changes to review
 
 ## Pull the model you want
 
@@ -24,13 +26,18 @@ ollama list
 
 ## Run the review
 
+From inside the repo, on the branch you want reviewed:
+
 ```bash
 lgtmaybe review \
-  --pr-url https://github.com/owner/repo/pull/42 \
   --provider ollama \
   --model qwen3.6:27b \
   --api-base http://localhost:11434
 ```
+
+This diffs your current branch against the default branch and prints the
+findings. Add `--working` to review only your uncommitted edits, or `--base <ref>`
+to diff against a different base.
 
 ## Use a remote ollama instance
 
@@ -38,7 +45,6 @@ If ollama runs on another machine (e.g. a Tailscale peer):
 
 ```bash
 lgtmaybe review \
-  --pr-url https://github.com/owner/repo/pull/42 \
   --provider ollama \
   --model qwen3.6:27b \
   --api-base http://100.x.x.x:11434
@@ -47,27 +53,37 @@ lgtmaybe review \
 No authentication is added — ollama has no built-in auth. Ensure network access
 is restricted at the host or firewall level.
 
-## Use inside Docker (GitHub Action)
+## Inside the GitHub Action's container
 
-When running inside a Docker container, substitute `host.docker.internal` for
-`localhost`:
+The Action runs lgtmaybe in a container, so ollama on the runner host is reached
+at `host.docker.internal` rather than `localhost`. Set it in `.lgtmaybe.yml`,
+since the Action reads its provider settings from config:
 
-```bash
---api-base http://host.docker.internal:11434
+```yaml
+provider: ollama
+model: qwen3.6:27b
+api_base: http://host.docker.internal:11434
 ```
 
-## Dry run to inspect findings without posting
+## Get findings as JSON
+
+The CLI prints a readable listing by default and never posts anywhere. Add
+`--json` for a machine-readable array you can pipe into other tooling:
 
 ```bash
 lgtmaybe review \
-  --pr-url https://github.com/owner/repo/pull/42 \
   --provider ollama \
   --model qwen3.6:27b \
   --api-base http://localhost:11434 \
-  --dry-run
+  --json
 ```
 
-Findings are printed to stdout; nothing is written to GitHub.
+## Let an AI agent apply the fixes
+
+`--format agent` prints the findings as correction instructions an AI coding
+agent (such as Claude Code) can read and apply, so you can review and fix a
+branch locally before opening a PR. See
+[Fix findings with an AI agent](fix-findings-with-an-ai-agent.md).
 
 ## Troubleshooting
 

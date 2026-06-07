@@ -55,3 +55,99 @@ def test_multiple_secrets_all_redacted() -> None:
 
 def test_redact_returns_string() -> None:
     assert isinstance(redact("no secrets here"), str)
+
+
+# ---------------------------------------------------------------------------
+# Broader secret classes (OWASP A02/A07 — secrets must not egress to the LLM)
+# ---------------------------------------------------------------------------
+# These fixtures are assembled from fragments at runtime so the contiguous
+# token literal never appears in source — that keeps push-protection / secret
+# scanners from flagging obviously-fake test data, while redact() still sees the
+# full string.
+
+_GITHUB_FINE_GRAINED = "github_pat" + "_11ABCDEFG0abcdefghijkl_mnopqrstuvwxyz0123456789ABCDEFXY"
+_SLACK_TOKEN = "xox" + "b-123456789012-1234567890123-AbCdEfGhIjKlMnOpQrStUvWx"
+_GOOGLE_API_KEY = "AIza" + "SyA1234567890abcdefghijklmnopqrstuvw"
+_STRIPE_KEY = "sk_" + "live_" + "abcdefghijklmnop1234567890"
+_PRIVATE_KEY = (
+    "-----BEGIN RSA PRIVATE KEY-----\n"
+    "MIIEowIBAAKCAQEAtnotarealkeyjustfortestingpurposes1234567890\n"
+    "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789\n"
+    "-----END RSA PRIVATE KEY-----"
+)
+
+
+def test_github_fine_grained_pat_redacted() -> None:
+    result = redact(f"+TOKEN={_GITHUB_FINE_GRAINED}\n")
+    assert _GITHUB_FINE_GRAINED not in result
+    assert REDACTED_PLACEHOLDER in result
+
+
+def test_slack_token_redacted() -> None:
+    result = redact(f"+SLACK_BOT_TOKEN={_SLACK_TOKEN}\n")
+    assert _SLACK_TOKEN not in result
+    assert REDACTED_PLACEHOLDER in result
+
+
+def test_google_api_key_redacted() -> None:
+    result = redact(f"+GOOGLE_API_KEY={_GOOGLE_API_KEY}\n")
+    assert _GOOGLE_API_KEY not in result
+    assert REDACTED_PLACEHOLDER in result
+
+
+def test_stripe_secret_key_redacted() -> None:
+    result = redact(f"+STRIPE_KEY={_STRIPE_KEY}\n")
+    assert _STRIPE_KEY not in result
+    assert REDACTED_PLACEHOLDER in result
+
+
+def test_pem_private_key_block_redacted() -> None:
+    result = redact("+" + _PRIVATE_KEY + "\n")
+    assert "MIIEowIBAAKCAQEA" not in result
+    assert REDACTED_PLACEHOLDER in result
+
+
+def test_quoted_password_literal_redacted() -> None:
+    result = redact('+    password = "hunter2pass"\n')
+    assert "hunter2pass" not in result
+    assert REDACTED_PLACEHOLDER in result
+    # The key name survives so the reviewer still sees what was assigned.
+    assert "password" in result
+
+
+def test_password_prose_not_redacted() -> None:
+    """Plain English mentioning a password must not trip the redactor."""
+    result = redact("+# Send the user a password reset email when requested\n")
+    assert REDACTED_PLACEHOLDER not in result
+    assert "password reset" in result
+
+
+def test_authorization_bearer_header_redacted() -> None:
+    secret = "eyJ" + "hbGciOiJIUzI1Niexampletokenvalue0123456789"
+    result = redact(f'+    "Authorization": "Bearer {secret}",\n')
+    assert secret not in result
+    assert REDACTED_PLACEHOLDER in result
+    # Scheme word is preserved; only the credential is scrubbed.
+    assert "Bearer" in result
+
+
+def test_connection_string_password_redacted() -> None:
+    result = redact("+DATABASE_URL=postgres://admin:s3cr3tDbPass@db.internal:5432/app\n")
+    assert "s3cr3tDbPass" not in result
+    assert REDACTED_PLACEHOLDER in result
+    # Host stays visible — only the password segment is scrubbed.
+    assert "db.internal" in result
+    assert "admin" in result
+
+
+def test_value_pattern_preserves_key_name() -> None:
+    """Generic assignment redaction keeps the identifier, scrubs only the value."""
+    result = redact('+api_key = "abcdefghijklmnop1234567890"\n')
+    assert "api_key" in result
+    assert "abcdefghijklmnop1234567890" not in result
+
+
+def test_idempotent_on_already_redacted_text() -> None:
+    once = redact(f"+SLACK={_SLACK_TOKEN}\n")
+    twice = redact(once)
+    assert once == twice

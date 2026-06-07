@@ -1,0 +1,35 @@
+# Background dependency updates. Dependabot opens grouped PRs on a schedule and,
+# when GitHub security alerts are enabled for the repo, also opens security-update
+# PRs for vulnerable dependencies. This is the non-deterministic half of dep
+# hygiene (it depends on what's published upstream), so it lives here on a
+# schedule rather than in the per-PR CI gate.
+version: 2
+updates:
+  # Python dependencies, resolved from pyproject.toml + uv.lock.
+  - package-ecosystem: "uv"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    groups:
+      # One PR per week for routine bumps keeps noise down; security updates
+      # still come through as their own PRs.
+      python-dependencies:
+        patterns: ["*"]
+    commit-message:
+      prefix: "deps"
+
+  # The GitHub Actions used by our CI workflow, the composite action.yml, and
+  # the per-provider example workflows.
+  - package-ecosystem: "github-actions"
+    directories:
+      - "/"
+      - "/examples/workflows"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    groups:
+      github-actions:
+        patterns: ["*"]
+    commit-message:
+      prefix: "ci"

@@ -34,20 +34,46 @@ Nothing else is sent. lgtmaybe does not send:
 ## Secret redaction before egress
 
 Before the diff is sent to any external provider, lgtmaybe scans it for
-patterns that resemble secrets — API keys, tokens, connection strings, private
-keys — and replaces the matched values with `[REDACTED]`. This happens inside
-the **compress** stage, before the prompt is built, so redacted values never
-reach the LLM or appear in logs.
+patterns that resemble secrets and replaces the matched values with
+`[REDACTED]`. The same scrub is applied to the surrounding context lines read
+from changed files. Recognised formats include:
+
+- **Cloud / provider keys** — AWS access key IDs (`AKIA…`), OpenAI keys
+  (`sk-…`), Stripe secret keys (`sk_live_…`), and Google API keys (`AIza…`).
+- **Source-control / chat tokens** — GitHub classic tokens (`ghp_`, `gho_`, …),
+  GitHub fine-grained PATs (`github_pat_…`), and Slack tokens (`xoxb-…`).
+- **Private keys** — PEM `-----BEGIN … PRIVATE KEY-----` blocks.
+- **Generic credentials** — `api_key`/`token`/`secret = "…"` assignments,
+  quoted `password`/`passphrase` literals, `Authorization: Bearer/Basic …`
+  headers, and passwords embedded in connection-string URLs
+  (`scheme://user:secret@host`).
+
+For credential assignments only the value is replaced — the key name or URL host
+stays readable so the reviewer can still reason about the change.
+
+This happens inside the **compress** stage, before the prompt is built, so
+redacted values never reach the LLM or appear in logs.
 
 Redaction is a best-effort defence. Do not commit real secrets to your
 repository and rely on this alone.
 
 ## Prompt-injection defence
 
-PR diff content is treated as untrusted input throughout the pipeline. The
-system prompt instructs the model to ignore any instructions embedded in the
-diff or PR body that attempt to alter reviewer behaviour. lgtmaybe does not
-execute any code from the PR.
+PR diff content is treated as untrusted input throughout the pipeline. lgtmaybe
+defends in depth (OWASP LLM01):
+
+1. The diff is wrapped in explicit `DIFF_START`/`DIFF_END` delimiters and labelled
+   as untrusted data.
+2. Any forged delimiter markers smuggled inside the diff are **neutralised**
+   before wrapping, so a malicious PR cannot close the data block early and
+   append its own instructions.
+3. The system prompt instructs the model to ignore any instructions embedded in
+   the diff that attempt to alter reviewer behaviour.
+4. The model's response must validate against a strict JSON schema
+   (`extra="forbid"`); drifted or injected fields are rejected rather than acted
+   on.
+
+lgtmaybe does not execute any code from the PR.
 
 ## Ollama: fully local, zero egress
 

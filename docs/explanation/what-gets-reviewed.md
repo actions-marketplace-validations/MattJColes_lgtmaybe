@@ -26,6 +26,44 @@ Before the diff reaches the model it is cleaned:
 - **Secrets are redacted** — anything that looks like a key or token is stripped
   from the diff before it leaves your environment for the provider.
 
+## Security review
+
+Security findings are first-class. The model is prompted with an OWASP-aligned
+checklist and told to grade what it finds `high` or `critical` and name the
+vulnerability class in the title. It actively looks for:
+
+- **Injection** — SQL/NoSQL, OS command, and template/LDAP injection.
+- **Cross-site scripting (XSS)** — unescaped user input rendered into HTML/JS.
+- **Hardcoded secrets** — keys, tokens, passwords, or private keys in the diff.
+- **Broken authn / authz** — missing permission checks, IDOR, auth bypass.
+- **Path traversal / unsafe file access** — user input in file paths, `../`.
+- **SSRF** — server-side fetches of user-controlled URLs without allow-listing.
+- **Insecure deserialization & unsafe eval** — `pickle`/`yaml.load`/`eval` on
+  untrusted data.
+- **Weak cryptography** — MD5/SHA1 for passwords, ECB mode, disabled TLS
+  verification, predictable randomness for security tokens.
+- **Sensitive-data exposure** — secrets or PII in logs or error responses.
+- **Resource / DoS safety** — missing timeouts, unbounded loops or allocations.
+
+This shapes *what* the reviewer flags. It is separate from how lgtmaybe protects
+**itself** from a malicious PR — see
+[Data and Privacy](data-and-privacy.md) for secret redaction and prompt-injection
+defence.
+
+## Deprecation & dependency health
+
+Beyond bugs and vulnerabilities, the reviewer also flags **factually outdated**
+code when the diff shows it — these are objective, not stylistic:
+
+- deprecated language/framework APIs (with the modern replacement suggested when
+  known),
+- targeting an end-of-life runtime or language version,
+- adding or pinning an end-of-life / abandoned dependency, and
+- pinning a dependency to a version with a known security advisory.
+
+The reviewer only raises these when the diff itself shows the change; it does not
+speculate about code it cannot see.
+
 ## How the scope is bounded
 
 Every run is bounded so a large PR can't run away on latency or cost. All of
@@ -86,22 +124,36 @@ If the file cap kicked in, the summary says so (e.g. "Reviewed the top 50 of 120
 changed files"). lgtmaybe never fails silently — any error is surfaced back to
 the PR as a short comment.
 
-### On the command line (`--dry-run`)
+### On the command line
 
-`--dry-run` runs the full pipeline but posts nothing — it prints the summary
-line and the findings as a JSON array to stdout, so you can see exactly what
-would be posted:
+`lgtmaybe review` runs the same pipeline over your local `git` diff and prints
+the findings — it posts nothing and needs no GitHub token. By default it diffs
+the current branch against the default branch; `--working` reviews uncommitted
+edits and `--base <ref>` picks a different base. The default output is a readable
+listing followed by the summary line:
 
 ```console
-$ lgtmaybe review --pr-url https://github.com/owner/repo/pull/42 \
-    --provider ollama --model qwen3.6:27b --api-base http://localhost:11434 --dry-run
-[dry-run] 1 finding · model qwen3.6:27b · approx cost $0.0000
+$ lgtmaybe review --provider ollama --model qwen3.6:27b --api-base http://localhost:11434
+src/app.py:2  [MEDIUM] Import order
+  sys should be sorted before os
+
+1 finding · model qwen3.6:27b · approx cost $0.0000
+```
+
+`--format` selects the output. `--json` is shorthand for `--format json`, which
+prints the findings as a JSON array so the same structured data can be piped into
+other tooling:
+
+```console
+$ lgtmaybe review --provider ollama --model qwen3.6:27b --api-base http://localhost:11434 --json
 [{"path": "src/app.py", "line": 2, "side": "RIGHT", "severity": "medium",
   "title": "Import order", "body": "sys should be sorted before os",
   "suggestion": null}]
 ```
 
-Because findings are structured, the same JSON can be piped into other tooling.
+`--format agent` turns the findings into plain correction instructions an AI
+coding agent can read and apply — a local review-and-fix loop. See
+[Fix findings with an AI agent](../how-to/fix-findings-with-an-ai-agent.md).
 
 ## See also
 
