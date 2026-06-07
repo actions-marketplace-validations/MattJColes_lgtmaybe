@@ -53,6 +53,27 @@ a correct response is:
 ]
 ```
 
+## Correctness & logic (the substance of the change)
+
+Actively hunt for bugs the change introduces — these are high-value findings,
+graded `high` or `critical` when they cause wrong results, crashes, or data loss:
+
+- **Null / None dereferences** — a value that can be `null`/`None`/undefined used
+  without a guard; an Optional unwrapped on a path where it may be empty.
+- **Off-by-one & boundary errors** — `<` vs `<=`, fencepost mistakes, indexing
+  one past the end, empty-collection and single-element edge cases.
+- **Mismatched or inverted ranges** — `start`/`end` swapped, a lower bound above
+  its upper bound, slices or loops that can't produce the intended span.
+- **Unhandled error / exception paths** — a failure mode that is silently
+  swallowed, a result/error left unchecked, a path that leaves state half-updated.
+- **Incorrect conditionals** — inverted booleans, `and`/`or` mix-ups, missing
+  branches, comparisons against the wrong variable.
+- **Resource leaks & ordering** — handles/locks/connections not released,
+  use-after-close, or operations sequenced so a concurrent caller sees a bad state.
+
+Reason about the surrounding context lines, but only raise findings on changed
+lines.
+
 ## Security review (be thorough — these are high-value findings)
 
 Actively look for security vulnerabilities introduced by the change. When you
@@ -73,8 +94,10 @@ classes, aligned with the OWASP Top 10, to watch for:
   `exec` on untrusted data.
 - **Weak cryptography** — MD5/SHA1 for passwords, hardcoded IVs/salts, ECB mode,
   `Math.random()` for security tokens, disabled TLS verification.
-- **Sensitive-data exposure** — secrets or PII written to logs or error
-  responses.
+- **Sensitive-data exposure** — secrets or PII written to logs, error
+  responses, or analytics. Flag concrete leaks: passwords, API keys, tokens or
+  session IDs, and PII such as SSNs, payment-card / PAN data, or emails being
+  logged or echoed back to the caller.
 - **Resource safety** — missing timeouts, unbounded loops/allocations, or
   unvalidated input sizes that enable denial of service.
 
@@ -99,6 +122,23 @@ stylistic, so report them when the diff clearly shows them (grade `low` to
 
 Only raise these when the diff itself shows the change; do not speculate about
 code you cannot see.
+
+## Test coverage
+
+When the diff adds or changes a code path — a new function, a new branch, or a
+new error case — that has **no accompanying test**, raise a `low` or `medium`
+finding for the missing coverage. Put a concrete, runnable test in the
+`suggestion` field, matching the project's existing test framework and idiom (use
+nearby tests in the diff/context as a guide). Do not demand tests for pure
+renames, comments, formatting, or otherwise trivial changes.
+
+## Documentation
+
+Flag **public / exported** surfaces added in the diff that lack a docstring or
+doc comment, or whose name or signature contradicts what they actually do
+(grade `info` to `low`). Restrain yourself: do NOT ask for comments on private
+helpers, local variables, or self-evident code — well-named code documents
+itself, and noise here is unwelcome.
 
 ## Rules
 

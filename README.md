@@ -16,16 +16,20 @@ request changes. It never checks out or runs your code. To judge each change in
 context it also reads a few surrounding lines from the file, but it only ever
 comments on what the PR actually changed, not the whole repository.
 
-Reviews surface the kind of thing a careful reviewer would flag: correctness
-bugs, security weaknesses, and readability problems, each graded from `info` up
-to `critical`. The model is prompted with an **OWASP-aligned security checklist**
-— injection, XSS, hardcoded secrets, broken authn/authz, path traversal, SSRF,
-insecure deserialization, weak crypto, and resource/DoS safety — so security
-findings are first-class, not an afterthought. It also flags **factually
-outdated** code — deprecated APIs and end-of-life or vulnerable dependencies —
-when the diff shows them. Generated and non-reviewable files (lockfiles, minified
-bundles, vendored directories, binaries) are skipped automatically, and secrets
-are redacted from the diff before it is sent to the model.
+Reviews surface the kind of thing a careful reviewer would flag, each graded from
+`info` up to `critical`: **logic and correctness bugs** (edge cases, null
+dereferences, off-by-one and boundary errors, mismatched ranges, unhandled error
+paths), **missing tests** for changed code paths (with a suggested test to drop
+in), and **undocumented public APIs**. The model is prompted with an
+**OWASP-aligned security checklist** — injection, XSS, hardcoded secrets, broken
+authn/authz, path traversal, SSRF, insecure deserialization, weak crypto,
+resource/DoS safety, and secrets or PII (passwords, tokens, SSNs, card data)
+leaking into logs — so security findings are first-class, not an afterthought. It
+also flags **factually outdated** code — deprecated APIs and end-of-life or
+vulnerable dependencies — when the diff shows them. Generated and non-reviewable
+files (lockfiles, minified bundles, vendored directories, binaries) are skipped
+automatically, and secrets are redacted from the diff before it is sent to the
+model.
 
 **Hardened against malicious PRs.** lgtmaybe never checks out or runs PR code,
 treats the diff as untrusted input, defends against prompt injection (including

@@ -26,6 +26,23 @@ Before the diff reaches the model it is cleaned:
 - **Secrets are redacted** — anything that looks like a key or token is stripped
   from the diff before it leaves your environment for the provider.
 
+## Correctness & logic
+
+The substance of a change, not just style. The model is prompted to actively
+hunt the bugs a change introduces and grade them by impact:
+
+- **Null / None dereferences** — a value that can be empty used without a guard.
+- **Off-by-one & boundary errors** — `<` vs `<=`, fencepost mistakes, empty- and
+  single-element edge cases.
+- **Mismatched or inverted ranges** — `start`/`end` swapped, a lower bound above
+  its upper bound.
+- **Unhandled error / exception paths** — failures silently swallowed or state
+  left half-updated.
+- **Incorrect conditionals** — inverted booleans, `and`/`or` mix-ups, missing
+  branches.
+- **Resource leaks & ordering** — handles or locks not released, use-after-close,
+  bad concurrent sequencing.
+
 ## Security review
 
 Security findings are first-class. The model is prompted with an OWASP-aligned
@@ -42,7 +59,8 @@ vulnerability class in the title. It actively looks for:
   untrusted data.
 - **Weak cryptography** — MD5/SHA1 for passwords, ECB mode, disabled TLS
   verification, predictable randomness for security tokens.
-- **Sensitive-data exposure** — secrets or PII in logs or error responses.
+- **Sensitive-data exposure** — secrets or PII in logs, error responses, or
+  analytics: passwords, API keys, tokens/session IDs, SSNs, or payment-card data.
 - **Resource / DoS safety** — missing timeouts, unbounded loops or allocations.
 
 This shapes *what* the reviewer flags. It is separate from how lgtmaybe protects
@@ -63,6 +81,20 @@ code when the diff shows it — these are objective, not stylistic:
 
 The reviewer only raises these when the diff itself shows the change; it does not
 speculate about code it cannot see.
+
+## Test coverage & documentation
+
+Two lighter-weight checks round out a review:
+
+- **Missing tests** — when the diff adds a new function, branch, or error case
+  with no accompanying test, the reviewer raises a `low`/`medium` finding and
+  puts a concrete, runnable test in the finding's `suggestion` field, matching
+  the project's existing test idiom. Renames, comments, and trivial formatting
+  changes are left alone.
+- **Documentation gaps** — public/exported surfaces added without a docstring, or
+  a name or signature that contradicts what the code does, are flagged at
+  `info`/`low`. This is deliberately restrained: private helpers and self-evident
+  code are not nagged about, so well-named code is left to document itself.
 
 ## How the scope is bounded
 
