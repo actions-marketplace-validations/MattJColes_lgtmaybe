@@ -8,6 +8,7 @@ from lgtmaybe.core.models import (
     PRContext,
     Provider,
     ProviderResult,
+    ReflectionResult,
     ReviewConfig,
     ReviewFinding,
     Severity,
@@ -83,3 +84,59 @@ def test_reflect_calls_provider_once() -> None:
     reflect_findings([_HIGH, _LOW_CONF], _CTX, _CFG, provider)
 
     assert len(provider.calls) == 1
+
+
+# ---------------------------------------------------------------------------
+# structured-output verdict envelope
+# ---------------------------------------------------------------------------
+
+
+def _envelope(verdicts: list[tuple[int, bool]]) -> str:
+    return json.dumps({"verdicts": [{"index": i, "keep": k} for i, k in verdicts]})
+
+
+def _fake_with_text(text: str) -> FakeProvider:
+    return FakeProvider(result=ProviderResult(text=text, input_tokens=5, output_tokens=5))
+
+
+def test_structured_verdict_envelope_drops_low_confidence() -> None:
+    provider = _fake_with_text(_envelope([(0, True), (1, False)]))
+
+    survivors = reflect_findings([_HIGH, _LOW_CONF], _CTX, _CFG, provider)
+
+    assert _HIGH in survivors
+    assert _LOW_CONF not in survivors
+
+
+def test_reflection_passes_response_format_when_structured() -> None:
+    provider = _fake_with_verdict({0: True})  # _CFG has structured_output=True (default)
+
+    reflect_findings([_HIGH], _CTX, _CFG, provider)
+
+    assert provider.calls[0]["opts"].get("response_format") is ReflectionResult
+
+
+def test_reflection_omits_response_format_when_disabled() -> None:
+    cfg = ReviewConfig(provider=Provider.ollama, model="llama3", structured_output=False)
+    provider = _fake_with_verdict({0: True})
+
+    reflect_findings([_HIGH], _CTX, cfg, provider)
+
+    assert "response_format" not in provider.calls[0]["opts"]
+
+
+def test_verdict_with_think_block_and_fence_parses() -> None:
+    text = "<think>let me judge</think>\n```json\n" + _envelope([(0, False)]) + "\n```"
+    provider = _fake_with_text(text)
+
+    survivors = reflect_findings([_HIGH], _CTX, _CFG, provider)
+
+    assert survivors == []  # the verdict (keep=false) was parsed through the noise
+
+
+def test_unparseable_verdict_keeps_all() -> None:
+    provider = _fake_with_text("I'm not really sure about these.")
+
+    survivors = reflect_findings([_HIGH, _LOW_CONF], _CTX, _CFG, provider)
+
+    assert survivors == [_HIGH, _LOW_CONF]  # safe default
