@@ -195,6 +195,8 @@ def action() -> None:
         config_path=Path(inputs["config_path"] or ".lgtmaybe.yml"),
         provider=inputs["provider"],
         model=inputs["model"],
+        timeout=inputs["timeout"],
+        temperature=inputs["temperature"],
     )
     runtime = RuntimeOptions(
         api_key=inputs["api_key"],
