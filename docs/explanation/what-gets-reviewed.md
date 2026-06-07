@@ -86,22 +86,31 @@ If the file cap kicked in, the summary says so (e.g. "Reviewed the top 50 of 120
 changed files"). lgtmaybe never fails silently — any error is surfaced back to
 the PR as a short comment.
 
-### On the command line (`--dry-run`)
+### On the command line
 
-`--dry-run` runs the full pipeline but posts nothing — it prints the summary
-line and the findings as a JSON array to stdout, so you can see exactly what
-would be posted:
+`lgtmaybe review` runs the same pipeline over your local `git` diff and prints
+the findings — it posts nothing and needs no GitHub token. By default it diffs
+the current branch against the default branch; `--working` reviews uncommitted
+edits and `--base <ref>` picks a different base. The default output is a readable
+listing followed by the summary line:
 
 ```console
-$ lgtmaybe review --pr-url https://github.com/owner/repo/pull/42 \
-    --provider ollama --model qwen3.6:27b --api-base http://localhost:11434 --dry-run
-[dry-run] 1 finding · model qwen3.6:27b · approx cost $0.0000
+$ lgtmaybe review --provider ollama --model qwen3.6:27b --api-base http://localhost:11434
+src/app.py:2  [MEDIUM] Import order
+  sys should be sorted before os
+
+1 finding · model qwen3.6:27b · approx cost $0.0000
+```
+
+Add `--json` to print the findings as a JSON array instead, so the same
+structured data can be piped into other tooling:
+
+```console
+$ lgtmaybe review --provider ollama --model qwen3.6:27b --api-base http://localhost:11434 --json
 [{"path": "src/app.py", "line": 2, "side": "RIGHT", "severity": "medium",
   "title": "Import order", "body": "sys should be sorted before os",
   "suggestion": null}]
 ```
-
-Because findings are structured, the same JSON can be piped into other tooling.
 
 ## See also
 

@@ -36,27 +36,29 @@ title, an explanation, and an optional suggested fix — so it renders the same
 everywhere:
 
 - **On a GitHub PR** — an inline comment on the exact changed line for each finding, plus one summary comment naming the model and approximate cost. Re-running updates the same comments instead of duplicating them, and a clean PR gets a 👍 **LGTM!**.
-- **On the CLI** (`--dry-run`) — the summary line followed by the findings as a JSON array on stdout; nothing is posted to GitHub.
+- **On the CLI** — `lgtmaybe review` reads your local `git` diff and prints the findings (a readable listing, or a JSON array with `--json`); nothing is posted to GitHub.
 
 A fuller walkthrough with example output is in
 [What gets reviewed](docs/explanation/what-gets-reviewed.md).
 
 ## Quick start (60 seconds, local, zero cost)
 
+From inside a git repo, on a branch with changes, review your diff against the
+default branch and print the findings:
+
 ```bash
 pip install lgtmaybe
-export GITHUB_TOKEN=ghp_your_token_here
 
 lgtmaybe review \
-  --pr-url https://github.com/owner/repo/pull/42 \
   --provider ollama \
   --model qwen3.6:27b \
-  --api-base http://localhost:11434 \
-  --dry-run
+  --api-base http://localhost:11434
 ```
 
-See [Getting Started](docs/tutorial/getting-started.md) for the full first-run
-walkthrough.
+No GitHub token and no pull request needed — `lgtmaybe review` reads your local
+`git` diff and prints the findings. To post reviews on real pull requests, wire
+up the [GitHub Action](#use-as-a-github-action). See
+[Getting Started](docs/tutorial/getting-started.md) for the full walkthrough.
 
 ## Providers
 
