@@ -92,6 +92,7 @@ class LLMReviewEngine(ReviewEngine):
         all_findings: list[ReviewFinding] = []
         total_calls = 0
         failed_calls = 0
+        errors: list[str] = []
 
         # 5. For each batch, fan out one call per review category. Each category
         #    gets a focused prompt; their findings are merged. Concurrency is
@@ -105,19 +106,21 @@ class LLMReviewEngine(ReviewEngine):
             wrapped = wrap_diff(batch_diff)
             review_one = partial(self._review_category, wrapped, cfg.model, response_format)
             with ThreadPoolExecutor(max_workers=workers) as pool:
-                for findings, ok in pool.map(review_one, cfg.categories):
+                for findings, error in pool.map(review_one, cfg.categories):
                     total_calls += 1
-                    if not ok:
+                    if error is not None:
                         failed_calls += 1
+                        errors.append(error)
                     all_findings.extend(findings)
 
         # 5b. Fail loud: if EVERY call errored or returned unparseable output, we
         #     have no signal — never pass that off as a clean review.
         if total_calls > 0 and failed_calls == total_calls:
+            detail = errors[-1] if errors else "no usable output"
             raise ReviewIncompleteError(
-                "review incomplete — the model returned no usable output "
-                "(timeout or unparseable response). Check the model and timeout "
-                "(ollama: a larger model needs a longer --timeout) and retry."
+                f"review incomplete — every review call failed ({detail}). "
+                "Check the provider credentials/quota, model, and timeout "
+                "(ollama: a larger model needs a longer --timeout), then retry."
             )
 
         # 6. Merge: a finding can surface under more than one lens (a shell
@@ -150,9 +153,10 @@ class LLMReviewEngine(ReviewEngine):
         # Some — but not all — lenses failed: the result may be incomplete, so say
         # so and don't claim a clean bill of health.
         if failed_calls:
+            detail = errors[-1] if errors else "timeout or unparseable output"
             notices.append(
                 f"⚠️ {failed_calls} of {total_calls} review calls failed "
-                "(timeout or unparseable output); results may be incomplete."
+                f"({detail}); results may be incomplete."
             )
 
         if notices:
@@ -169,13 +173,13 @@ class LLMReviewEngine(ReviewEngine):
         model: str,
         response_format: type[ReviewResult] | None,
         category: ReviewCategory,
-    ) -> tuple[list[ReviewFinding], bool]:
+    ) -> tuple[list[ReviewFinding], str | None]:
         """Run one focused review call for a single category.
 
-        Returns ``(findings, ok)``. ``ok`` is False when the call errored (e.g. a
-        timeout that exhausted retries) or returned output we couldn't parse — the
-        engine counts those so it can fail loud instead of reporting a false LGTM.
-        A failing category never aborts the others.
+        Returns ``(findings, error)``. ``error`` is None on success, else a concise
+        reason — the provider exception (e.g. a 429 quota error) or unparseable
+        output — that the engine surfaces so a failure names its real cause instead
+        of a generic "timeout". A failing category never aborts the others.
         """
         messages: list[Message] = [
             {"role": "system", "content": build_system_prompt(category)},
@@ -184,14 +188,31 @@ class LLMReviewEngine(ReviewEngine):
         opts = {"response_format": response_format} if response_format is not None else {}
         try:
             result = self._provider.complete(messages, model=model, **opts)
-        except Exception:
-            _log.warning("review call failed", extra={"category": category.value}, exc_info=True)
-            return [], False
+        except Exception as exc:
+            reason = _error_reason(exc)
+            _log.warning(
+                "review call failed",
+                extra={"category": category.value, "reason": reason},
+                exc_info=True,
+            )
+            return [], reason
         try:
-            return parse_findings(result.text), True
+            return parse_findings(result.text), None
         except ParseError:
             _log.warning("unparseable model output", extra={"category": category.value})
-            return [], False
+            return [], "unparseable model output"
+
+
+def _error_reason(exc: BaseException) -> str:
+    """A concise, single-line reason for a failed review call, safe to show inline.
+
+    Leads with the exception type (litellm names are informative — RateLimitError,
+    AuthenticationError, Timeout) and collapses the message to one line, capped so
+    a verbose provider error doesn't bloat the PR comment.
+    """
+    text = " ".join(str(exc).split())
+    reason = f"{type(exc).__name__}: {text}" if text else type(exc).__name__
+    return reason[:200]
 
 
 def _dedupe(findings: list[ReviewFinding]) -> list[ReviewFinding]:
