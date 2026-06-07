@@ -82,6 +82,17 @@ class ReviewFinding(_Strict):
     suggestion: str | None = None
 
 
+class ReviewResult(_Strict):
+    """Structured-output envelope: the model returns ``{"findings": [...]}``.
+
+    Many providers' JSON-schema mode (litellm ``response_format``) requires a
+    top-level object, not a bare array, so the findings list is wrapped. Used to
+    constrain model output to valid JSON; the parser also accepts a bare array.
+    """
+
+    findings: list[ReviewFinding]
+
+
 class ProviderResult(_Strict):
     """The normalised return of one LLM completion, with token usage."""
 
@@ -134,3 +145,8 @@ class ReviewConfig(_Strict):
     # findings are merged + deduped. Defaults to all of them; narrow it to trade
     # thoroughness for fewer calls.
     categories: list[ReviewCategory] = Field(default=list(ReviewCategory))
+    # Constrain model output to the findings JSON schema via litellm
+    # response_format (provider-native JSON mode). Keeps models from returning
+    # prose/reasoning instead of findings. Disable for a model/provider that
+    # doesn't support it (the lenient parser is the fallback).
+    structured_output: bool = True

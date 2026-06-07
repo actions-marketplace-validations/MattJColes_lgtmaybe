@@ -90,6 +90,11 @@ def test_review_config_accepts_timeout() -> None:
     assert cfg.timeout == 600
 
 
+def test_review_config_structured_output_defaults_true() -> None:
+    cfg = ReviewConfig(provider=Provider.ollama, model="llama3")
+    assert cfg.structured_output is True
+
+
 def test_review_config_temperature_defaults_to_zero() -> None:
     cfg = ReviewConfig(provider=Provider.ollama, model="llama3")
     assert cfg.temperature == 0.0

@@ -26,7 +26,8 @@ Use exactly one of these severity levels per finding:
 
 ## Output contract
 
-Return ONLY a JSON array of finding objects — no prose before or after. Fields per element:
+Return ONLY a JSON object with a single key `findings` whose value is an array of \
+finding objects — no prose, no reasoning, nothing before or after. Fields per element:
 path (string), line (integer), side ("LEFT" or "RIGHT", default "RIGHT"), severity (one of \
 the levels above), title (string ≤ 80 chars), body (string), suggestion (string or null).
 
@@ -41,18 +42,22 @@ For a diff that added this line to loader.py:
 a correct response is:
 
 ```json
-[
-  {
-    "path": "loader.py",
-    "line": 12,
-    "side": "RIGHT",
-    "severity": "high",
-    "title": "Unsafe deserialization via pickle.loads",
-    "body": "pickle.loads executes arbitrary code when the input is attacker-controlled.",
-    "suggestion": "Use a safe format such as json.loads instead of pickle."
-  }
-]
+{
+  "findings": [
+    {
+      "path": "loader.py",
+      "line": 12,
+      "side": "RIGHT",
+      "severity": "high",
+      "title": "Unsafe deserialization via pickle.loads",
+      "body": "pickle.loads executes arbitrary code when the input is attacker-controlled.",
+      "suggestion": "Use a safe format such as json.loads instead of pickle."
+    }
+  ]
+}
 ```
+
+When there are no issues, return `{"findings": []}`.
 """
 
 _CORRECTNESS_SECTION = """\
@@ -161,8 +166,8 @@ _SHARED_RULES = """\
 - Unchanged lines (starting with a space) are surrounding context — reason from them but
   NEVER raise a finding on them; a comment on an unchanged line cannot be posted.
 - Do NOT comment on lines outside the diff hunk.
-- Return an empty array [] only when there are genuinely no issues.
-- Never output anything other than the JSON array."""
+- Return `{"findings": []}` only when there are genuinely no issues.
+- Never output anything other than the JSON object."""
 
 
 def build_system_prompt(category: ReviewCategory | None = None) -> str:

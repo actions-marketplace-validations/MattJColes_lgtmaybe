@@ -18,6 +18,7 @@ from lgtmaybe.core.models import (
     ReviewCategory,
     ReviewConfig,
     ReviewFinding,
+    ReviewResult,
 )
 from lgtmaybe.core.ports import Message, ProviderClient, ReviewEngine
 from lgtmaybe.github import is_reviewable
@@ -96,10 +97,13 @@ class LLMReviewEngine(ReviewEngine):
         #    gets a focused prompt; their findings are merged. Concurrency is
         #    provider-aware — serial for ollama so calls don't queue and time out.
         workers = _worker_count(cfg)
+        # Constrain output to the findings schema (provider-native JSON mode) per
+        # review call — NOT globally, so the reflection call keeps its own format.
+        response_format = ReviewResult if cfg.structured_output else None
         for batch in batches:
             batch_diff = "\n".join(patch for _, patch in batch)
             wrapped = wrap_diff(batch_diff)
-            review_one = partial(self._review_category, wrapped, cfg.model)
+            review_one = partial(self._review_category, wrapped, cfg.model, response_format)
             with ThreadPoolExecutor(max_workers=workers) as pool:
                 for findings, ok in pool.map(review_one, cfg.categories):
                     total_calls += 1
@@ -158,7 +162,11 @@ class LLMReviewEngine(ReviewEngine):
         return filtered, summary_line
 
     def _review_category(
-        self, wrapped: str, model: str, category: ReviewCategory
+        self,
+        wrapped: str,
+        model: str,
+        response_format: type[ReviewResult] | None,
+        category: ReviewCategory,
     ) -> tuple[list[ReviewFinding], bool]:
         """Run one focused review call for a single category.
 
@@ -171,8 +179,9 @@ class LLMReviewEngine(ReviewEngine):
             {"role": "system", "content": build_system_prompt(category)},
             {"role": "user", "content": wrapped},
         ]
+        opts = {"response_format": response_format} if response_format is not None else {}
         try:
-            result = self._provider.complete(messages, model=model)
+            result = self._provider.complete(messages, model=model, **opts)
         except Exception:
             _log.warning("review call failed", extra={"category": category.value}, exc_info=True)
             return [], False

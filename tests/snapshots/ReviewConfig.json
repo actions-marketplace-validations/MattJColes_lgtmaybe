@@ -113,6 +113,11 @@
       "title": "Reflect",
       "type": "boolean"
     },
+    "structured_output": {
+      "default": true,
+      "title": "Structured Output",
+      "type": "boolean"
+    },
     "temperature": {
       "default": 0.0,
       "title": "Temperature",

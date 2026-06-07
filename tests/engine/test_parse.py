@@ -67,6 +67,46 @@ def test_multiple_findings_parse() -> None:
 
 
 # ---------------------------------------------------------------------------
+# structured-output envelope + reasoning blocks
+# ---------------------------------------------------------------------------
+
+
+def test_findings_envelope_object_parses() -> None:
+    """The structured-output shape: {"findings": [...]}"""
+    import json
+
+    raw = json.dumps({"findings": [_VALID_FINDING]})
+    result = parse_findings(raw)
+    assert len(result) == 1
+    assert isinstance(result[0], ReviewFinding)
+
+
+def test_empty_findings_envelope_parses_to_empty() -> None:
+    assert parse_findings('{"findings": []}') == []
+
+
+def test_think_block_stripped_before_json() -> None:
+    """qwen-style <think> reasoning (which may contain brackets) is removed first."""
+    import json
+
+    raw = (
+        "<think>Let me look... there might be an array like [1, 2, 3] in here</think>\n"
+        + json.dumps({"findings": [_VALID_FINDING]})
+    )
+    result = parse_findings(raw)
+    assert len(result) == 1
+
+
+def test_think_block_then_fenced_envelope() -> None:
+    import json
+
+    raw = (
+        "<think>reasoning</think>\n```json\n" + json.dumps({"findings": [_VALID_FINDING]}) + "\n```"
+    )
+    assert len(parse_findings(raw)) == 1
+
+
+# ---------------------------------------------------------------------------
 # malformed-but-recoverable
 # ---------------------------------------------------------------------------
 
