@@ -24,7 +24,7 @@ jobs:
     if: ${{ github.event_name == 'pull_request_target' || github.event.issue.pull_request }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4 # base repo only — for .lgtmaybe.yml config
+      - uses: actions/checkout@v6 # base repo only — for .lgtmaybe.yml config
       - uses: lgtmaybe/lgtmaybe@v1
         with:
           provider: openai
