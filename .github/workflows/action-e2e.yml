@@ -1,0 +1,94 @@
+# Provider end-to-end smoke test for the composite action.
+#
+# NOT part of normal CI — it makes REAL provider calls and needs secrets, so it
+# only runs when a PR carries the `lgtmaybe-e2e` label. Open a small throwaway PR,
+# add the label, and every hosted provider reviews that PR through action.yml end
+# to end (build image → keyless/keyed auth → fetch diff → call model → post review).
+#
+# A green matrix job == that provider authenticated, reached the model, and posted
+# without erroring (the action exits non-zero on any failure). `fail-fast: false`
+# keeps one provider's failure from masking the others. The providers share the
+# hidden marker comment, so their summaries overwrite each other on the PR — that
+# is cosmetic; the job's exit status is the real signal.
+#
+# ollama is local-only (no hosted runner, no key), so it is covered by the pytest
+# suite (tests/cli/test_provider_threading.py), not here.
+#
+# Required repo secrets:
+#   OPENAI_API_KEY, ANTHROPIC_API_KEY, OPENROUTER_API_KEY  (key providers)
+#   AWS_ROLE_ARN                                           (bedrock, keyless OIDC)
+#   GCP_WIF_PROVIDER, GCP_SERVICE_ACCOUNT                  (vertex, keyless WIF)
+#   AZURE_API_BASE, AZURE_CLIENT_ID, AZURE_TENANT_ID       (azure, keyless OIDC)
+# Model ids below are illustrative cheap-tier examples — adjust to ones your
+# account/region has enabled (azure `model` is your deployment name).
+name: action-e2e
+
+on:
+  pull_request_target:
+    types: [labeled, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: write
+  id-token: write # keyless OIDC/WIF token exchange for bedrock + vertex
+
+concurrency:
+  group: action-e2e-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  e2e:
+    # Only when the PR is opted-in via label, so real spend never runs by default.
+    if: contains(github.event.pull_request.labels.*.name, 'lgtmaybe-e2e')
+    runs-on: ubuntu-latest
+    name: ${{ matrix.provider }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - provider: openai
+            model: gpt-4.1-mini
+            api_key_secret: OPENAI_API_KEY
+            cloud: ""
+          - provider: anthropic
+            model: claude-haiku-4-5
+            api_key_secret: ANTHROPIC_API_KEY
+            cloud: ""
+          - provider: openrouter
+            model: openai/gpt-4.1-mini
+            api_key_secret: OPENROUTER_API_KEY
+            cloud: ""
+          - provider: bedrock
+            model: anthropic.claude-haiku-4-5
+            api_key_secret: ""
+            cloud: aws
+          - provider: vertex
+            model: claude-haiku-4-5
+            api_key_secret: ""
+            cloud: gcp
+          - provider: azure
+            model: my-gpt-4o-deployment # your Azure deployment name
+            api_key_secret: ""
+            cloud: azure
+    steps:
+      - uses: actions/checkout@v6
+
+      # Build from THIS checkout so we exercise the current code, not the
+      # released GHCR image. action.yml runs whatever `image:` we hand it.
+      - name: Build action image
+        run: docker build -t lgtmaybe:e2e .
+
+      - name: Review this PR with ${{ matrix.provider }}
+        uses: ./
+        with:
+          provider: ${{ matrix.provider }}
+          model: ${{ matrix.model }}
+          image: lgtmaybe:e2e
+          api_key: ${{ matrix.api_key_secret != '' && secrets[matrix.api_key_secret] || '' }}
+          aws_role_arn: ${{ matrix.cloud == 'aws' && secrets.AWS_ROLE_ARN || '' }}
+          aws_region: ${{ matrix.cloud == 'aws' && 'us-east-1' || '' }}
+          gcp_wif_provider: ${{ matrix.cloud == 'gcp' && secrets.GCP_WIF_PROVIDER || '' }}
+          gcp_service_account: ${{ matrix.cloud == 'gcp' && secrets.GCP_SERVICE_ACCOUNT || '' }}
+          api_base: ${{ matrix.cloud == 'azure' && secrets.AZURE_API_BASE || '' }}
+          azure_client_id: ${{ matrix.cloud == 'azure' && secrets.AZURE_CLIENT_ID || '' }}
+          azure_tenant_id: ${{ matrix.cloud == 'azure' && secrets.AZURE_TENANT_ID || '' }}
