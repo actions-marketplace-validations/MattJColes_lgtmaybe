@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from lgtmaybe.core.models import (
     PRContext,
     Provider,
@@ -13,7 +15,7 @@ from lgtmaybe.core.models import (
     ReviewFinding,
     Severity,
 )
-from lgtmaybe.engine import LLMReviewEngine
+from lgtmaybe.engine import LLMReviewEngine, ReviewIncompleteError
 from lgtmaybe.engine.redact import REDACTED_PLACEHOLDER
 from tests.fakes import FakeProvider
 
@@ -414,3 +416,84 @@ def test_categories_config_narrows_the_fan_out() -> None:
     engine.review(_CTX, cfg)
 
     assert len(_review_calls(provider)) == 1
+
+
+# ---------------------------------------------------------------------------
+# provider-aware concurrency
+# ---------------------------------------------------------------------------
+
+
+def test_ollama_fans_out_serially() -> None:
+    from lgtmaybe.engine.engine import _worker_count
+
+    cfg = ReviewConfig(provider=Provider.ollama, model="llama3")
+    assert _worker_count(cfg) == 1  # one ollama instance serves serially
+
+
+def test_cloud_fans_out_concurrently() -> None:
+    from lgtmaybe.engine.engine import _worker_count
+
+    cfg = ReviewConfig(provider=Provider.openai, model="gpt-4o")
+    assert _worker_count(cfg) == len(cfg.categories)
+
+
+# ---------------------------------------------------------------------------
+# fail loud: don't pass off a failed run as a clean review
+# ---------------------------------------------------------------------------
+
+
+class _UnparseableProvider(FakeProvider):
+    """Returns prose (never valid findings JSON) for every review call."""
+
+    def complete(self, messages, model, **opts):  # type: ignore[override]
+        self.calls.append({"messages": messages, "model": model, "opts": opts})
+        return ProviderResult(text="I think this looks fine!", input_tokens=10, output_tokens=5)
+
+
+class _TimeoutProvider(FakeProvider):
+    """Raises on every review call (e.g. a timeout that exhausted retries)."""
+
+    def complete(self, messages, model, **opts):  # type: ignore[override]
+        self.calls.append({"messages": messages, "model": model, "opts": opts})
+        raise TimeoutError("connection timed out")
+
+
+def test_all_categories_unparseable_raises_incomplete() -> None:
+    engine = LLMReviewEngine(_UnparseableProvider())
+    cfg = ReviewConfig(provider=Provider.ollama, model="llama3", reflect=False)
+
+    with pytest.raises(ReviewIncompleteError):
+        engine.review(_CTX, cfg)
+
+
+def test_all_categories_error_raises_incomplete_not_lgtm() -> None:
+    engine = LLMReviewEngine(_TimeoutProvider())
+    cfg = ReviewConfig(provider=Provider.ollama, model="llama3", reflect=False)
+
+    with pytest.raises(ReviewIncompleteError):
+        engine.review(_CTX, cfg)
+
+
+def test_partial_failure_keeps_findings_with_a_notice_and_no_lgtm() -> None:
+    # security returns a real finding; every other category is unparseable.
+    class _MixedProvider(FakeProvider):
+        def complete(self, messages, model, **opts):  # type: ignore[override]
+            self.calls.append({"messages": messages, "model": model, "opts": opts})
+            system = messages[0]["content"].lower()
+            if "owasp" in system:
+                f = ReviewFinding(
+                    path="a.py", line=1, severity=Severity.high, title="bug", body="x"
+                )
+                return ProviderResult(
+                    text=json.dumps([f.model_dump(mode="json")]), input_tokens=10, output_tokens=5
+                )
+            return ProviderResult(text="no JSON here", input_tokens=10, output_tokens=5)
+
+    engine = LLMReviewEngine(_MixedProvider())
+    cfg = ReviewConfig(provider=Provider.ollama, model="llama3", reflect=False)
+
+    findings, summary = engine.review(_CTX, cfg)
+
+    assert [f.title for f in findings] == ["bug"]  # the good finding survives
+    assert "incomplete" in summary.lower()
+    assert "LGTM" not in summary

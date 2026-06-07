@@ -85,12 +85,50 @@ agent (such as Claude Code) can read and apply, so you can review and fix a
 branch locally before opening a PR. See
 [Fix findings with an AI agent](fix-findings-with-an-ai-agent.md).
 
+## Slow models and timeouts
+
+Local models are slow, especially large ones on CPU, so lgtmaybe gives **ollama a
+long default per-request timeout (300 seconds)** automatically — you don't need
+to set anything for a normal run. (Cloud providers default to 60 s.)
+
+If a big model still times out — you'll see
+`litellm.Timeout: Connection timed out after 300.0 seconds` — raise it explicitly:
+
+```bash
+# CLI flag (seconds):
+lgtmaybe review --provider ollama --model qwen3.6:35b \
+  --api-base http://localhost:11434 --timeout 900
+```
+
+```yaml
+# or in .lgtmaybe.yml (also how the GitHub Action picks it up):
+provider: ollama
+model: qwen3.6:35b
+timeout: 900
+```
+
+The review fans out one call per category. lgtmaybe runs those **serially for
+ollama** (a single ollama instance serves one request at a time, so firing them
+concurrently would only make each wait and time out). The trade-off is wall-clock
+time — a slow model takes roughly `categories × per-call time`. To go faster,
+narrow the lenses with `categories:` in `.lgtmaybe.yml` (e.g. just `security` and
+`correctness`), use a smaller model, or give ollama more GPU. If you have the VRAM
+to truly serve requests in parallel, raise `OLLAMA_NUM_PARALLEL` on the **ollama
+server** — lgtmaybe still issues ollama calls one at a time, but a faster server
+shortens each.
+
 ## Troubleshooting
 
 **`Connection refused` on port 11434** — ensure `ollama serve` is running and
 the `--api-base` URL is reachable.
 
 **Model not found** — run `ollama pull <model>` before using it.
+
+**`review incomplete — the model returned no usable output`** — every category
+call timed out or returned output that wasn't valid JSON. Raise `--timeout`, try a
+model that follows instructions more reliably, or check `LITELLM_LOG=DEBUG` output
+for the underlying error. lgtmaybe reports this (and exits non-zero) rather than
+pretending the PR is clean.
 
 **Review is empty or truncated** — the diff may exceed the model's context
 window. Add a path filter in `.lgtmaybe.yml` to reduce diff size, or set

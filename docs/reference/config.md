@@ -24,7 +24,7 @@ The user-facing configuration model. Fields map directly to `.lgtmaybe.yml` keys
 | `provider` | `anthropic` / `azure` / `bedrock` / `ollama` / `openai` / `openrouter` / `vertex` | Yes | — |  |
 | `reflect` | boolean | No | `True` | Reflect |
 | `temperature` | number | No | `0.0` | Temperature |
-| `timeout` | integer | No | `60` | Timeout |
+| `timeout` | integer / null | No | `null` | Timeout |
 
 ## Enums
 
@@ -216,9 +216,16 @@ The canonical machine-readable schemas. These are the source of truth for provid
       "type": "number"
     },
     "timeout": {
-      "default": 60,
-      "title": "Timeout",
-      "type": "integer"
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Timeout"
     }
   },
   "required": [

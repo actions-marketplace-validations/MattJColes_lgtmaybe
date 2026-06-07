@@ -1,8 +1,8 @@
 """LLMReviewEngine: the full review pipeline.
 
 Pipeline: redact → compress/batch → (per batch) fan out one call per review
-         category concurrently → parse → merge/dedupe → self-reflect/filter →
-         filter by min_severity → return findings + summary.
+         category (concurrent for cloud, serial for ollama) → parse → merge/dedupe
+         → self-reflect/filter → filter by min_severity → return findings + summary.
 """
 
 from __future__ import annotations
@@ -11,7 +11,14 @@ from concurrent.futures import ThreadPoolExecutor
 from functools import partial
 
 from lgtmaybe.core.diffparse import split_by_file
-from lgtmaybe.core.models import PRContext, ReviewCategory, ReviewConfig, ReviewFinding
+from lgtmaybe.core.logging import get_logger
+from lgtmaybe.core.models import (
+    PRContext,
+    Provider,
+    ReviewCategory,
+    ReviewConfig,
+    ReviewFinding,
+)
 from lgtmaybe.core.ports import Message, ProviderClient, ReviewEngine
 from lgtmaybe.github import is_reviewable
 
@@ -21,6 +28,27 @@ from .parse import ParseError, parse_findings
 from .prompt import build_system_prompt
 from .redact import redact
 from .reflect import reflect_findings
+
+_log = get_logger(__name__)
+
+# A single ollama instance serves a model serially, so concurrent calls only
+# queue up and time out; every other provider parallelises across categories.
+_MAX_WORKERS = 8
+
+
+class ReviewIncompleteError(Exception):
+    """Every review call failed (timeout or unparseable output) — no usable result.
+
+    Raised instead of silently reporting a clean review, so the CLI surfaces a
+    failure (non-zero exit / failure comment) rather than a false 👍 LGTM.
+    """
+
+
+def _worker_count(cfg: ReviewConfig) -> int:
+    """How many category calls to run at once: 1 for ollama (serial backend)."""
+    if cfg.provider is Provider.ollama:
+        return 1
+    return min(len(cfg.categories), _MAX_WORKERS) or 1
 
 
 class LLMReviewEngine(ReviewEngine):
@@ -61,17 +89,32 @@ class LLMReviewEngine(ReviewEngine):
         batches = batch_files(file_patches, max_tokens=cfg.max_input_tokens)
 
         all_findings: list[ReviewFinding] = []
+        total_calls = 0
+        failed_calls = 0
 
-        # 5. For each batch, fan out one call per review category, concurrently.
-        #    Each category gets a focused prompt; their findings are merged.
-        workers = min(len(cfg.categories), 8) or 1
+        # 5. For each batch, fan out one call per review category. Each category
+        #    gets a focused prompt; their findings are merged. Concurrency is
+        #    provider-aware — serial for ollama so calls don't queue and time out.
+        workers = _worker_count(cfg)
         for batch in batches:
             batch_diff = "\n".join(patch for _, patch in batch)
             wrapped = wrap_diff(batch_diff)
             review_one = partial(self._review_category, wrapped, cfg.model)
             with ThreadPoolExecutor(max_workers=workers) as pool:
-                for findings in pool.map(review_one, cfg.categories):
+                for findings, ok in pool.map(review_one, cfg.categories):
+                    total_calls += 1
+                    if not ok:
+                        failed_calls += 1
                     all_findings.extend(findings)
+
+        # 5b. Fail loud: if EVERY call errored or returned unparseable output, we
+        #     have no signal — never pass that off as a clean review.
+        if total_calls > 0 and failed_calls == total_calls:
+            raise ReviewIncompleteError(
+                "review incomplete — the model returned no usable output "
+                "(timeout or unparseable response). Check the model and timeout "
+                "(ollama: a larger model needs a longer --timeout) and retry."
+            )
 
         # 6. Merge: a finding can surface under more than one lens (a shell
         #    injection is both a security and a correctness issue), so collapse
@@ -91,13 +134,24 @@ class LLMReviewEngine(ReviewEngine):
 
         plural = "s" if len(filtered) != 1 else ""
         summary_line = f"{len(filtered)} finding{plural} · model {cfg.model}"
+
+        notices = []
         if capped_files:
-            notice = (
+            notices.append(
                 f"⚠️ Reviewed the top {cfg.max_files} of {total_files} changed files "
                 f"(file cap {cfg.max_files}). Raise max_files to review them all."
             )
-            return filtered, f"{notice}\n\n{summary_line}"
-        # A genuinely clean review (nothing flagged, every file reviewed) gets an
+        # Some — but not all — lenses failed: the result may be incomplete, so say
+        # so and don't claim a clean bill of health.
+        if failed_calls:
+            notices.append(
+                f"⚠️ {failed_calls} of {total_calls} review calls failed "
+                "(timeout or unparseable output); results may be incomplete."
+            )
+
+        if notices:
+            return filtered, "\n\n".join([*notices, summary_line])
+        # A genuinely clean review (nothing flagged, every call succeeded) gets an
         # explicit thumbs-up rather than a bare "0 findings".
         if not filtered:
             return filtered, f"👍 LGTM!\n\n{summary_line}"
@@ -105,17 +159,28 @@ class LLMReviewEngine(ReviewEngine):
 
     def _review_category(
         self, wrapped: str, model: str, category: ReviewCategory
-    ) -> list[ReviewFinding]:
-        """Run one focused review call for a single category and parse its findings."""
+    ) -> tuple[list[ReviewFinding], bool]:
+        """Run one focused review call for a single category.
+
+        Returns ``(findings, ok)``. ``ok`` is False when the call errored (e.g. a
+        timeout that exhausted retries) or returned output we couldn't parse — the
+        engine counts those so it can fail loud instead of reporting a false LGTM.
+        A failing category never aborts the others.
+        """
         messages: list[Message] = [
             {"role": "system", "content": build_system_prompt(category)},
             {"role": "user", "content": wrapped},
         ]
-        result = self._provider.complete(messages, model=model)
         try:
-            return parse_findings(result.text)
+            result = self._provider.complete(messages, model=model)
+        except Exception:
+            _log.warning("review call failed", extra={"category": category.value}, exc_info=True)
+            return [], False
+        try:
+            return parse_findings(result.text), True
         except ParseError:
-            return []
+            _log.warning("unparseable model output", extra={"category": category.value})
+            return [], False
 
 
 def _dedupe(findings: list[ReviewFinding]) -> list[ReviewFinding]:

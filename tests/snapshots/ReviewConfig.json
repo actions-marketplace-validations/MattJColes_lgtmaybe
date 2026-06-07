@@ -119,9 +119,16 @@
       "type": "number"
     },
     "timeout": {
-      "default": 60,
-      "title": "Timeout",
-      "type": "integer"
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Timeout"
     }
   },
   "required": [

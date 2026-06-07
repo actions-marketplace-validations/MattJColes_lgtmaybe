@@ -28,6 +28,17 @@ _PREFIXES: dict[Provider, str] = {
     Provider.ollama: "ollama",
 }
 
+# Default per-request timeout (seconds) when the caller doesn't set one. Local
+# models on ollama are slow — and the per-category fan-out runs them serially —
+# so ollama gets a generous default; cloud providers respond fast.
+_OLLAMA_TIMEOUT = 300
+_CLOUD_TIMEOUT = 60
+
+
+def default_timeout_for(provider: Provider) -> int:
+    """The auto timeout (seconds) for a provider when none is given explicitly."""
+    return _OLLAMA_TIMEOUT if provider is Provider.ollama else _CLOUD_TIMEOUT
+
 
 def litellm_model_string(provider: Provider, model: str) -> str:
     """Return the litellm model string for the given provider and model name."""
@@ -42,12 +53,20 @@ def build_provider(
     api_base: str | None = None,
     azure_ad_token: str | None = None,
     fallback_model: str | None = None,
+    timeout: int | None = None,
     **extra_opts: Any,
 ) -> LiteLLMProvider:
-    """Build a configured LiteLLMProvider for the given provider and model."""
+    """Build a configured LiteLLMProvider for the given provider and model.
+
+    ``timeout`` of ``None`` resolves to a provider-aware default
+    (:func:`default_timeout_for`) — so ollama always gets a long timeout without
+    the caller having to ask. An explicit value is honoured as-is.
+    """
     resolved_model = litellm_model_string(provider, model)
     resolved_fallback = litellm_model_string(provider, fallback_model) if fallback_model else None
     opts: dict[str, Any] = dict(extra_opts)
+
+    opts["timeout"] = timeout if timeout is not None else default_timeout_for(provider)
 
     if api_key is not None:
         opts["api_key"] = api_key

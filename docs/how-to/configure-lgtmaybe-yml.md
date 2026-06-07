@@ -130,6 +130,19 @@ context_lines: 10   # at most 10 lines either side of each hunk; 0 disables
 
 Default: `20`.
 
+### timeout
+
+Per-request timeout in seconds for each model call. Left unset, lgtmaybe picks a
+**provider-aware default**: **300 s for ollama** (local models are slow) and 60 s
+for cloud providers. Set it explicitly to raise it for a large local model.
+
+```yaml
+timeout: 900   # 15 minutes per call, e.g. for a big model on CPU
+```
+
+Default: auto (ollama 300 s, cloud 60 s). See
+[Run locally with ollama](run-locally-with-ollama.md#slow-models-and-timeouts).
+
 ## CLI flag overrides
 
 Every config field can be overridden at the command line:
