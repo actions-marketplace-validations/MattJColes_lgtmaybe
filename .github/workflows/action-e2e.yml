@@ -58,18 +58,21 @@ jobs:
             model: openai/gpt-4.1-mini
             api_key_secret: OPENROUTER_API_KEY
             cloud: ""
-          - provider: bedrock
-            model: anthropic.claude-haiku-4-5
-            api_key_secret: ""
-            cloud: aws
-          - provider: vertex
-            model: claude-haiku-4-5
-            api_key_secret: ""
-            cloud: gcp
-          - provider: azure
-            model: my-gpt-4o-deployment # your Azure deployment name
-            api_key_secret: ""
-            cloud: azure
+          # Cloud providers temporarily disabled — no AWS/GCP/Azure creds set up
+          # yet. Re-enable each leg once its secrets exist (AWS_ROLE_ARN,
+          # GCP_WIF_PROVIDER/GCP_SERVICE_ACCOUNT, AZURE_API_BASE/CLIENT_ID/TENANT_ID).
+          # - provider: bedrock
+          #   model: anthropic.claude-haiku-4-5
+          #   api_key_secret: ""
+          #   cloud: aws
+          # - provider: vertex
+          #   model: claude-haiku-4-5
+          #   api_key_secret: ""
+          #   cloud: gcp
+          # - provider: azure
+          #   model: my-gpt-4o-deployment # your Azure deployment name
+          #   api_key_secret: ""
+          #   cloud: azure
     steps:
       - uses: actions/checkout@v6
 
