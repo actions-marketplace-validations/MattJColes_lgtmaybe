@@ -546,3 +546,45 @@ def test_partial_failure_keeps_findings_with_a_notice_and_no_lgtm() -> None:
     assert [f.title for f in findings] == ["bug"]  # the good finding survives
     assert "incomplete" in summary.lower()
     assert "LGTM" not in summary
+
+
+class _QuotaErrorProvider(FakeProvider):
+    """Raises a provider error with a distinctive message on every call."""
+
+    def complete(self, messages, model, **opts):  # type: ignore[override]
+        self.calls.append({"messages": messages, "model": model, "opts": opts})
+        raise RuntimeError("RateLimitError: insufficient_quota — check billing")
+
+
+def test_all_categories_error_surfaces_provider_error_detail() -> None:
+    """A total failure names the underlying provider error, not just 'timeout'."""
+    engine = LLMReviewEngine(_QuotaErrorProvider())
+    cfg = ReviewConfig(provider=Provider.openai, model="gpt-4.1-mini", reflect=False)
+
+    with pytest.raises(ReviewIncompleteError) as excinfo:
+        engine.review(_CTX, cfg)
+
+    assert "insufficient_quota" in str(excinfo.value)
+
+
+def test_partial_failure_notice_names_the_provider_error() -> None:
+    """A partial failure's notice carries the real provider error detail."""
+
+    class _MixedErrProvider(FakeProvider):
+        def complete(self, messages, model, **opts):  # type: ignore[override]
+            self.calls.append({"messages": messages, "model": model, "opts": opts})
+            if "owasp" in messages[0]["content"].lower():
+                f = ReviewFinding(
+                    path="a.py", line=1, severity=Severity.high, title="bug", body="x"
+                )
+                return ProviderResult(
+                    text=json.dumps([f.model_dump(mode="json")]), input_tokens=10, output_tokens=5
+                )
+            raise RuntimeError("RateLimitError: insufficient_quota")
+
+    engine = LLMReviewEngine(_MixedErrProvider())
+    cfg = ReviewConfig(provider=Provider.openai, model="gpt-4.1-mini", reflect=False)
+
+    _, summary = engine.review(_CTX, cfg)
+
+    assert "insufficient_quota" in summary
