@@ -78,6 +78,13 @@ lgtmaybe review \
   --json
 ```
 
+## Let an AI agent apply the fixes
+
+`--format agent` prints the findings as correction instructions an AI coding
+agent (such as Claude Code) can read and apply, so you can review and fix a
+branch locally before opening a PR. See
+[Fix findings with an AI agent](fix-findings-with-an-ai-agent.md).
+
 ## Troubleshooting
 
 **`Connection refused` on port 11434** — ensure `ollama serve` is running and
