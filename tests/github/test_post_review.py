@@ -237,9 +237,7 @@ def test_post_review_uses_provider_scoped_marker() -> None:
 def test_post_review_with_distinct_marker_keys_coexist() -> None:
     """A review from another provider/model is left intact; a gateway with a
     different marker_key creates its own review instead of overwriting it."""
-    other = [
-        {"id": 7, "body": "Anthropic summary <!-- lgtmaybe:anthropic/claude-haiku-4-5 -->"}
-    ]
+    other = [{"id": 7, "body": "Anthropic summary <!-- lgtmaybe:anthropic/claude-haiku-4-5 -->"}]
     respx.route(method="GET", url=REVIEWS_URL).mock(return_value=httpx.Response(200, json=other))
 
     create_bodies: list[dict[object, object]] = []
