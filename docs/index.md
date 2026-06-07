@@ -24,7 +24,10 @@ Reviews surface the things you'd want a careful reviewer to catch:
 - **Security vulnerabilities** — an OWASP-aligned sweep: injection, XSS, hardcoded secrets, broken authn/authz, path traversal, SSRF, insecure deserialization, weak crypto, and resource/DoS safety.
 - **Deprecated and end-of-life code** — deprecated APIs and end-of-life or vulnerable dependencies, flagged when the diff shows them (with the modern replacement suggested where known).
 - **Severity grading** — every finding is rated from `info` up to `critical`, so you can set the floor that matters to you.
-- **Inline, on the exact line** — each finding is a comment where the problem is, with one summary at the top (on the CLI, the same findings print to your terminal).
+
+Each finding lands inline, on the exact line where the problem is, with one
+summary at the top. On the CLI the same findings print to your terminal — ready
+to read, or to hand to an AI agent to apply.
 
 Generated files and binaries are skipped, secrets are redacted and the diff is
 treated as untrusted input (hardened against prompt injection) before anything
