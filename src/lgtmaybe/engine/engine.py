@@ -6,6 +6,7 @@ Pipeline: redact → compress/batch → (for each batch) build messages → prov
 
 from __future__ import annotations
 
+from lgtmaybe.core.diffparse import split_by_file
 from lgtmaybe.core.models import PRContext, ReviewConfig, ReviewFinding
 from lgtmaybe.core.ports import Message, ProviderClient, ReviewEngine
 from lgtmaybe.github import is_reviewable
@@ -30,7 +31,7 @@ class LLMReviewEngine(ReviewEngine):
         clean_diff = redact(ctx.diff)
 
         # 2. Split into per-file patches and drop generated/binary/vendored noise.
-        file_patches = _split_diff_by_file(clean_diff, ctx.changed_files)
+        file_patches = split_by_file(clean_diff, ctx.changed_files)
         file_patches = [(path, patch) for path, patch in file_patches if is_reviewable(path)]
 
         # 3. File cap: review only the first N reviewable files, note the rest.
@@ -114,32 +115,3 @@ class LLMReviewEngine(ReviewEngine):
             f"cap of ${cfg.max_cost_usd:.4f} (model {cfg.model}). "
             "Raise max_cost_usd to review the full PR."
         )
-
-
-def _split_diff_by_file(
-    diff: str,
-    changed_files: list[str],
-) -> list[tuple[str, str]]:
-    """Split a unified diff string into per-file (path, patch) pairs.
-
-    Falls back to treating the whole diff as one file if parsing fails.
-    """
-    import re
-
-    # Match 'diff --git a/... b/...' headers
-    pattern = re.compile(r"^diff --git a/.+ b/(.+)$", re.MULTILINE)
-    matches = list(pattern.finditer(diff))
-
-    if not matches:
-        # No git diff headers — treat as a single chunk associated with the first changed file
-        path = changed_files[0] if changed_files else "unknown"
-        return [(path, diff)]
-
-    result: list[tuple[str, str]] = []
-    for i, match in enumerate(matches):
-        path = match.group(1)
-        start = match.start()
-        end = matches[i + 1].start() if i + 1 < len(matches) else len(diff)
-        result.append((path, diff[start:end]))
-
-    return result

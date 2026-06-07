@@ -13,8 +13,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 from lgtmaybe.core.models import Provider
-
-_DEFAULT_OLLAMA_BASE = "http://localhost:11434"
+from lgtmaybe.providers.constants import DEFAULT_OLLAMA_BASE
 
 
 @dataclass(frozen=True)
@@ -148,7 +147,7 @@ def resolve_credentials(
         )
 
     if provider is Provider.ollama:
-        return AuthConfig(api_base=api_base or _DEFAULT_OLLAMA_BASE)
+        return AuthConfig(api_base=api_base or DEFAULT_OLLAMA_BASE)
 
     # API-key providers: openai, anthropic, openrouter
     _ENV_VAR: dict[Provider, str] = {

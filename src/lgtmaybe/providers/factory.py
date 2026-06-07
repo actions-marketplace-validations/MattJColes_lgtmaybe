@@ -15,9 +15,8 @@ from __future__ import annotations
 from typing import Any
 
 from lgtmaybe.core.models import Provider
+from lgtmaybe.providers.constants import DEFAULT_OLLAMA_BASE
 from lgtmaybe.providers.litellm_provider import LiteLLMProvider
-
-_DEFAULT_OLLAMA_BASE = "http://localhost:11434"
 
 _PREFIXES: dict[Provider, str] = {
     Provider.openai: "openai",
@@ -59,7 +58,7 @@ def build_provider(
 
     is_ollama = provider is Provider.ollama
     if is_ollama:
-        opts["api_base"] = api_base or _DEFAULT_OLLAMA_BASE
+        opts["api_base"] = api_base or DEFAULT_OLLAMA_BASE
     elif api_base is not None:
         # Azure routes to a per-resource endpoint; any other provider that
         # supplies an explicit base (e.g. a proxy) is honoured too.

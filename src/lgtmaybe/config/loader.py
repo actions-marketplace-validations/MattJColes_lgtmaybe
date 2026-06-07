@@ -13,7 +13,6 @@ from pathlib import Path
 from typing import IO, Any
 
 import yaml
-from pydantic import ValidationError
 
 from lgtmaybe.config import store
 from lgtmaybe.core.models import ReviewConfig
@@ -51,10 +50,7 @@ def load_config(
         if value is not None:
             merged[key] = value
 
-    try:
-        return ReviewConfig.model_validate(merged)
-    except ValidationError:
-        raise
+    return ReviewConfig.model_validate(merged)
 
 
 def _load_file(

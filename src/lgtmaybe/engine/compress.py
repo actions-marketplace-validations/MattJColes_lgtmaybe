@@ -6,10 +6,7 @@ Provides a dynamic context-line calculator for the remaining budget.
 
 from __future__ import annotations
 
-import re
-
-# Hunk header: "@@ -old_start[,old_len] +new_start[,new_len] @@ optional section"
-_HUNK_HEADER = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@(.*)$")
+from lgtmaybe.core.diffparse import parse_hunk_header
 
 _MAX_CONTEXT_LINES = 20
 _MIN_CONTEXT_LINES = 0
@@ -111,7 +108,7 @@ def expand_hunks(patch: str, file_content: str | None, n: int) -> str:
     pending_trailing: list[str] = []
 
     for line in patch.splitlines():
-        header = _HUNK_HEADER.match(line)
+        header = parse_hunk_header(line)
         if header is None:
             out.append(line)
             continue
@@ -119,11 +116,11 @@ def expand_hunks(patch: str, file_content: str | None, n: int) -> str:
         # A new hunk starts: flush the previous hunk's trailing context first.
         out.extend(f" {text}" for text in pending_trailing)
 
-        old_start = int(header.group(1))
-        old_len = int(header.group(2)) if header.group(2) is not None else 1
-        new_start = int(header.group(3))
-        new_len = int(header.group(4)) if header.group(4) is not None else 1
-        section = header.group(5)
+        old_start = header.old_start
+        old_len = header.old_len
+        new_start = header.new_start
+        new_len = header.new_len
+        section = header.section
 
         # Lines immediately before the hunk and after its last new-file line.
         leading = [content_lines[i - 1] for i in range(max(1, new_start - n), new_start)]
