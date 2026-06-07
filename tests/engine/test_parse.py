@@ -99,3 +99,49 @@ def test_pure_garbage_raises_parse_error() -> None:
 def test_empty_string_raises_parse_error() -> None:
     with pytest.raises(ParseError):
         parse_findings("")
+
+
+def test_whitespace_only_raises_parse_error() -> None:
+    with pytest.raises(ParseError):
+        parse_findings("   \n\t  ")
+
+
+# ---------------------------------------------------------------------------
+# schema enforcement — the model output is untrusted; reject drift loudly
+# ---------------------------------------------------------------------------
+
+
+def test_empty_array_yields_no_findings() -> None:
+    """A clean review (empty array) is valid and parses to zero findings."""
+    assert parse_findings("[]") == []
+
+
+def test_unknown_field_is_rejected() -> None:
+    """`extra=forbid` on the model means injected/extra keys fail, not slip through."""
+    bad = dict(_VALID_FINDING, exploit="rm -rf /")
+    with pytest.raises(ParseError):
+        parse_findings(_json_findings([bad]))
+
+
+def test_invalid_severity_is_rejected() -> None:
+    bad = dict(_VALID_FINDING, severity="catastrophic")
+    with pytest.raises(ParseError):
+        parse_findings(_json_findings([bad]))
+
+
+def test_missing_required_field_is_rejected() -> None:
+    bad = {k: v for k, v in _VALID_FINDING.items() if k != "body"}
+    with pytest.raises(ParseError):
+        parse_findings(_json_findings([bad]))
+
+
+def test_non_integer_line_is_rejected() -> None:
+    bad = dict(_VALID_FINDING, line="not-a-number")
+    with pytest.raises(ParseError):
+        parse_findings(_json_findings([bad]))
+
+
+def test_json_null_literal_raises_parse_error() -> None:
+    """A literal `null` is neither an array nor an object of findings."""
+    with pytest.raises(ParseError):
+        parse_findings("null")
