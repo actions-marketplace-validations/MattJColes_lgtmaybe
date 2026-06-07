@@ -1,37 +1,27 @@
 name: release
 
-# Fires only on full semver tags (v1.2.3) — never on the floating v1 ref we
-# move below, so the major-tag update can't re-trigger this workflow.
+# Reusable publish workflow. Called by release-please.yml once a Release PR is
+# merged and a vX.Y.Z tag + GitHub release have been created. The `tag` input is
+# the just-created tag (e.g. v0.1.0); release-please guarantees it matches the
+# packaged version, so no tag==version guard is needed here.
 on:
-  push:
-    tags:
-      - "v*.*.*"
+  workflow_call:
+    inputs:
+      tag:
+        description: "The released tag to build and publish (e.g. v0.1.0)."
+        required: true
+        type: string
 
 jobs:
-  # Fail fast if the tag and the packaged version disagree.
-  guard:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-      - name: Tag matches pyproject version
-        run: |
-          set -euo pipefail
-          tag="${GITHUB_REF_NAME#v}"
-          pkg="$(grep -m1 '^version' pyproject.toml | sed -E 's/.*"(.*)".*/\1/')"
-          if [ "$tag" != "$pkg" ]; then
-            echo "::error::tag $GITHUB_REF_NAME does not match pyproject version $pkg"
-            exit 1
-          fi
-          echo "version $pkg matches tag $GITHUB_REF_NAME"
-
   pypi:
-    needs: guard
     runs-on: ubuntu-latest
     environment: pypi
     permissions:
       id-token: write # trusted publishing — no PyPI token in secrets
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.tag }}
       - name: Install uv
         uses: astral-sh/setup-uv@v7
         with:
@@ -42,13 +32,14 @@ jobs:
         uses: pypa/gh-action-pypi-publish@release/v1
 
   ghcr:
-    needs: guard
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write # push to GHCR with the built-in token
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.tag }}
       - name: Log in to GHCR
         uses: docker/login-action@v4
         with:
@@ -61,8 +52,8 @@ jobs:
         with:
           images: ghcr.io/${{ github.repository }}
           tags: |
-            type=semver,pattern={{version}}
-            type=semver,pattern=v{{major}}
+            type=semver,pattern={{version}},value=${{ inputs.tag }}
+            type=semver,pattern=v{{major}},value=${{ inputs.tag }}
             type=raw,value=latest
       - name: Build and push
         uses: docker/build-push-action@v7
@@ -72,24 +63,24 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
 
-  release:
+  # Move the floating major tag (e.g. v0) onto the released commit. The GitHub
+  # release itself is created by release-please, so we don't create one here.
+  floating-tag:
     needs: [pypi, ghcr]
     runs-on: ubuntu-latest
     permissions:
-      contents: write # create the GitHub release and move the floating major tag
+      contents: write # move the floating major tag
     steps:
       - uses: actions/checkout@v6
-      - name: Move floating major tag (e.g. v1)
+        with:
+          ref: ${{ inputs.tag }}
+      - name: Move floating major tag (e.g. v0)
         run: |
           set -euo pipefail
-          major="v${GITHUB_REF_NAME#v}"
+          major="${{ inputs.tag }}"
           major="${major%%.*}"
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git tag -f "$major" "$GITHUB_SHA"
+          git tag -f "$major" "${{ inputs.tag }}"
           git push -f origin "refs/tags/$major"
-          echo "moved $major -> $GITHUB_SHA"
-      - name: Create GitHub release
-        uses: softprops/action-gh-release@v3
-        with:
-          generate_release_notes: true
+          echo "moved $major -> ${{ inputs.tag }}"
