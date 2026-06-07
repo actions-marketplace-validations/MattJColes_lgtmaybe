@@ -19,7 +19,8 @@ dependencies = [
 lgtmaybe = "lgtmaybe.cli:main"
 
 [project.urls]
-Homepage = "https://github.com/lgtmaybe/lgtmaybe"
+Homepage = "https://mattjcoles.github.io/lgtmaybe/"
+Repository = "https://github.com/MattJColes/lgtmaybe"
 
 [dependency-groups]
 dev = [

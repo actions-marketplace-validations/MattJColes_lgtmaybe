@@ -11,12 +11,16 @@ cloud providers. Posts inline review comments and a summary.
 
 ## What it reviews
 
-lgtmaybe reviews the **changed lines in a pull request** — nothing else. It
-fetches the PR diff from the GitHub API (it never checks out or runs your code)
-and looks only at what the PR adds or changes, not the whole repository.
-Generated and non-reviewable files — lockfiles, minified bundles, vendored
-directories, binaries — are skipped automatically, and secrets are redacted from
-the diff before it is sent to the model.
+lgtmaybe fetches the PR diff from the GitHub API and reviews the lines a pull
+request changes. It never checks out or runs your code. To judge each change in
+context it also reads a few surrounding lines from the file, but it only ever
+comments on what the PR actually changed, not the whole repository.
+
+Reviews surface the kind of thing a careful reviewer would flag: correctness
+bugs, security weaknesses, and readability problems, each graded from `info` up
+to `critical`. Generated and non-reviewable files (lockfiles, minified bundles,
+vendored directories, binaries) are skipped automatically, and secrets are
+redacted from the diff before it is sent to the model.
 
 **How the scope is bounded.** Every run is capped so a large PR can't blow up
 latency or cost:
