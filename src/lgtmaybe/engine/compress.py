@@ -82,7 +82,7 @@ def context_lines_for_budget(remaining_tokens: int) -> int:
     if remaining_tokens <= 0:
         return _MIN_CONTEXT_LINES
 
-    # Scale: every _TOKENS_PER_CONTEXT_LINE remaining tokens buys one context line,
+    # Scale: every _SCALE remaining tokens buys one context line,
     # up to _MAX_CONTEXT_LINES.
     lines = remaining_tokens // _SCALE
     return min(int(lines), _MAX_CONTEXT_LINES)
