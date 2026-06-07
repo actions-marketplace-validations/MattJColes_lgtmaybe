@@ -205,3 +205,66 @@ def test_post_review_drops_finding_on_expanded_context_line() -> None:
     gw.post_review(findings, "Summary", diff=SAMPLE_DIFF)
 
     assert created_bodies[0].get("comments", []) == []
+
+
+@respx.mock
+def test_post_review_uses_provider_scoped_marker() -> None:
+    """A gateway built with a marker_key embeds a provider/model-scoped marker."""
+    respx.route(method="GET", url=REVIEWS_URL).mock(return_value=httpx.Response(200, json=[]))
+
+    created_bodies: list[dict[object, object]] = []
+
+    def capture_create(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        created_bodies.append(body)
+        return httpx.Response(201, json={"id": 1, "body": body.get("body", "")})
+
+    respx.route(method="POST", url=REVIEWS_URL).mock(side_effect=capture_create)
+
+    gw = RestGitHubGateway(
+        repo=REPO,
+        pr_number=PR_NUMBER,
+        token=TOKEN,
+        client=httpx.Client(),
+        marker_key="openai/gpt-4.1-mini",
+    )
+    gw.post_review(FINDINGS, "Summary text", diff=SAMPLE_DIFF)
+
+    assert "<!-- lgtmaybe:openai/gpt-4.1-mini -->" in str(created_bodies[0].get("body", ""))
+
+
+@respx.mock
+def test_post_review_with_distinct_marker_keys_coexist() -> None:
+    """A review from another provider/model is left intact; a gateway with a
+    different marker_key creates its own review instead of overwriting it."""
+    other = [
+        {"id": 7, "body": "Anthropic summary <!-- lgtmaybe:anthropic/claude-haiku-4-5 -->"}
+    ]
+    respx.route(method="GET", url=REVIEWS_URL).mock(return_value=httpx.Response(200, json=other))
+
+    create_bodies: list[dict[object, object]] = []
+    put_calls: list[httpx.Request] = []
+
+    def capture_create(request: httpx.Request) -> httpx.Response:
+        create_bodies.append(json.loads(request.content))
+        return httpx.Response(201, json={"id": 8})
+
+    def capture_put(request: httpx.Request) -> httpx.Response:
+        put_calls.append(request)
+        return httpx.Response(200, json={"id": 7})
+
+    respx.route(method="PUT").mock(side_effect=capture_put)
+    respx.route(method="POST", url=REVIEWS_URL).mock(side_effect=capture_create)
+
+    gw = RestGitHubGateway(
+        repo=REPO,
+        pr_number=PR_NUMBER,
+        token=TOKEN,
+        client=httpx.Client(),
+        marker_key="openai/gpt-4.1-mini",
+    )
+    gw.post_review(FINDINGS, "OpenAI summary", diff=SAMPLE_DIFF)
+
+    assert len(put_calls) == 0, "must not overwrite another provider's review"
+    assert len(create_bodies) == 1
+    assert "<!-- lgtmaybe:openai/gpt-4.1-mini -->" in str(create_bodies[0].get("body", ""))

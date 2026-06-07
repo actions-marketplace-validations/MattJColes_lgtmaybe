@@ -43,6 +43,7 @@ class RestGitHubGateway(GitHubGateway):
         pr_number: int,
         token: str,
         client: httpx.Client | None = None,
+        marker_key: str | None = None,
     ) -> None:
         self._repo = repo
         self._pr_number = pr_number
@@ -51,6 +52,10 @@ class RestGitHubGateway(GitHubGateway):
             "X-GitHub-Api-Version": "2022-11-28",
         }
         self._client = client if client is not None else httpx.Client(timeout=_TIMEOUT)
+        # Scope the idempotency marker to a provider/model so concurrent reviews
+        # from different backends on one PR update their own comment instead of
+        # clobbering each other. Unkeyed gateways keep the legacy marker.
+        self._marker = f"<!-- lgtmaybe:{marker_key} -->" if marker_key else _MARKER
 
     # ------------------------------------------------------------------
     # GitHubGateway implementation
@@ -119,7 +124,7 @@ class RestGitHubGateway(GitHubGateway):
         pos_map: PositionMap = build_position_map(diff)
         comments = self._build_comments(findings, pos_map)
 
-        body = f"{summary}\n\n{_MARKER}"
+        body = f"{summary}\n\n{self._marker}"
         existing_id = self._find_existing_review()
 
         reviews_url = f"https://api.github.com/repos/{self._repo}/pulls/{self._pr_number}/reviews"
@@ -223,7 +228,7 @@ class RestGitHubGateway(GitHubGateway):
         reviews = self._get_json(reviews_url)
         for review in reviews:
             body: str = review.get("body", "") or ""
-            if _MARKER in body:
+            if self._marker in body:
                 review_id: int = review["id"]
                 return review_id
         return None

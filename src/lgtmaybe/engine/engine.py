@@ -137,7 +137,9 @@ class LLMReviewEngine(ReviewEngine):
         filtered = [f for f in all_findings if f.severity >= cfg.min_severity]
 
         plural = "s" if len(filtered) != 1 else ""
-        summary_line = f"{len(filtered)} finding{plural} · model {cfg.model}"
+        summary_line = (
+            f"{len(filtered)} finding{plural} · provider {cfg.provider} · model {cfg.model}"
+        )
 
         notices = []
         if capped_files:
