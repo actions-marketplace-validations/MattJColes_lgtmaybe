@@ -19,9 +19,12 @@ updates:
     commit-message:
       prefix: "deps"
 
-  # The GitHub Actions used by our workflows (checkout, setup-uv, ...).
+  # The GitHub Actions used by our CI workflow, the composite action.yml, and
+  # the per-provider example workflows.
   - package-ecosystem: "github-actions"
-    directory: "/"
+    directories:
+      - "/"
+      - "/examples/workflows"
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 5

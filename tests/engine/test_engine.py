@@ -136,7 +136,7 @@ def test_secrets_redacted_in_outbound_payload() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_summary_mentions_finding_count_and_cost() -> None:
+def test_summary_mentions_finding_count() -> None:
     provider = _provider_for([_HIGH], reflection_keeps_all=True)
     engine = LLMReviewEngine(provider)
     cfg = ReviewConfig(provider=Provider.ollama, model="llama3")
@@ -144,10 +144,9 @@ def test_summary_mentions_finding_count_and_cost() -> None:
     _, summary = engine.review(_CTX, cfg)
 
     assert "finding" in summary.lower() or "1" in summary
-    assert "$" in summary or "cost" in summary.lower()
 
 
-def test_summary_names_the_model_and_cost() -> None:
+def test_summary_names_the_model_without_cost() -> None:
     provider = _provider_for([_HIGH], reflection_keeps_all=True)
     engine = LLMReviewEngine(provider)
     cfg = ReviewConfig(provider=Provider.ollama, model="llama3.1:70b")
@@ -155,7 +154,34 @@ def test_summary_names_the_model_and_cost() -> None:
     _, summary = engine.review(_CTX, cfg)
 
     assert "llama3.1:70b" in summary
-    assert "cost" in summary.lower()
+    assert "cost" not in summary.lower()
+    assert "$" not in summary
+
+
+# ---------------------------------------------------------------------------
+# reflection toggle
+# ---------------------------------------------------------------------------
+
+
+def test_reflect_false_skips_the_reflection_pass() -> None:
+    provider = _provider_for([_HIGH])
+    engine = LLMReviewEngine(provider)
+    cfg = ReviewConfig(provider=Provider.ollama, model="llama3", reflect=False)
+
+    findings, _ = engine.review(_CTX, cfg)
+
+    assert [f.title for f in findings] == ["real bug"]
+    assert len(provider.calls) == 1  # review only — no second (reflection) call
+
+
+def test_reflect_true_runs_the_reflection_pass() -> None:
+    provider = _provider_for([_HIGH], reflection_keeps_all=True)
+    engine = LLMReviewEngine(provider)
+    cfg = ReviewConfig(provider=Provider.ollama, model="llama3")  # reflect defaults True
+
+    engine.review(_CTX, cfg)
+
+    assert len(provider.calls) == 2  # review + reflection
 
 
 # ---------------------------------------------------------------------------

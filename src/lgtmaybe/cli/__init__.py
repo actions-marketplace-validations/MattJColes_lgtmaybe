@@ -151,6 +151,8 @@ def build_review_context(
         api_key=auth.api_key,
         api_base=auth.api_base,
         fallback_model=runtime.get("fallback_model"),
+        timeout=cfg.timeout,
+        temperature=cfg.temperature,
     )
 
     github = RestGitHubGateway(repo=repo, pr_number=pr_number, token=token)
@@ -254,6 +256,24 @@ def main() -> None:
     help="Max unchanged lines added around each hunk for context (0 disables)",
 )
 @click.option(
+    "--timeout",
+    default=None,
+    type=int,
+    help="Per-request timeout in seconds for each model call (raise for slow local models)",
+)
+@click.option(
+    "--temperature",
+    default=None,
+    type=float,
+    help="Sampling temperature (default 0.0 for deterministic reviews)",
+)
+@click.option(
+    "--reflect/--no-reflect",
+    default=None,
+    help="Run the self-reflection pass that drops low-confidence findings "
+    "(--no-reflect keeps them all; useful for weaker models)",
+)
+@click.option(
     "--config",
     "config_path",
     default=".lgtmaybe.yml",
@@ -273,6 +293,9 @@ def review(
     output_format: str | None,
     as_json: bool,
     context_lines: int | None,
+    timeout: int | None,
+    temperature: float | None,
+    reflect: bool | None,
     config_path: str,
 ) -> None:
     """Review local git changes and print findings — no GitHub needed."""
@@ -284,6 +307,9 @@ def review(
         min_severity=min_severity,
         max_files=max_files,
         context_lines=context_lines,
+        timeout=timeout,
+        temperature=temperature,
+        reflect=reflect,
     )
 
     runtime: dict[str, Any] = {
@@ -322,6 +348,8 @@ def execute_local_review(
             api_key=auth.api_key,
             api_base=auth.api_base,
             fallback_model=runtime.get("fallback_model"),
+            timeout=cfg.timeout,
+            temperature=cfg.temperature,
         )
         engine = LLMReviewEngine(provider)
         ctx = local_pr_context(base=base, working=working)

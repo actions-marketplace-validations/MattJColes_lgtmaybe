@@ -126,7 +126,7 @@ def test_e2e_posts_inline_comment_at_correct_position_and_summary() -> None:
     assert "<!-- lgtmaybe -->" in str(body["body"])
     assert summary in str(body["body"])
     assert "llama3" in summary
-    assert "cost" in summary.lower()
+    assert "cost" not in summary.lower()
 
 
 @respx.mock

@@ -110,3 +110,12 @@ class ReviewConfig(_Strict):
     # Ceiling on surrounding context lines added around each hunk. The engine
     # uses min(context_lines, what the token budget allows); 0 disables it.
     context_lines: int = 20
+    # Per-request timeout (seconds) for each provider completion call. Raise it
+    # for slow local models (e.g. a large model on CPU).
+    timeout: int = 60
+    # Sampling temperature for completions. Defaults to 0.0 for deterministic,
+    # reproducible reviews (and steadier instruction-following on small models).
+    temperature: float = 0.0
+    # Run the self-reflection pass that filters low-confidence findings. Disable
+    # it (--no-reflect) when a weaker model drops valid findings during reflection.
+    reflect: bool = True

@@ -84,7 +84,8 @@ class LLMReviewEngine(ReviewEngine):
 
         # 6. Self-reflection: filter out low-confidence findings. Reflect against
         #    only the reviewed diff — redacted, and free of skipped/over-cap files.
-        if all_findings:
+        #    Skippable (--no-reflect) for weaker models that drop valid findings here.
+        if cfg.reflect and all_findings:
             reviewed_diff = "\n".join(patch for _, patch in file_patches)
             clean_ctx = ctx.model_copy(update={"diff": reviewed_diff})
             all_findings = reflect_findings(all_findings, clean_ctx, cfg, self._provider)
@@ -93,20 +94,18 @@ class LLMReviewEngine(ReviewEngine):
         filtered = [f for f in all_findings if f.severity >= cfg.min_severity]
 
         plural = "s" if len(filtered) != 1 else ""
-        cost_line = (
-            f"{len(filtered)} finding{plural} · model {cfg.model} · approx cost ${total_cost:.4f}"
-        )
+        summary_line = f"{len(filtered)} finding{plural} · model {cfg.model}"
         if capped_files:
             notice = (
                 f"⚠️ Reviewed the top {cfg.max_files} of {total_files} changed files "
                 f"(file cap {cfg.max_files}). Raise max_files to review them all."
             )
-            return filtered, f"{notice}\n\n{cost_line}"
+            return filtered, f"{notice}\n\n{summary_line}"
         # A genuinely clean review (nothing flagged, every file reviewed) gets an
         # explicit thumbs-up rather than a bare "0 findings".
         if not filtered:
-            return filtered, f"👍 LGTM!\n\n{cost_line}"
-        return filtered, cost_line
+            return filtered, f"👍 LGTM!\n\n{summary_line}"
+        return filtered, summary_line
 
     @staticmethod
     def _cost_cap_notice(total_cost: float, cfg: ReviewConfig) -> str:
