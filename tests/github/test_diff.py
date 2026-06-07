@@ -136,3 +136,77 @@ def test_filter_mixed_list_leaves_only_source() -> None:
     """Given a mixed file list, only source files survive."""
     reviewable = [f for f in MIXED_FILE_LIST if is_reviewable(f)]
     assert reviewable == ["src/app.py", "src/models.py"]
+
+
+def test_is_reviewable_rejects_uppercase_binary_extensions() -> None:
+    """Extension matching is case-insensitive — uppercase binaries still skip."""
+    assert not is_reviewable("Logo.PNG")
+    assert not is_reviewable("Photo.JPG")
+    assert not is_reviewable("lib.SO")
+
+
+def test_is_reviewable_rejects_nested_vendored_paths() -> None:
+    """A blocked directory anywhere in the path (not just the prefix) is skipped."""
+    assert not is_reviewable("packages/web/node_modules/dep/index.js")
+    assert not is_reviewable("services/api/vendor/pkg.go")
+    assert not is_reviewable("a/b/dist/bundle.js")
+
+
+def test_is_reviewable_rejects_more_lockfiles() -> None:
+    assert not is_reviewable("go.sum")
+    assert not is_reviewable("Cargo.lock")
+    assert not is_reviewable("poetry.lock")
+    assert not is_reviewable("composer.lock")
+
+
+def test_is_reviewable_rejects_generated_globs() -> None:
+    assert not is_reviewable("api/service.pb.go")
+    assert not is_reviewable("types/models.d.ts")
+    assert not is_reviewable("schema.generated.ts")
+    assert not is_reviewable("__generated__/foo.py")
+
+
+def test_is_reviewable_accepts_dotfiles_and_configs() -> None:
+    """Config/source-ish files that are not on a skip list should be reviewed."""
+    assert is_reviewable(".github/workflows/ci.yml")
+    assert is_reviewable("Dockerfile")
+    assert is_reviewable("src/auth/login.py")
+
+
+# ---------------------------------------------------------------------------
+# Position map — multi-hunk and add-after-delete anchoring
+# ---------------------------------------------------------------------------
+
+_MULTI_HUNK_DIFF = """\
+diff --git a/src/svc.py b/src/svc.py
+index 0000001..0000002 100644
+--- a/src/svc.py
++++ b/src/svc.py
+@@ -1,3 +1,4 @@
+ import os
+-import sys
++import sys
++import json
+@@ -20,2 +21,3 @@ def handler():
+     run()
++    cleanup()
+"""
+
+
+def test_position_counts_continue_across_hunks_within_a_file() -> None:
+    """diff_position keeps counting across a file's hunks; new-line resets per hunk."""
+    pos_map = build_position_map(_MULTI_HUNK_DIFF)
+    # Second hunk starts at new-file line 21 ("    run()" is context, position 6:
+    # hunk1 has context(1) + del(2) + add(3) + add(4) = 4 positions, then hunk2
+    # context "    run()" is position 5, "+    cleanup()" is position 6.
+    assert pos_map.get(("src/svc.py", 21)) == 5
+    assert pos_map.get(("src/svc.py", 22)) == 6
+
+
+def test_added_line_after_deletion_anchors_correctly() -> None:
+    pos_map = build_position_map(_MULTI_HUNK_DIFF)
+    # "import os" context = new-line 1, pos 1; "-import sys" del = pos 2 (no new line);
+    # "+import sys" add = new-line 2, pos 3; "+import json" add = new-line 3, pos 4.
+    assert pos_map.get(("src/svc.py", 1)) == 1
+    assert pos_map.get(("src/svc.py", 2)) == 3
+    assert pos_map.get(("src/svc.py", 3)) == 4

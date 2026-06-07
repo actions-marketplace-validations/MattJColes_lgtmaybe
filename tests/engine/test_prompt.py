@@ -28,3 +28,37 @@ def test_prompt_is_nonempty_string() -> None:
     prompt = build_system_prompt()
     assert isinstance(prompt, str)
     assert len(prompt) > 200
+
+
+# ---------------------------------------------------------------------------
+# Security-review coverage (the reviewer should actually hunt for vulns)
+# ---------------------------------------------------------------------------
+
+
+def test_prompt_directs_a_security_review() -> None:
+    prompt = build_system_prompt().lower()
+    assert "security" in prompt
+    assert "owasp" in prompt
+
+
+def test_prompt_names_common_vulnerability_classes() -> None:
+    """The prompt should cue the model on the major OWASP-style vuln classes."""
+    prompt = build_system_prompt().lower()
+    expected = [
+        "injection",
+        "xss",  # cross-site scripting
+        "secret",
+        "auth",  # authn/authz
+        "traversal",
+        "ssrf",
+        "deserialization",
+        "crypto",
+    ]
+    missing = [term for term in expected if term not in prompt]
+    assert not missing, f"security cues missing from prompt: {missing}"
+
+
+def test_prompt_reaffirms_diff_is_untrusted_data() -> None:
+    """Defence-in-depth: the system prompt itself restates the injection guard."""
+    prompt = build_system_prompt().lower()
+    assert "data" in prompt and ("untrusted" in prompt or "never follow" in prompt)

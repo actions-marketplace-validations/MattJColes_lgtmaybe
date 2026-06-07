@@ -80,8 +80,13 @@ pattern, event bus, plugin framework.
    - **Track B** — github adapter + diff handling; **skip generated/binary files**
      (lockfiles, minified, vendored).
    - **Track C** — hardening: **prompt-injection defense** (PR text trying to
-     steer the reviewer), **secret redaction in diffs before they leave for the
-     LLM**, fork-PR exposure (already handled by `pull_request_target` + no checkout).
+     steer the reviewer — `engine/injection.py` wraps the diff as untrusted data
+     **and neutralises forged `DIFF_START`/`DIFF_END` delimiters** so an attacker
+     diff can't break out of the data block), **secret redaction in diffs before
+     they leave for the LLM** (`engine/redact.py` covers AWS/OpenAI/GitHub
+     (classic + fine-grained)/Slack/Google/Stripe keys, PEM private-key blocks,
+     and quoted password / `Authorization` / connection-string credentials),
+     fork-PR exposure (already handled by `pull_request_target` + no checkout).
    - **CLI track** — PyPI packaging; a local `lgtmaybe review` of your `git` diff
      (prints findings, no GitHub) for local dev.
 3. **Integration (sequential, last) — DONE:** the tracks are wired together.
@@ -138,5 +143,25 @@ self-verify without asking. The acceptance test *is* the red step — start ther
   `docs/how-to/releasing.md`.
 - Treat diff content as untrusted everywhere it flows.
 - Errors surface to the user; never swallow them.
+
+## Security-review coverage
+
+Two distinct concerns, kept separate:
+
+- **The reviewer's own hardening** (so a malicious PR can't subvert *us*):
+  prompt-injection defense with delimiter break-out neutralisation, broad secret
+  redaction before egress, structured-output schema enforcement (`extra=forbid`
+  rejects drifted/injected fields), and fork safety via `pull_request_target`
+  with no checkout.
+- **What the reviewer looks for** (so it catches vulns in *your* PR): the system
+  prompt (`engine/prompt.py`) carries an **OWASP-aligned security checklist** —
+  injection, XSS, hardcoded secrets, broken authn/authz, path traversal, SSRF,
+  insecure deserialization, weak crypto, sensitive-data exposure, resource/DoS
+  safety — graded `high`/`critical`.
+
+Both are covered by tests in `tests/engine/` (`test_redact.py`, `test_injection.py`,
+`test_prompt.py`, `test_parse.py`, `test_engine.py`) and `tests/github/test_diff.py`.
+When you touch redaction, injection, the prompt, or the skip filter, extend those
+suites — a security change without a test is exactly what CI rejects.
 
 [litellm]: https://github.com/BerriAI/litellm

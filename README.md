@@ -18,9 +18,20 @@ comments on what the PR actually changed, not the whole repository.
 
 Reviews surface the kind of thing a careful reviewer would flag: correctness
 bugs, security weaknesses, and readability problems, each graded from `info` up
-to `critical`. Generated and non-reviewable files (lockfiles, minified bundles,
-vendored directories, binaries) are skipped automatically, and secrets are
-redacted from the diff before it is sent to the model.
+to `critical`. The model is prompted with an **OWASP-aligned security checklist**
+— injection, XSS, hardcoded secrets, broken authn/authz, path traversal, SSRF,
+insecure deserialization, weak crypto, and resource/DoS safety — so security
+findings are first-class, not an afterthought. Generated and non-reviewable files
+(lockfiles, minified bundles, vendored directories, binaries) are skipped
+automatically, and secrets are redacted from the diff before it is sent to the
+model.
+
+**Hardened against malicious PRs.** lgtmaybe never checks out or runs PR code,
+treats the diff as untrusted input, defends against prompt injection (including
+forged delimiter break-out attempts), and redacts a broad set of secret formats
+(cloud keys, GitHub/Slack/Google/Stripe tokens, private keys, passwords, and
+credentials in connection strings) before anything leaves your environment. See
+[Data and Privacy](docs/explanation/data-and-privacy.md).
 
 **How the scope is bounded.** Every run is capped so a large PR can't blow up
 latency or cost:

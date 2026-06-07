@@ -26,6 +26,30 @@ Before the diff reaches the model it is cleaned:
 - **Secrets are redacted** — anything that looks like a key or token is stripped
   from the diff before it leaves your environment for the provider.
 
+## Security review
+
+Security findings are first-class. The model is prompted with an OWASP-aligned
+checklist and told to grade what it finds `high` or `critical` and name the
+vulnerability class in the title. It actively looks for:
+
+- **Injection** — SQL/NoSQL, OS command, and template/LDAP injection.
+- **Cross-site scripting (XSS)** — unescaped user input rendered into HTML/JS.
+- **Hardcoded secrets** — keys, tokens, passwords, or private keys in the diff.
+- **Broken authn / authz** — missing permission checks, IDOR, auth bypass.
+- **Path traversal / unsafe file access** — user input in file paths, `../`.
+- **SSRF** — server-side fetches of user-controlled URLs without allow-listing.
+- **Insecure deserialization & unsafe eval** — `pickle`/`yaml.load`/`eval` on
+  untrusted data.
+- **Weak cryptography** — MD5/SHA1 for passwords, ECB mode, disabled TLS
+  verification, predictable randomness for security tokens.
+- **Sensitive-data exposure** — secrets or PII in logs or error responses.
+- **Resource / DoS safety** — missing timeouts, unbounded loops or allocations.
+
+This shapes *what* the reviewer flags. It is separate from how lgtmaybe protects
+**itself** from a malicious PR — see
+[Data and Privacy](data-and-privacy.md) for secret redaction and prompt-injection
+defence.
+
 ## How the scope is bounded
 
 Every run is bounded so a large PR can't run away on latency or cost. All of
