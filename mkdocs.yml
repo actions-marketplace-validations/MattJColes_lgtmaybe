@@ -73,3 +73,4 @@ nav:
       - Architecture: explanation/architecture.md
       - Auth model: explanation/auth-model.md
       - Data and privacy: explanation/data-and-privacy.md
+      - Trust and cost: explanation/trust-and-cost.md
