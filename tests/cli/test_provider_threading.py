@@ -57,7 +57,6 @@ def captured_completion(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, Any]]
         return _fake_response()
 
     monkeypatch.setattr("litellm.completion", fake_completion)
-    monkeypatch.setattr("litellm.completion_cost", lambda **_: 0.0)
     monkeypatch.setattr(cli_module, "local_pr_context", lambda **_: _CTX)
     return calls
 

@@ -13,10 +13,10 @@ The user-facing configuration model. Fields map directly to `.lgtmaybe.yml` keys
 | Field | Type | Required | Default | Description |
 |---|---|---|---|---|
 | `api_base` | string / null | No | `null` | Api Base |
+| `categories` | list[`correctness` / `deprecation` / `documentation` / `security` / `tests`] | No | `['security', 'correctness', 'deprecation', 'tests', 'documentation']` | Categories |
 | `context_lines` | integer | No | `20` | Context Lines |
 | `exclude_paths` | list[string] | No | `[]` | Exclude Paths |
 | `include_paths` | list[string] | No | `[]` | Include Paths |
-| `max_cost_usd` | number | No | `1.0` | Max Cost Usd |
 | `max_files` | integer | No | `50` | Max Files |
 | `max_input_tokens` | integer | No | `100000` | Max Input Tokens |
 | `min_severity` | `critical` / `high` / `info` / `low` / `medium` | No | `info` |  |
@@ -70,7 +70,6 @@ The normalised return value of one LLM completion, including usage and cost.
 
 | Field | Type | Required | Default | Description |
 |---|---|---|---|---|
-| `cost_usd` | number | Yes | — | Cost Usd |
 | `input_tokens` | integer | Yes | — | Input Tokens |
 | `output_tokens` | integer | Yes | — | Output Tokens |
 | `text` | string | Yes | — | Text |
@@ -112,6 +111,18 @@ The canonical machine-readable schemas. These are the source of truth for provid
       "title": "Provider",
       "type": "string"
     },
+    "ReviewCategory": {
+      "description": "A single review lens. The engine asks for each one in its own LLM call.",
+      "enum": [
+        "security",
+        "correctness",
+        "deprecation",
+        "tests",
+        "documentation"
+      ],
+      "title": "ReviewCategory",
+      "type": "string"
+    },
     "Severity": {
       "description": "Finding severity, ordered low \u2192 high for `min_severity` filtering.",
       "enum": [
@@ -140,6 +151,20 @@ The canonical machine-readable schemas. These are the source of truth for provid
       "default": null,
       "title": "Api Base"
     },
+    "categories": {
+      "default": [
+        "security",
+        "correctness",
+        "deprecation",
+        "tests",
+        "documentation"
+      ],
+      "items": {
+        "$ref": "#/$defs/ReviewCategory"
+      },
+      "title": "Categories",
+      "type": "array"
+    },
     "context_lines": {
       "default": 20,
       "title": "Context Lines",
@@ -158,11 +183,6 @@ The canonical machine-readable schemas. These are the source of truth for provid
       },
       "title": "Include Paths",
       "type": "array"
-    },
-    "max_cost_usd": {
-      "default": 1.0,
-      "title": "Max Cost Usd",
-      "type": "number"
     },
     "max_files": {
       "default": 50,
@@ -289,12 +309,8 @@ The canonical machine-readable schemas. These are the source of truth for provid
 ```json
 {
   "additionalProperties": false,
-  "description": "The normalised return of one LLM completion, with usage + cost.",
+  "description": "The normalised return of one LLM completion, with token usage.",
   "properties": {
-    "cost_usd": {
-      "title": "Cost Usd",
-      "type": "number"
-    },
     "input_tokens": {
       "title": "Input Tokens",
       "type": "integer"
@@ -311,8 +327,7 @@ The canonical machine-readable schemas. These are the source of truth for provid
   "required": [
     "text",
     "input_tokens",
-    "output_tokens",
-    "cost_usd"
+    "output_tokens"
   ],
   "title": "ProviderResult",
   "type": "object"

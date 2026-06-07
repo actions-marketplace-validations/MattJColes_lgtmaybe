@@ -51,12 +51,11 @@ terminal:
 src/app.py:2  [MEDIUM] Import order
   sys should be sorted before os
 
-1 finding · model qwen3.6:27b · approx cost $0.0000
+1 finding · model qwen3.6:27b
 ```
 
-No GitHub token is involved and nothing is posted anywhere. To review only your
-uncommitted edits, add `--working`; to diff against a different base, pass
-`--base main`.
+To review only your uncommitted edits, add `--working`; to diff against a
+different base, pass `--base main`.
 
 ## Step 4 — Change the output format
 

@@ -36,4 +36,4 @@ class FakeProvider(ProviderClient):
         if self._result is not None:
             return self._result
         text = json.dumps([f.model_dump(mode="json") for f in self._findings])
-        return ProviderResult(text=text, input_tokens=10, output_tokens=20, cost_usd=0.001)
+        return ProviderResult(text=text, input_tokens=10, output_tokens=20)

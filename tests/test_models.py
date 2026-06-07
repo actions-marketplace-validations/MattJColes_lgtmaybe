@@ -29,7 +29,7 @@ SAMPLES: list[BaseModel] = [
         body="`user` may be None here.",
         suggestion="if user is not None:",
     ),
-    ProviderResult(text="hi", input_tokens=12, output_tokens=8, cost_usd=0.0003),
+    ProviderResult(text="hi", input_tokens=12, output_tokens=8),
     PRContext(
         diff="@@ -1 +1 @@\n-a\n+b\n",
         changed_files=["src/app.py"],
@@ -116,7 +116,6 @@ def test_extra_fields_forbidden() -> None:
                 "text": "x",
                 "input_tokens": 1,
                 "output_tokens": 1,
-                "cost_usd": 0.0,
                 "bogus": True,
             }
         )

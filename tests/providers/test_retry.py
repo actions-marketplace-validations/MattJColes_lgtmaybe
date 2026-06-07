@@ -32,9 +32,8 @@ class TestRetry:
             return good_response
 
         with patch("litellm.completion", side_effect=flaky):
-            with patch("litellm.completion_cost", return_value=0.001):
-                provider = LiteLLMProvider()
-                result = provider.complete([{"role": "user", "content": "hi"}], "openai/gpt-4o")
+            provider = LiteLLMProvider()
+            result = provider.complete([{"role": "user", "content": "hi"}], "openai/gpt-4o")
 
         assert result.text == "retried ok"
         assert call_count == 2
@@ -65,9 +64,8 @@ class TestFallback:
             return fallback_response
 
         with patch("litellm.completion", side_effect=side_effect):
-            with patch("litellm.completion_cost", return_value=0.0):
-                provider = LiteLLMProvider(fallback_model=fallback_model)
-                result = provider.complete([{"role": "user", "content": "hi"}], primary_model)
+            provider = LiteLLMProvider(fallback_model=fallback_model)
+            result = provider.complete([{"role": "user", "content": "hi"}], primary_model)
 
         assert result.text == "fallback result"
         assert fallback_model in called_with_models

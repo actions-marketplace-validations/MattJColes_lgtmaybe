@@ -1,8 +1,7 @@
 """LiteLLMProvider: the litellm adapter implementing ProviderClient.
 
-Wraps litellm.completion with retry (tenacity), an explicit timeout, and
-optional fallback model. Cost comes from litellm.completion_cost; falls back
-to 0.0 when the model is unknown to litellm's cost map.
+Wraps litellm.completion with retry (tenacity), an explicit timeout, and an
+optional fallback model.
 """
 
 from __future__ import annotations
@@ -27,12 +26,10 @@ class LiteLLMProvider(ProviderClient):
         *,
         model: str = "",
         fallback_model: str | None = None,
-        force_cost_zero: bool = False,
         **default_opts: Any,
     ) -> None:
         self.model = model
         self.fallback_model = fallback_model
-        self.force_cost_zero = force_cost_zero
         self.default_opts: dict[str, Any] = default_opts
 
     def complete(self, messages: list[Message], model: str, **opts: Any) -> ProviderResult:
@@ -67,17 +64,8 @@ class LiteLLMProvider(ProviderClient):
         input_tokens: int = response.usage.prompt_tokens
         output_tokens: int = response.usage.completion_tokens
 
-        if self.force_cost_zero:
-            cost: float = 0.0
-        else:
-            try:
-                cost = float(litellm.completion_cost(completion_response=response))
-            except Exception:
-                cost = 0.0
-
         return ProviderResult(
             text=text,
             input_tokens=input_tokens,
             output_tokens=output_tokens,
-            cost_usd=cost,
         )

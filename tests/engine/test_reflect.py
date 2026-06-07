@@ -45,9 +45,7 @@ def _reflection_result(verdicts: dict[int, bool]) -> str:
 
 def _fake_with_verdict(verdicts: dict[int, bool]) -> FakeProvider:
     text = _reflection_result(verdicts)
-    return FakeProvider(
-        result=ProviderResult(text=text, input_tokens=5, output_tokens=5, cost_usd=0.0)
-    )
+    return FakeProvider(result=ProviderResult(text=text, input_tokens=5, output_tokens=5))
 
 
 # ---------------------------------------------------------------------------
@@ -74,9 +72,7 @@ def test_high_confidence_finding_survives() -> None:
 
 
 def test_empty_findings_returns_empty() -> None:
-    provider = FakeProvider(
-        result=ProviderResult(text="{}", input_tokens=1, output_tokens=1, cost_usd=0.0)
-    )
+    provider = FakeProvider(result=ProviderResult(text="{}", input_tokens=1, output_tokens=1))
     survivors = reflect_findings([], _CTX, _CFG, provider)
     assert survivors == []
 

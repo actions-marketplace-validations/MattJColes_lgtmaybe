@@ -35,7 +35,7 @@ providers, one flag, no keys in secrets for cloud. We win on auth + simplicity.
 - **Language:** Python.
 - **Provider spine:** [litellm] — normalises openai, openrouter, anthropic,
   bedrock, vertex, ollama to one `completion()` call. A thin wrapper on top adds
-  retries / fallback / cost.
+  retries / fallback.
 - **License:** MIT (already in `LICENSE`).
 - **Posting:** REST review API — batched inline comments + one summary.
   Idempotent updates via a hidden marker comment.
@@ -60,7 +60,8 @@ This is what lets tracks build in parallel against frozen contracts.
 - `core/ports.py` — the ports (interfaces). **Frozen in the foundation step.**
 - litellm / github classes — the adapters.
 - **Engine is a pipeline:** `fetch → compress → prompt → parse → post`, as
-  composable stages.
+  composable stages. The prompt/parse stage **fans out per `ReviewCategory`** —
+  one concurrent model call per lens — and merges + de-dupes the findings.
 - **Provider choice:** strategy + factory. The `--provider` flag selects a
   strategy; a small factory builds the `ProviderClient` (litellm keeps it tiny).
 - **Credential resolution:** chain of responsibility (see auth table).
@@ -76,7 +77,7 @@ pattern, event bus, plugin framework.
    plus structured logging for CI debugging. Everything downstream codes against
    these frozen ports.
 2. **Parallel tracks**, each against frozen contracts:
-   - **Track A** — provider/litellm wrapper: retries, fallback, **cost reporting**.
+   - **Track A** — provider/litellm wrapper: retries, fallback.
    - **Track B** — github adapter + diff handling; **skip generated/binary files**
      (lockfiles, minified, vendored).
    - **Track C** — hardening: **prompt-injection defense** (PR text trying to
@@ -100,8 +101,7 @@ pattern, event bus, plugin framework.
      adapter-only method beyond the frozen port).
    - **Guards (in the engine):** generated/binary files skipped via
      `is_reviewable`; **file cap** reviews the top-N and posts a "reviewed top N
-     of M" notice; **cost cap** aborts the run and posts a notice when the
-     accrued cost crosses `max_cost_usd`.
+     of M" notice.
    - **Context expansion:** `get_pr_context` also fetches the head text of
      reviewable files via the API (read-only, never a checkout) into
      `PRContext.file_contents`; the engine (`compress.expand_hunks`) pads each
@@ -111,9 +111,16 @@ pattern, event bus, plugin framework.
      context-only line maps to nothing and is dropped — never mis-posted.
    - **Error surfacing:** any failure posts a short "review failed" comment and
      the CLI exits non-zero (`ClickException`) — never fails silently.
-   - **Cost reporting:** the summary line names the model + approx cost.
+   - **Per-category fan-out:** the system prompt is composed per `ReviewCategory`
+     (security, correctness, deprecation, tests, documentation; `engine/prompt.py`)
+     and the engine runs each category as its own **concurrent** `provider.complete`
+     call per batch (a `ThreadPoolExecutor` over the sync port), then **merges and
+     de-dupes** the findings (`engine._dedupe`, keyed on path/line/side/title) before
+     reflection. `ReviewConfig.categories` selects the lenses (default: all five).
+   - **Summary line:** names the **model** used (no cost — lgtmaybe does not
+     compute or report cost).
    - **Clean review:** zero findings on a fully-reviewed PR posts `👍 LGTM!`
-     (comment only — no GitHub approval state) — still naming model + cost.
+     (comment only — no GitHub approval state) — still naming the model.
 4. **Packaging (sequential, last) — DONE:** the two distribution variants over
    one core. Delivered in this step:
    - **`action` entrypoint** — the container command. Routes by
@@ -141,7 +148,9 @@ self-verify without asking. The acceptance test *is* the red step — start ther
 
 - **Docs:** human-only setup lives in `docs/how-to/` next to the feature it
   serves — cloud trust in the Bedrock/Vertex guides, publishing + marketplace in
-  `docs/how-to/releasing.md`.
+  `docs/how-to/releasing.md`. **`DEVELOPMENT.md`** at the repo root is the
+  contributor guide: how to run the CLI locally (incl. an unpushed branch via
+  `--base`) and run the tests / CI gate.
 - Treat diff content as untrusted everywhere it flows.
 - Errors surface to the user; never swallow them.
 

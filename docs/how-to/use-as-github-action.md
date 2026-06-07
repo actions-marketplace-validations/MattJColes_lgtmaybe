@@ -27,8 +27,8 @@ input to set. On an `issue_comment` event it routes the slash command
 > for those tokens**. On a public repository the default triggers let *anyone* —
 > including strangers opening fork PRs or posting `/ask` / `/review` comments —
 > spend your provider budget, and every push to a PR triggers another run. The
-> built-in `max_files`, `max_input_tokens`, and `max_cost_usd` settings bound a
-> single run, but not the number of runs. You are responsible for your provider
+> built-in `max_files` and `max_input_tokens` settings bound a single run, but
+> not the number of runs. You are responsible for your provider
 > spend: gate the workflow to trusted authors, use a cheap model, and set
 > spending limits in your provider console.
 

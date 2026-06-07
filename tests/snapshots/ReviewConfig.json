@@ -14,6 +14,18 @@
       "title": "Provider",
       "type": "string"
     },
+    "ReviewCategory": {
+      "description": "A single review lens. The engine asks for each one in its own LLM call.",
+      "enum": [
+        "security",
+        "correctness",
+        "deprecation",
+        "tests",
+        "documentation"
+      ],
+      "title": "ReviewCategory",
+      "type": "string"
+    },
     "Severity": {
       "description": "Finding severity, ordered low \u2192 high for `min_severity` filtering.",
       "enum": [
@@ -42,6 +54,20 @@
       "default": null,
       "title": "Api Base"
     },
+    "categories": {
+      "default": [
+        "security",
+        "correctness",
+        "deprecation",
+        "tests",
+        "documentation"
+      ],
+      "items": {
+        "$ref": "#/$defs/ReviewCategory"
+      },
+      "title": "Categories",
+      "type": "array"
+    },
     "context_lines": {
       "default": 20,
       "title": "Context Lines",
@@ -60,11 +86,6 @@
       },
       "title": "Include Paths",
       "type": "array"
-    },
-    "max_cost_usd": {
-      "default": 1.0,
-      "title": "Max Cost Usd",
-      "type": "number"
     },
     "max_files": {
       "default": 50,

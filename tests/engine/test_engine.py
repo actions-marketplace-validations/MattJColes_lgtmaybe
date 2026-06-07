@@ -8,6 +8,7 @@ from lgtmaybe.core.models import (
     PRContext,
     Provider,
     ProviderResult,
+    ReviewCategory,
     ReviewConfig,
     ReviewFinding,
     Severity,
@@ -15,6 +16,21 @@ from lgtmaybe.core.models import (
 from lgtmaybe.engine import LLMReviewEngine
 from lgtmaybe.engine.redact import REDACTED_PLACEHOLDER
 from tests.fakes import FakeProvider
+
+_REFLECT_MARKER = "auditing another reviewer"
+
+
+def _is_reflection(call: dict) -> bool:
+    return _REFLECT_MARKER in call["messages"][0]["content"]
+
+
+def _review_calls(provider: FakeProvider) -> list[dict]:
+    return [c for c in provider.calls if not _is_reflection(c)]
+
+
+def _reflection_calls(provider: FakeProvider) -> list[dict]:
+    return [c for c in provider.calls if _is_reflection(c)]
+
 
 # ---------------------------------------------------------------------------
 # fixtures
@@ -46,33 +62,25 @@ _INFO = ReviewFinding(
 
 
 def _provider_for(findings: list[ReviewFinding], reflection_keeps_all: bool = True) -> FakeProvider:
-    """A FakeProvider returning findings on call 1 and reflection verdicts on call 2."""
-    findings_text = json.dumps([f.model_dump(mode="json") for f in findings])
+    """A FakeProvider that returns ``findings`` for every review call and a verdict
+    for the reflection call.
 
-    verdicts: dict[int, bool]
-    if reflection_keeps_all:
-        verdicts = {i: True for i in range(len(findings))}
-    else:
-        verdicts = {}
+    Robust to per-category fan-out (every category call returns the same findings,
+    which dedupe collapses) and to thread ordering — review vs reflection is told
+    apart by the system prompt, not a call counter.
+    """
+    findings_text = json.dumps([f.model_dump(mode="json") for f in findings])
+    verdicts = {i: True for i in range(len(findings))} if reflection_keeps_all else {}
     reflection_text = json.dumps(verdicts)
 
-    call_count = 0
-
-    class _TwoCallProvider(FakeProvider):
+    class _Provider(FakeProvider):
         def complete(self, messages, model, **opts):  # type: ignore[override]
-            nonlocal call_count
             self.calls.append({"messages": messages, "model": model, "opts": opts})
-            call_count += 1
-            if call_count == 1:
-                return ProviderResult(
-                    text=findings_text, input_tokens=10, output_tokens=20, cost_usd=0.001
-                )
-            # reflection pass
-            return ProviderResult(
-                text=reflection_text, input_tokens=5, output_tokens=5, cost_usd=0.0
-            )
+            if _REFLECT_MARKER in messages[0]["content"]:
+                return ProviderResult(text=reflection_text, input_tokens=5, output_tokens=5)
+            return ProviderResult(text=findings_text, input_tokens=10, output_tokens=20)
 
-    return _TwoCallProvider()
+    return _Provider()
 
 
 # ---------------------------------------------------------------------------
@@ -170,8 +178,8 @@ def test_reflect_false_skips_the_reflection_pass() -> None:
 
     findings, _ = engine.review(_CTX, cfg)
 
-    assert [f.title for f in findings] == ["real bug"]
-    assert len(provider.calls) == 1  # review only — no second (reflection) call
+    assert [f.title for f in findings] == ["real bug"]  # 5 category copies deduped to one
+    assert _reflection_calls(provider) == []  # no reflection pass ran
 
 
 def test_reflect_true_runs_the_reflection_pass() -> None:
@@ -181,7 +189,8 @@ def test_reflect_true_runs_the_reflection_pass() -> None:
 
     engine.review(_CTX, cfg)
 
-    assert len(provider.calls) == 2  # review + reflection
+    assert len(_reflection_calls(provider)) == 1  # exactly one reflection pass
+    assert len(_review_calls(provider)) == len(cfg.categories)  # one review call per category
 
 
 # ---------------------------------------------------------------------------
@@ -318,3 +327,90 @@ def test_secret_in_surrounding_context_is_redacted_before_egress() -> None:
         msg.get("content", "") for call in provider.calls for msg in call["messages"]
     )
     assert secret not in all_content
+
+
+# ---------------------------------------------------------------------------
+# per-category fan-out
+# ---------------------------------------------------------------------------
+
+# Maps a category section's signature term to the finding that category returns.
+_CATEGORY_BY_MARKER = {
+    "owasp": ("security finding", 10),
+    "off-by-one": ("correctness finding", 20),
+    "end-of-life": ("deprecation finding", 30),
+    "accompanying test": ("tests finding", 40),
+    "docstring": ("documentation finding", 50),
+}
+
+
+class _PerCategoryProvider(FakeProvider):
+    """Returns a distinct finding per category, keyed on the section in the prompt."""
+
+    def complete(self, messages, model, **opts):  # type: ignore[override]
+        self.calls.append({"messages": messages, "model": model, "opts": opts})
+        system = messages[0]["content"].lower()
+        if _REFLECT_MARKER in system:
+            return ProviderResult(
+                text=json.dumps({i: True for i in range(50)}), input_tokens=5, output_tokens=5
+            )
+        for marker, (title, line) in _CATEGORY_BY_MARKER.items():
+            if marker in system:
+                finding = ReviewFinding(
+                    path="a.py", line=line, severity=Severity.low, title=title, body="x"
+                )
+                return ProviderResult(
+                    text=json.dumps([finding.model_dump(mode="json")]),
+                    input_tokens=10,
+                    output_tokens=20,
+                )
+        return ProviderResult(text="[]", input_tokens=10, output_tokens=20)
+
+
+def test_fans_out_one_call_per_category_and_merges_findings() -> None:
+    provider = _PerCategoryProvider()
+    engine = LLMReviewEngine(provider)
+    cfg = ReviewConfig(provider=Provider.ollama, model="llama3", reflect=False)
+
+    findings, _ = engine.review(_CTX, cfg)
+
+    assert {f.title for f in findings} == {title for title, _ in _CATEGORY_BY_MARKER.values()}
+    assert len(_review_calls(provider)) == len(cfg.categories)
+
+
+def test_duplicate_findings_across_categories_are_deduped() -> None:
+    # The default FakeProvider returns the same canned finding for every category.
+    provider = FakeProvider()
+    engine = LLMReviewEngine(provider)
+    cfg = ReviewConfig(provider=Provider.ollama, model="llama3", reflect=False)
+
+    findings, _ = engine.review(_CTX, cfg)
+
+    assert len(findings) == 1  # five identical copies collapse to one
+
+
+def test_dedupe_keeps_the_highest_severity_for_a_shared_location() -> None:
+    low = ReviewFinding(path="a.py", line=1, severity=Severity.low, title="Same Title", body="x")
+    high = ReviewFinding(path="a.py", line=1, severity=Severity.high, title="same title", body="y")
+    provider = _provider_for([low, high], reflection_keeps_all=True)
+    engine = LLMReviewEngine(provider)
+    cfg = ReviewConfig(provider=Provider.ollama, model="llama3")
+
+    findings, _ = engine.review(_CTX, cfg)
+
+    assert len(findings) == 1
+    assert findings[0].severity is Severity.high
+
+
+def test_categories_config_narrows_the_fan_out() -> None:
+    provider = FakeProvider()
+    engine = LLMReviewEngine(provider)
+    cfg = ReviewConfig(
+        provider=Provider.ollama,
+        model="llama3",
+        reflect=False,
+        categories=[ReviewCategory.security],
+    )
+
+    engine.review(_CTX, cfg)
+
+    assert len(_review_calls(provider)) == 1
