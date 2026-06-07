@@ -100,6 +100,8 @@ or `gcp_wif_provider`. Both require `id-token: write` permission. See:
 | `model` | — | Model identifier for the chosen provider |
 | `fallback_model` | — | Model to retry with if the primary model fails |
 | `api_key` | — | API key for key-based providers (leave empty for bedrock/vertex) |
+| `timeout` | provider default (ollama 300s, cloud 60s) | Per-request timeout in seconds for each model call |
+| `temperature` | `0.0` | Sampling temperature (0.0 = deterministic) |
 | `aws_role_arn` | — | IAM role ARN to assume via OIDC for bedrock (keyless) |
 | `aws_region` | `us-east-1` | AWS region for bedrock |
 | `gcp_wif_provider` | — | Workload Identity Federation provider resource name for vertex |

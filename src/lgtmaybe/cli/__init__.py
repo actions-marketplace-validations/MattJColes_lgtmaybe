@@ -253,6 +253,8 @@ def action_inputs() -> dict[str, str | None]:
         "fallback_model": get("FALLBACK_MODEL"),
         "api_key": get("API_KEY"),
         "api_base": get("API_BASE"),
+        "timeout": get("TIMEOUT"),
+        "temperature": get("TEMPERATURE"),
         "config_path": os.environ.get("INPUT_CONFIG_PATH") or ".lgtmaybe.yml",
     }
 
