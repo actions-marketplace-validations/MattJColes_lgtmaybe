@@ -44,6 +44,16 @@ _SEVERITY_ORDER: list[Severity] = [
 ]
 
 
+class ReviewCategory(StrEnum):
+    """A single review lens. The engine asks for each one in its own LLM call."""
+
+    security = "security"
+    correctness = "correctness"
+    deprecation = "deprecation"
+    tests = "tests"
+    documentation = "documentation"
+
+
 class Provider(StrEnum):
     """The backend selected by the `--provider` flag."""
 
@@ -73,12 +83,11 @@ class ReviewFinding(_Strict):
 
 
 class ProviderResult(_Strict):
-    """The normalised return of one LLM completion, with usage + cost."""
+    """The normalised return of one LLM completion, with token usage."""
 
     text: str
     input_tokens: int
     output_tokens: int
-    cost_usd: float
 
 
 class PRContext(_Strict):
@@ -107,7 +116,6 @@ class ReviewConfig(_Strict):
     exclude_paths: list[str] = Field(default_factory=list)
     max_files: int = 50
     max_input_tokens: int = 100_000
-    max_cost_usd: float = 1.0
     # Ceiling on surrounding context lines added around each hunk. The engine
     # uses min(context_lines, what the token budget allows); 0 disables it.
     context_lines: int = 20
@@ -120,3 +128,7 @@ class ReviewConfig(_Strict):
     # Run the self-reflection pass that filters low-confidence findings. Disable
     # it (--no-reflect) when a weaker model drops valid findings during reflection.
     reflect: bool = True
+    # Review lenses to run. Each is asked in its own concurrent LLM call and the
+    # findings are merged + deduped. Defaults to all of them; narrow it to trade
+    # thoroughness for fewer calls.
+    categories: list[ReviewCategory] = Field(default=list(ReviewCategory))

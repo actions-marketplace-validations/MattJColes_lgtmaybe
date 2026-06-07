@@ -119,7 +119,6 @@ class TestBuildProvider:
         )
 
         with patch("litellm.completion", return_value=response) as mock_completion:
-            with patch("litellm.completion_cost", return_value=0.0):
-                provider.complete([{"role": "user", "content": "hi"}], model="qwen3:27b")
+            provider.complete([{"role": "user", "content": "hi"}], model="qwen3:27b")
 
         assert mock_completion.call_args.kwargs["model"] == "ollama/qwen3:27b"

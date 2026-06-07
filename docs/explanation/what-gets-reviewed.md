@@ -98,21 +98,23 @@ Two lighter-weight checks round out a review:
 
 ## How the scope is bounded
 
-Every run is bounded so a large PR can't run away on latency or cost. All of
-these are configurable in `.lgtmaybe.yml` (see
+Every run is bounded so a large PR can't run away on latency. All of these are
+configurable in `.lgtmaybe.yml` (see
 [Configure .lgtmaybe.yml](../how-to/configure-lgtmaybe-yml.md)):
 
 | Knob | Default | Effect |
 |---|---|---|
 | `max_files` | 50 | Reviews the top-N changed files; posts a "reviewed top N of M" notice if there are more. |
 | `max_input_tokens` | 100,000 | Batches the diff so each model call stays within budget. |
+| `categories` | all five | Which review lenses to run; each runs as its own model call. Narrowing the list means fewer calls. |
 | `context_lines` | 20 | Ceiling on surrounding lines added around each hunk; the budget may use fewer. `0` disables context expansion. |
 | `min_severity` | `info` | Drops findings below the chosen floor (`info` → `low` → `medium` → `high` → `critical`). |
 | `include_paths` / `exclude_paths` | — | Glob filters to focus the review. |
 
-> Cost note: these bound a **single run**, not the number of runs. On a public
-> repo, anyone who can open a PR or comment can trigger a run — see the cost
-> disclaimer in [Use as a GitHub Action](../how-to/use-as-github-action.md).
+> These bound a **single run**, not the number of runs. On a public repo, anyone
+> who can open a PR or comment can trigger a run, and each run calls your chosen
+> LLM provider — see the cost disclaimer in
+> [Use as a GitHub Action](../how-to/use-as-github-action.md).
 
 ## What a finding contains
 
@@ -129,8 +131,11 @@ Each finding has:
 | `body` | The explanation |
 | `suggestion` | Optional suggested replacement code |
 
-A self-reflection pass runs after the first draft and drops low-confidence
-findings, so the model's first guesses are filtered before anything is posted.
+Each review category (security, correctness, deprecation, tests, documentation)
+runs as its own concurrent model call with a focused prompt; their findings are
+merged and de-duplicated. A self-reflection pass then runs over the merged set
+and drops low-confidence findings, so the model's first guesses are filtered
+before anything is posted.
 
 ## What the response looks like
 
@@ -139,7 +144,7 @@ findings, so the model's first guesses are filtered before anything is posted.
 lgtmaybe posts **one review** containing:
 
 - an **inline comment** on the exact changed line for each finding, and
-- a **summary comment** that names the model and the approximate cost.
+- a **summary comment** that names the model used.
 
 The summary carries a hidden marker (`<!-- lgtmaybe -->`), so re-running on the
 same PR **updates** the existing review instead of creating duplicates. When a
@@ -149,7 +154,7 @@ simple:
 ```
 👍 LGTM!
 
-0 findings · model claude-sonnet-4-6 · approx cost $0.0123
+0 findings · model claude-sonnet-4-6
 ```
 
 If the file cap kicked in, the summary says so (e.g. "Reviewed the top 50 of 120
@@ -169,7 +174,7 @@ $ lgtmaybe review --provider ollama --model qwen3.6:27b --api-base http://localh
 src/app.py:2  [MEDIUM] Import order
   sys should be sorted before os
 
-1 finding · model qwen3.6:27b · approx cost $0.0000
+1 finding · model qwen3.6:27b
 ```
 
 `--format` selects the output. `--json` is shorthand for `--format json`, which

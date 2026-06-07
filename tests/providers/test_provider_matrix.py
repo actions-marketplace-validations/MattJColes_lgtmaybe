@@ -117,10 +117,9 @@ class TestNoAuthProvider:
     def test_ollama_default_api_base_is_localhost(self) -> None:
         assert "localhost" in (resolve_credentials(Provider.ollama).api_base or "")
 
-    def test_ollama_build_provider_sets_api_base_and_zero_cost(self) -> None:
+    def test_ollama_build_provider_sets_api_base(self) -> None:
         built = build_provider(Provider.ollama, "llama3")
         assert built.default_opts.get("api_base")
-        assert built.force_cost_zero is True
 
 
 _AZURE_BASE = "https://my-resource.openai.azure.com"

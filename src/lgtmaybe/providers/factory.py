@@ -67,6 +67,5 @@ def build_provider(
     return LiteLLMProvider(
         model=resolved_model,
         fallback_model=resolved_fallback,
-        force_cost_zero=is_ollama,
         **opts,
     )

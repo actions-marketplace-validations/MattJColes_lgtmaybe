@@ -80,7 +80,6 @@ class TestDispatch:
             text="Because it re-scans the list on every iteration.",
             input_tokens=10,
             output_tokens=8,
-            cost_usd=0.0,
         )
         provider = FakeProvider(result=answer)
 
@@ -100,7 +99,7 @@ class TestDispatch:
         """The PR diff is wrapped as untrusted; the provider is actually called."""
         github = FakeGitHub()
         provider = FakeProvider(
-            result=ProviderResult(text="answer", input_tokens=1, output_tokens=1, cost_usd=0.0)
+            result=ProviderResult(text="answer", input_tokens=1, output_tokens=1)
         )
 
         dispatch(
@@ -117,9 +116,7 @@ class TestDispatch:
     def test_describe_posts_a_comment(self):
         github = FakeGitHub()
         provider = FakeProvider(
-            result=ProviderResult(
-                text="## Summary\nAdds a thing.", input_tokens=1, output_tokens=1, cost_usd=0.0
-            )
+            result=ProviderResult(text="## Summary\nAdds a thing.", input_tokens=1, output_tokens=1)
         )
 
         dispatch(
@@ -184,9 +181,7 @@ class TestCommentCommand:
     def test_ask_comment_replies_in_thread(self, tmp_path, monkeypatch):
         github = FakeGitHub()
         provider = FakeProvider(
-            result=ProviderResult(
-                text="It guards against null.", input_tokens=1, output_tokens=1, cost_usd=0.0
-            )
+            result=ProviderResult(text="It guards against null.", input_tokens=1, output_tokens=1)
         )
         self._patch_build(monkeypatch, github, FakeEngine(provider), provider)
         event = _write_event(tmp_path, "/ask why the check?")

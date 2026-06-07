@@ -1,13 +1,17 @@
 """LLMReviewEngine: the full review pipeline.
 
-Pipeline: redact → compress/batch → (for each batch) build messages → provider.complete
-         → parse/repair → self-reflect/filter → filter by min_severity → return findings + summary.
+Pipeline: redact → compress/batch → (per batch) fan out one call per review
+         category concurrently → parse → merge/dedupe → self-reflect/filter →
+         filter by min_severity → return findings + summary.
 """
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
+from functools import partial
+
 from lgtmaybe.core.diffparse import split_by_file
-from lgtmaybe.core.models import PRContext, ReviewConfig, ReviewFinding
+from lgtmaybe.core.models import PRContext, ReviewCategory, ReviewConfig, ReviewFinding
 from lgtmaybe.core.ports import Message, ProviderClient, ReviewEngine
 from lgtmaybe.github import is_reviewable
 
@@ -56,34 +60,25 @@ class LLMReviewEngine(ReviewEngine):
 
         batches = batch_files(file_patches, max_tokens=cfg.max_input_tokens)
 
-        system_prompt = build_system_prompt()
-
         all_findings: list[ReviewFinding] = []
-        total_cost = 0.0
 
-        # 5. Run one provider call per batch (single call for most PRs).
-        #    Stop early if the accumulated cost crosses the cap.
+        # 5. For each batch, fan out one call per review category, concurrently.
+        #    Each category gets a focused prompt; their findings are merged.
+        workers = min(len(cfg.categories), 8) or 1
         for batch in batches:
             batch_diff = "\n".join(patch for _, patch in batch)
             wrapped = wrap_diff(batch_diff)
-            messages: list[Message] = [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": wrapped},
-            ]
-            result = self._provider.complete(messages, model=cfg.model)
-            total_cost += result.cost_usd
+            review_one = partial(self._review_category, wrapped, cfg.model)
+            with ThreadPoolExecutor(max_workers=workers) as pool:
+                for findings in pool.map(review_one, cfg.categories):
+                    all_findings.extend(findings)
 
-            try:
-                findings = parse_findings(result.text)
-            except ParseError:
-                findings = []
+        # 6. Merge: a finding can surface under more than one lens (a shell
+        #    injection is both a security and a correctness issue), so collapse
+        #    duplicates before reflecting.
+        all_findings = _dedupe(all_findings)
 
-            all_findings.extend(findings)
-
-            if total_cost > cfg.max_cost_usd:
-                return [], self._cost_cap_notice(total_cost, cfg)
-
-        # 6. Self-reflection: filter out low-confidence findings. Reflect against
+        # 7. Self-reflection: filter out low-confidence findings. Reflect against
         #    only the reviewed diff — redacted, and free of skipped/over-cap files.
         #    Skippable (--no-reflect) for weaker models that drop valid findings here.
         if cfg.reflect and all_findings:
@@ -91,7 +86,7 @@ class LLMReviewEngine(ReviewEngine):
             clean_ctx = ctx.model_copy(update={"diff": reviewed_diff})
             all_findings = reflect_findings(all_findings, clean_ctx, cfg, self._provider)
 
-        # 7. Filter by min_severity.
+        # 8. Filter by min_severity.
         filtered = [f for f in all_findings if f.severity >= cfg.min_severity]
 
         plural = "s" if len(filtered) != 1 else ""
@@ -108,10 +103,31 @@ class LLMReviewEngine(ReviewEngine):
             return filtered, f"👍 LGTM!\n\n{summary_line}"
         return filtered, summary_line
 
-    @staticmethod
-    def _cost_cap_notice(total_cost: float, cfg: ReviewConfig) -> str:
-        return (
-            f"⚠️ Review aborted: approximate cost ${total_cost:.4f} exceeded the "
-            f"cap of ${cfg.max_cost_usd:.4f} (model {cfg.model}). "
-            "Raise max_cost_usd to review the full PR."
-        )
+    def _review_category(
+        self, wrapped: str, model: str, category: ReviewCategory
+    ) -> list[ReviewFinding]:
+        """Run one focused review call for a single category and parse its findings."""
+        messages: list[Message] = [
+            {"role": "system", "content": build_system_prompt(category)},
+            {"role": "user", "content": wrapped},
+        ]
+        result = self._provider.complete(messages, model=model)
+        try:
+            return parse_findings(result.text)
+        except ParseError:
+            return []
+
+
+def _dedupe(findings: list[ReviewFinding]) -> list[ReviewFinding]:
+    """Collapse findings that share a location and title, keeping the highest severity.
+
+    Different titles on the same line are kept — they are distinct lenses on the
+    same code, not duplicates.
+    """
+    best: dict[tuple[str, int, str, str], ReviewFinding] = {}
+    for finding in findings:
+        key = (finding.path, finding.line, finding.side, finding.title.strip().lower())
+        existing = best.get(key)
+        if existing is None or finding.severity >= existing.severity:
+            best[key] = finding
+    return list(best.values())

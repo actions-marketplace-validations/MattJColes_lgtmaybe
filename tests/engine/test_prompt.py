@@ -2,7 +2,20 @@
 
 from __future__ import annotations
 
+import pytest
+
+from lgtmaybe.core.models import ReviewCategory
 from lgtmaybe.engine.prompt import build_system_prompt
+
+# A term that appears only in each category's own section, used to prove a
+# focused prompt carries its section and excludes the others'.
+_SIGNATURE = {
+    ReviewCategory.security: "owasp",
+    ReviewCategory.correctness: "off-by-one",
+    ReviewCategory.deprecation: "end-of-life",
+    ReviewCategory.tests: "accompanying test",
+    ReviewCategory.documentation: "docstring",
+}
 
 
 def test_prompt_contains_all_severity_levels() -> None:
@@ -104,3 +117,35 @@ def test_prompt_names_pii_and_secrets_in_logs() -> None:
     assert "pii" in prompt
     assert "ssn" in prompt  # SSNs
     assert "password" in prompt
+
+
+# ---------------------------------------------------------------------------
+# Per-category fan-out: each lens gets its own focused prompt
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("category", list(ReviewCategory), ids=lambda c: c.value)
+def test_focused_prompt_carries_its_section_and_the_shared_contract(
+    category: ReviewCategory,
+) -> None:
+    prompt = build_system_prompt(category).lower()
+    # Its own section is present...
+    assert _SIGNATURE[category] in prompt
+    # ...and the shared output contract travels with every category.
+    for field in ("severity", "path", "line", "title", "body", "suggestion"):
+        assert field in prompt
+
+
+@pytest.mark.parametrize("category", list(ReviewCategory), ids=lambda c: c.value)
+def test_focused_prompt_excludes_other_categories(category: ReviewCategory) -> None:
+    prompt = build_system_prompt(category).lower()
+    for other, marker in _SIGNATURE.items():
+        if other is not category:
+            assert marker not in prompt, f"{category.value} prompt leaked {other.value} section"
+
+
+def test_full_prompt_still_contains_every_category() -> None:
+    """The no-arg call is the union of all sections (backward compatible)."""
+    prompt = build_system_prompt().lower()
+    for marker in _SIGNATURE.values():
+        assert marker in prompt

@@ -18,7 +18,10 @@ exclude_paths:
   - "**/*.min.js"
 max_files: 30
 max_input_tokens: 80000
-max_cost_usd: 0.50
+categories:
+  - security
+  - correctness
+  - tests
 ```
 
 ## Field reference
@@ -96,16 +99,21 @@ max_input_tokens: 80000
 
 Default: `100000`.
 
-### max_cost_usd
+### categories
 
-Maximum cost in US dollars for one review. If the projected cost exceeds this
-value, lgtmaybe aborts before sending the request.
+Which review lenses to run. The reviewer asks for each category in its own
+concurrent model call and merges the findings, so a focused prompt concentrates
+on one concern at a time. One or more of `security`, `correctness`,
+`deprecation`, `tests`, `documentation`. Narrowing the list trades thoroughness
+for fewer model calls (and lower token usage).
 
 ```yaml
-max_cost_usd: 0.25
+categories:
+  - security
+  - correctness
 ```
 
-Default: `1.0`.
+Default: all five categories.
 
 ### context_lines
 

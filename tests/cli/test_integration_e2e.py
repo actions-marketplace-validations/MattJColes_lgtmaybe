@@ -72,9 +72,9 @@ class _ReviewThenReflectProvider(FakeProvider):
         self._n += 1
         if self._n == 1:
             text = json.dumps([_FINDING.model_dump(mode="json")])
-            return ProviderResult(text=text, input_tokens=10, output_tokens=20, cost_usd=0.0123)
+            return ProviderResult(text=text, input_tokens=10, output_tokens=20)
         verdict = json.dumps({0: True})
-        return ProviderResult(text=verdict, input_tokens=5, output_tokens=5, cost_usd=0.0)
+        return ProviderResult(text=verdict, input_tokens=5, output_tokens=5)
 
 
 def _mock_github(captured: list[dict[object, object]]) -> None:

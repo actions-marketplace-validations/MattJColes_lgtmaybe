@@ -1,4 +1,4 @@
-"""Guards in the engine: cost cap, file cap, and generated-file skipping."""
+"""Guards in the engine: file cap and generated-file skipping."""
 
 from __future__ import annotations
 
@@ -45,44 +45,32 @@ def _ctx(paths: list[str]) -> PRContext:
 
 
 class _Provider(FakeProvider):
-    """Returns the given findings (as JSON) on call 1, keep-all reflection after."""
+    """Returns the given findings (as JSON) for review calls, keep-all for reflection.
 
-    def __init__(self, findings: list[ReviewFinding], cost: float) -> None:
+    Robust to per-category fan-out: every review call (whichever category) returns
+    the findings; only the reflection call returns the keep-all verdict, told apart
+    by its distinctive system prompt.
+    """
+
+    def __init__(self, findings: list[ReviewFinding]) -> None:
         super().__init__()
         self._payload = json.dumps([f.model_dump(mode="json") for f in findings])
-        self._cost = cost
         self._verdict = json.dumps({i: True for i in range(len(findings))})
-        self._n = 0
 
     def complete(self, messages: list[Message], model: str, **opts: object) -> ProviderResult:
         self.calls.append({"messages": messages, "model": model, "opts": opts})
-        self._n += 1
-        if self._n == 1:
-            return ProviderResult(
-                text=self._payload, input_tokens=10, output_tokens=20, cost_usd=self._cost
-            )
-        return ProviderResult(text=self._verdict, input_tokens=5, output_tokens=5, cost_usd=0.0)
+        system = messages[0]["content"]
+        if "auditing another reviewer" in system:  # the reflection pass
+            return ProviderResult(text=self._verdict, input_tokens=5, output_tokens=5)
+        return ProviderResult(text=self._payload, input_tokens=10, output_tokens=20)
 
 
 _A_FINDING = ReviewFinding(path="a.py", line=1, severity=Severity.high, title="bug", body="broken")
 
 
-def test_cost_cap_aborts_with_notice_and_no_findings() -> None:
-    provider = _Provider([_A_FINDING], cost=0.0123)
-    engine = LLMReviewEngine(provider)
-    cfg = ReviewConfig(provider=Provider.ollama, model="llama3", max_cost_usd=0.005)
-
-    findings, summary = engine.review(_ctx(["a.py"]), cfg)
-
-    assert findings == []
-    assert "cost" in summary.lower()
-    assert "0.005" in summary  # the cap
-    assert "abort" in summary.lower() or "exceed" in summary.lower()
-
-
 def test_clean_review_says_lgtm() -> None:
-    """A review with no findings posts a 👍 LGTM! summary (still naming model/cost)."""
-    provider = _Provider([], cost=0.0001)
+    """A review with no findings posts a 👍 LGTM! summary (still naming the model)."""
+    provider = _Provider([])
     engine = LLMReviewEngine(provider)
     cfg = ReviewConfig(provider=Provider.ollama, model="llama3")
 
@@ -90,11 +78,11 @@ def test_clean_review_says_lgtm() -> None:
 
     assert findings == []
     assert "LGTM" in summary
-    assert "llama3" in summary  # cost/model line is still present
+    assert "llama3" in summary  # the model line is still present
 
 
 def test_review_with_findings_does_not_say_lgtm() -> None:
-    provider = _Provider([_A_FINDING], cost=0.0001)
+    provider = _Provider([_A_FINDING])
     engine = LLMReviewEngine(provider)
     cfg = ReviewConfig(provider=Provider.ollama, model="llama3")
 
@@ -103,19 +91,8 @@ def test_review_with_findings_does_not_say_lgtm() -> None:
     assert "LGTM" not in summary
 
 
-def test_under_cost_cap_returns_findings_normally() -> None:
-    provider = _Provider([_A_FINDING], cost=0.0001)
-    engine = LLMReviewEngine(provider)
-    cfg = ReviewConfig(provider=Provider.ollama, model="llama3", max_cost_usd=1.0)
-
-    findings, summary = engine.review(_ctx(["a.py"]), cfg)
-
-    assert len(findings) == 1
-    assert "abort" not in summary.lower()
-
-
 def test_file_cap_reviews_top_n_with_notice() -> None:
-    provider = _Provider([_A_FINDING], cost=0.0001)
+    provider = _Provider([_A_FINDING])
     engine = LLMReviewEngine(provider)
     cfg = ReviewConfig(provider=Provider.ollama, model="llama3", max_files=2)
 
@@ -131,7 +108,7 @@ def test_file_cap_reviews_top_n_with_notice() -> None:
 
 
 def test_generated_and_lockfiles_are_skipped() -> None:
-    provider = _Provider([_A_FINDING], cost=0.0001)
+    provider = _Provider([_A_FINDING])
     engine = LLMReviewEngine(provider)
     cfg = ReviewConfig(provider=Provider.ollama, model="llama3")
 
