@@ -1,0 +1,50 @@
+name: lint-fix
+
+# Auto-fix lint + formatting on a PR instead of only failing it: run ruff's
+# autofixes and formatter, then commit the result straight back to the PR branch.
+# The strict, fail-on-violation gate still lives in ci.yml for anything ruff
+# can't fix automatically.
+on: pull_request
+
+permissions:
+  contents: write
+
+jobs:
+  ruff-fix:
+    runs-on: ubuntu-latest
+    # GITHUB_TOKEN is read-only for PRs opened from forks, so we can't push the
+    # fix back there. Only run for same-repo PRs; fork PRs fall back to the
+    # ci.yml check, which still reports the violations.
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          # Check out the PR branch itself (not the merge ref) so the commit
+          # lands on the contributor's branch.
+          ref: ${{ github.head_ref }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          python-version: "3.12"
+          enable-cache: true
+
+      - name: Sync (with dev deps)
+        run: uv sync --dev
+
+      - name: Ruff autofix + format
+        run: |
+          uv run ruff check --fix .
+          uv run ruff format .
+
+      - name: Commit and push fixes
+        run: |
+          if [ -n "$(git status --porcelain)" ]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git commit -am "style: apply ruff lint and format fixes"
+            git push
+          else
+            echo "No lint or format changes to commit."
+          fi
