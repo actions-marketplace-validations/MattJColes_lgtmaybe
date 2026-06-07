@@ -18,7 +18,15 @@ concurrency:
 
 jobs:
   review:
-    if: ${{ github.event_name == 'pull_request_target' || github.event.issue.pull_request }}
+    # Only trusted authors (repo owner / org member / collaborator) can trigger a
+    # review, so fork PRs and drive-by /ask or /review comments from strangers
+    # cannot spend your provider budget. A maintainer can still opt-in to an
+    # external PR by commenting /review on it. (Comments not on a PR are skipped.)
+    if: >-
+      (github.event_name == 'pull_request_target' &&
+       contains(fromJson('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.pull_request.author_association)) ||
+      (github.event.issue.pull_request &&
+       contains(fromJson('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association))
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6

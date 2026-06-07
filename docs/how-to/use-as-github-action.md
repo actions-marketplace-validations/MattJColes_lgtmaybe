@@ -32,6 +32,21 @@ input to set. On an `issue_comment` event it routes the slash command
 > spend: gate the workflow to trusted authors, use a cheap model, and set
 > spending limits in your provider console.
 
+## Who can trigger a review
+
+The example workflows gate the `review` job on the triggering user's
+[author association](https://docs.github.com/en/graphql/reference/enums#commentauthorassociation):
+only `OWNER`, `MEMBER`, and `COLLABORATOR` can start a review. So a fork PR from a
+stranger — or a drive-by `/ask` / `/review` comment — never spends your provider
+budget. A maintainer can still review an external contributor's PR by commenting
+`/review` on it (the maintainer's own association passes the gate).
+
+To widen or narrow this, edit the `if:` on the `review` job — for example drop
+`COLLABORATOR`, or add `CONTRIBUTOR` to also auto-review anyone whose PR has been
+merged before. For defence in depth, also require approval for fork-PR workflow
+runs in **Settings → Actions → General → Fork pull request workflows**, or move
+the provider key behind a protected `environment`.
+
 ## Minimal workflow — openai
 
 ```yaml
@@ -48,7 +63,12 @@ permissions:
 
 jobs:
   review:
-    if: ${{ github.event_name == 'pull_request_target' || github.event.issue.pull_request }}
+    # Only trusted authors (owner / member / collaborator) can trigger a review.
+    if: >-
+      (github.event_name == 'pull_request_target' &&
+       contains(fromJson('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.pull_request.author_association)) ||
+      (github.event.issue.pull_request &&
+       contains(fromJson('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association))
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4 # base repo only — for .lgtmaybe.yml config
