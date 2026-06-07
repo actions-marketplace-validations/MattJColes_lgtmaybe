@@ -425,11 +425,13 @@ def test_categories_config_narrows_the_fan_out() -> None:
 
 
 # ---------------------------------------------------------------------------
-# structured output: response_format on review calls, never on reflection
+# structured output: review calls use the findings schema, reflection its own
 # ---------------------------------------------------------------------------
 
 
 def test_structured_output_sets_response_format_on_review_calls() -> None:
+    from lgtmaybe.core.models import ReflectionResult
+
     provider = _provider_for([_HIGH], reflection_keeps_all=True)
     engine = LLMReviewEngine(provider)
     cfg = ReviewConfig(provider=Provider.ollama, model="llama3")  # structured_output default True
@@ -438,8 +440,11 @@ def test_structured_output_sets_response_format_on_review_calls() -> None:
 
     review = _review_calls(provider)
     assert review and all(c["opts"].get("response_format") is ReviewResult for c in review)
-    # The reflection call must NOT be forced into the findings schema.
-    assert all("response_format" not in c["opts"] for c in _reflection_calls(provider))
+    # The reflection call uses its OWN schema (verdicts), not the findings schema.
+    reflection = _reflection_calls(provider)
+    assert reflection and all(
+        c["opts"].get("response_format") is ReflectionResult for c in reflection
+    )
 
 
 def test_structured_output_disabled_omits_response_format() -> None:

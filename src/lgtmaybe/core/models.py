@@ -93,6 +93,23 @@ class ReviewResult(_Strict):
     findings: list[ReviewFinding]
 
 
+class Verdict(_Strict):
+    """One reflection verdict: keep or drop the finding at ``index``."""
+
+    index: int
+    keep: bool
+
+
+class ReflectionResult(_Strict):
+    """Structured-output envelope for the reflection pass: ``{"verdicts": [...]}``.
+
+    A fixed-shape object (not a dynamic-key map) so it can be enforced as a JSON
+    schema via litellm ``response_format``, the same way reviews are.
+    """
+
+    verdicts: list[Verdict]
+
+
 class ProviderResult(_Strict):
     """The normalised return of one LLM completion, with token usage."""
 
