@@ -3,6 +3,12 @@ name: release-please
 # Reads conventional commits on main and maintains a "Release PR" that bumps the
 # version + regenerates the changelog. Merging that PR creates the vX.Y.Z tag and
 # GitHub release, then this same run calls the reusable publish workflow.
+#
+# release-please runs under a GitHub App token (not GITHUB_TOKEN). GitHub does
+# not trigger workflows for events raised by GITHUB_TOKEN, so a PR opened with it
+# would leave required CI checks stuck "Expected". The App identity makes the
+# Release PR trigger CI normally. Requires repo secrets RELEASE_PLEASE_APP_ID and
+# RELEASE_PLEASE_APP_PRIVATE_KEY (see docs/how-to/releasing.md).
 on:
   push:
     branches: [main]
@@ -18,14 +24,20 @@ jobs:
       release_created: ${{ steps.rp.outputs.release_created }}
       tag_name: ${{ steps.rp.outputs.tag_name }}
     steps:
+      - uses: actions/create-github-app-token@v2
+        id: app-token
+        with:
+          app-id: ${{ secrets.RELEASE_PLEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_PLEASE_APP_PRIVATE_KEY }}
       - uses: googleapis/release-please-action@v4
         id: rp
         with:
+          token: ${{ steps.app-token.outputs.token }}
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
 
-  # release-please creates the tag with GITHUB_TOKEN, which can't trigger an
-  # `on: push: tags` workflow — so we call the publish workflow directly here.
+  # release-please creates the tag with the App token; the publish workflow is
+  # called directly here (same run), gated on a release actually being created.
   publish:
     needs: release-please
     if: ${{ needs.release-please.outputs.release_created == 'true' }}
