@@ -35,11 +35,19 @@ uv sync --dev
 Run exactly what CI runs:
 
 ```bash
+uv lock --check              # lockfile matches pyproject (no drift)
 uv run ruff check .          # lint
 uv run ruff format .         # format (CI checks --check)
 uv run mypy                  # types (strict)
 uv run pytest -q             # tests
 ```
+
+`pytest` treats `DeprecationWarning` as an error, so using a deprecated API
+fails the suite — fix the call, or, if it comes from a third-party library we
+don't control, add a narrow `ignore` to `filterwarnings` in `pyproject.toml`.
+Outdated-version and CVE checks run **in the background** (Dependabot and the
+`audit` workflow), not in this per-PR gate — they depend on what's published
+upstream, so they can't be deterministic.
 
 Preview the docs site locally:
 

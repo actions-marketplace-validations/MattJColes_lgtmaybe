@@ -85,11 +85,11 @@ account.
 
 ## Running locally with ambient AWS credentials
 
-If your local shell has AWS credentials (via `~/.aws`, SSO, or an assumed role):
+If your local shell has AWS credentials (via `~/.aws`, SSO, or an assumed role),
+you can review your current branch's changes with Bedrock:
 
 ```bash
 lgtmaybe review \
-  --pr-url https://github.com/owner/repo/pull/42 \
   --provider bedrock \
   --model anthropic.claude-haiku-4-5
 ```

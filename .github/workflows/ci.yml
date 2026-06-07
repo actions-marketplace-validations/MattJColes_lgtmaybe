@@ -20,6 +20,9 @@ jobs:
       - name: Sync (with dev deps)
         run: uv sync --dev
 
+      - name: Lockfile is in sync with pyproject
+        run: uv lock --check
+
       - name: Lint
         run: uv run ruff check .
 

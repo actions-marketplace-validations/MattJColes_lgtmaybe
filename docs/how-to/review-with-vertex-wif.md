@@ -84,12 +84,12 @@ export VERTEXAI_PROJECT=my-project
 export VERTEXAI_LOCATION=us-central1
 
 lgtmaybe review \
-  --pr-url https://github.com/owner/repo/pull/42 \
   --provider vertex \
   --model gemini-3-pro
 ```
 
-lgtmaybe does not accept a static API key for Vertex.
+This reviews your current branch's changes with Vertex; lgtmaybe does not accept
+a static API key for it.
 
 ## Troubleshooting
 

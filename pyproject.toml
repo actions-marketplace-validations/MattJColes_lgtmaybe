@@ -55,6 +55,16 @@ select = ["E", "F", "I", "UP", "B"]
 testpaths = ["tests"]
 pythonpath = ["src"]
 asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+# Code-quality gate: using a deprecated API (ours, the stdlib's, or a dependency's
+# triggered on our hot path) is a hard error, not silent noise. This is fully
+# deterministic given the lockfile. If a *third-party* deprecation we don't
+# control starts failing after a dependency bump, add a narrow ignore here
+# (e.g. 'ignore::DeprecationWarning:somelib') rather than weakening the rule.
+filterwarnings = [
+    "error::DeprecationWarning",
+    "error::PendingDeprecationWarning",
+]
 
 [tool.mypy]
 python_version = "3.12"

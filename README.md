@@ -18,9 +18,21 @@ comments on what the PR actually changed, not the whole repository.
 
 Reviews surface the kind of thing a careful reviewer would flag: correctness
 bugs, security weaknesses, and readability problems, each graded from `info` up
-to `critical`. Generated and non-reviewable files (lockfiles, minified bundles,
-vendored directories, binaries) are skipped automatically, and secrets are
-redacted from the diff before it is sent to the model.
+to `critical`. The model is prompted with an **OWASP-aligned security checklist**
+— injection, XSS, hardcoded secrets, broken authn/authz, path traversal, SSRF,
+insecure deserialization, weak crypto, and resource/DoS safety — so security
+findings are first-class, not an afterthought. It also flags **factually
+outdated** code — deprecated APIs and end-of-life or vulnerable dependencies —
+when the diff shows them. Generated and non-reviewable files (lockfiles, minified
+bundles, vendored directories, binaries) are skipped automatically, and secrets
+are redacted from the diff before it is sent to the model.
+
+**Hardened against malicious PRs.** lgtmaybe never checks out or runs PR code,
+treats the diff as untrusted input, defends against prompt injection (including
+forged delimiter break-out attempts), and redacts a broad set of secret formats
+(cloud keys, GitHub/Slack/Google/Stripe tokens, private keys, passwords, and
+credentials in connection strings) before anything leaves your environment. See
+[Data and Privacy](docs/explanation/data-and-privacy.md).
 
 **How the scope is bounded.** Every run is capped so a large PR can't blow up
 latency or cost:
@@ -36,27 +48,29 @@ title, an explanation, and an optional suggested fix — so it renders the same
 everywhere:
 
 - **On a GitHub PR** — an inline comment on the exact changed line for each finding, plus one summary comment naming the model and approximate cost. Re-running updates the same comments instead of duplicating them, and a clean PR gets a 👍 **LGTM!**.
-- **On the CLI** (`--dry-run`) — the summary line followed by the findings as a JSON array on stdout; nothing is posted to GitHub.
+- **On the CLI** — `lgtmaybe review` reads your local `git` diff and prints the findings (a readable listing, or a JSON array with `--json`); nothing is posted to GitHub.
 
 A fuller walkthrough with example output is in
 [What gets reviewed](docs/explanation/what-gets-reviewed.md).
 
 ## Quick start (60 seconds, local, zero cost)
 
+From inside a git repo, on a branch with changes, review your diff against the
+default branch and print the findings:
+
 ```bash
 pip install lgtmaybe
-export GITHUB_TOKEN=ghp_your_token_here
 
 lgtmaybe review \
-  --pr-url https://github.com/owner/repo/pull/42 \
   --provider ollama \
   --model qwen3.6:27b \
-  --api-base http://localhost:11434 \
-  --dry-run
+  --api-base http://localhost:11434
 ```
 
-See [Getting Started](docs/tutorial/getting-started.md) for the full first-run
-walkthrough.
+No GitHub token and no pull request needed — `lgtmaybe review` reads your local
+`git` diff and prints the findings. To post reviews on real pull requests, wire
+up the [GitHub Action](#use-as-a-github-action). See
+[Getting Started](docs/tutorial/getting-started.md) for the full walkthrough.
 
 ## Providers
 

@@ -4,24 +4,31 @@
 
 # lgtmaybe
 
+</div>
+
 Provider-agnostic PR reviewer. Five providers, one flag, and no static keys for
 cloud providers. It posts inline comments and a summary straight onto the pull
 request.
 
-</div>
-
-lgtmaybe fetches the diff from the GitHub API and reviews the lines a pull
-request changes. It never checks out or runs your code. To judge each change in
-context it also reads a few surrounding lines from the file, so a finding lands
-with the function around it in view, but it only ever comments on what the PR
+lgtmaybe reviews the lines a change touches, and it runs in two places: as a
+GitHub Action on a pull request, or locally from the command line against your
+`git` diff before you push. As an Action it fetches the diff from the GitHub API
+and never checks out or runs your code; locally it reads your working branch.
+Either way it pads each change with a few surrounding lines, so a finding lands
+with the function around it in view, but it only ever comments on the lines that
 actually changed.
 
-Reviews surface the things you'd want a careful reviewer to catch: correctness
-bugs, security weaknesses, and readability problems. Every finding is graded from
-`info` up to `critical` and posted as an inline comment on the exact line, with
-one summary at the top. Generated files and binaries are skipped, secrets are
-redacted before anything leaves for the model, and a clean PR just gets a
-👍 **LGTM!**.
+Reviews surface the things you'd want a careful reviewer to catch:
+
+- **Correctness bugs and readability problems** — the substance of a change, not just style nits.
+- **Security vulnerabilities** — an OWASP-aligned sweep: injection, XSS, hardcoded secrets, broken authn/authz, path traversal, SSRF, insecure deserialization, weak crypto, and resource/DoS safety.
+- **Deprecated and end-of-life code** — deprecated APIs and end-of-life or vulnerable dependencies, flagged when the diff shows them (with the modern replacement suggested where known).
+- **Severity grading** — every finding is rated from `info` up to `critical`, so you can set the floor that matters to you.
+- **Inline, on the exact line** — each finding is a comment where the problem is, with one summary at the top (on the CLI, the same findings print to your terminal).
+
+Generated files and binaries are skipped, secrets are redacted and the diff is
+treated as untrusted input (hardened against prompt injection) before anything
+leaves for the model, and a clean PR just gets a 👍 **LGTM!**.
 
 ## Start here
 
