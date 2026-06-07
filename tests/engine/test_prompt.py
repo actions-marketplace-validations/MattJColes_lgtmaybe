@@ -15,6 +15,8 @@ _SIGNATURE = {
     ReviewCategory.deprecation: "end-of-life",
     ReviewCategory.tests: "accompanying test",
     ReviewCategory.documentation: "docstring",
+    ReviewCategory.performance: "n+1",
+    ReviewCategory.complexity: "cyclomatic",
 }
 
 
@@ -125,6 +127,23 @@ def test_prompt_names_pii_and_secrets_in_logs() -> None:
     assert "pii" in prompt
     assert "ssn" in prompt  # SSNs
     assert "password" in prompt
+
+
+def test_prompt_asks_for_performance_review() -> None:
+    """The reviewer should flag performance regressions, graded by impact."""
+    prompt = build_system_prompt().lower()
+    assert "performance" in prompt
+    assert "n+1" in prompt  # N+1 queries / repeated calls in a loop
+    assert "quadratic" in prompt
+
+
+def test_prompt_asks_for_complexity_review() -> None:
+    """The reviewer should flag needless complexity, restrained and low severity."""
+    prompt = build_system_prompt().lower()
+    assert "complexity" in prompt
+    assert "cyclomatic" in prompt
+    assert "nest" in prompt  # deep nesting
+    assert "duplicat" in prompt  # duplicated logic to extract
 
 
 # ---------------------------------------------------------------------------

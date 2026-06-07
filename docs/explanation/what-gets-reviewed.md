@@ -96,6 +96,45 @@ Two lighter-weight checks round out a review:
   `info`/`low`. This is deliberately restrained: private helpers and self-evident
   code are not nagged about, so well-named code is left to document itself.
 
+## Performance
+
+The reviewer also watches for performance regressions the change introduces,
+graded by impact (`low` up to `high` when the cost scales with input size or sits
+in a hot path):
+
+- **N+1 queries / calls in a loop** — a query, request, or other expensive call
+  issued once per iteration that could be batched or hoisted out.
+- **Inefficient algorithms** — accidentally quadratic (`O(n²)`) work where linear
+  is feasible, or a linear scan where a set/dict lookup would do.
+- **Redundant computation** — recomputing the same value inside a loop instead of
+  hoisting or memoising it.
+- **Unnecessary allocations & copies** — building large intermediates or copying
+  big buffers on a hot path when streaming or in-place work suffices.
+- **Blocking I/O on a hot path** — synchronous I/O, sleeps, or lock contention
+  where non-blocking handling is expected.
+- **Unbounded / over-fetching queries** — loading whole tables into memory or
+  missing pagination/limits.
+
+It sticks to changes the diff actually shows and avoids micro-optimisations with
+no measurable impact.
+
+## Complexity
+
+A lighter, restrained lens that flags code harder to read, test, or maintain than
+it needs to be (`info`/`medium`), preferring a concrete simplification in the
+`suggestion` field:
+
+- **High cyclomatic complexity / deep nesting** — many branches or deeply nested
+  conditionals and loops that would read better with early returns.
+- **Over-long, low-cohesion functions** — a function doing several unrelated
+  things that should be split apart.
+- **Duplicated logic** — non-trivial logic repeated in the diff that should be
+  extracted into a shared helper.
+- **Excessive parameters / boolean-flag arguments**, **convoluted expressions**,
+  and **dead / unreachable code**.
+
+Like the documentation lens, it stays quiet on self-evident, already-simple code.
+
 ## How the scope is bounded
 
 Every run is bounded so a large PR can't run away on latency. All of these are
@@ -106,7 +145,7 @@ configurable in `.lgtmaybe.yml` (see
 |---|---|---|
 | `max_files` | 50 | Reviews the top-N changed files; posts a "reviewed top N of M" notice if there are more. |
 | `max_input_tokens` | 100,000 | Batches the diff so each model call stays within budget. |
-| `categories` | all five | Which review lenses to run; each runs as its own model call. Narrowing the list means fewer calls. |
+| `categories` | all seven | Which review lenses to run; each runs as its own model call. Narrowing the list means fewer calls. |
 | `context_lines` | 20 | Ceiling on surrounding lines added around each hunk; the budget may use fewer. `0` disables context expansion. |
 | `min_severity` | `info` | Drops findings below the chosen floor (`info` → `low` → `medium` → `high` → `critical`). |
 | `include_paths` / `exclude_paths` | — | Glob filters to focus the review. |
@@ -131,7 +170,8 @@ Each finding has:
 | `body` | The explanation |
 | `suggestion` | Optional suggested replacement code |
 
-Each review category (security, correctness, deprecation, tests, documentation)
+Each review category (security, correctness, deprecation, tests, documentation,
+performance, complexity)
 runs as its own concurrent model call with a focused prompt; their findings are
 merged and de-duplicated. A self-reflection pass then runs over the merged set
 and drops low-confidence findings, so the model's first guesses are filtered

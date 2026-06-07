@@ -26,7 +26,11 @@ authn/authz, path traversal, SSRF, insecure deserialization, weak crypto,
 resource/DoS safety, and secrets or PII (passwords, tokens, SSNs, card data)
 leaking into logs — so security findings are first-class, not an afterthought. It
 also flags **factually outdated** code — deprecated APIs and end-of-life or
-vulnerable dependencies — when the diff shows them. Generated and non-reviewable
+vulnerable dependencies — when the diff shows them, **performance regressions**
+(N+1 queries, accidentally quadratic work, redundant computation, allocations or
+blocking I/O on hot paths, unbounded queries), and needless **complexity** (deep
+nesting / high cyclomatic complexity, over-long functions, duplicated logic).
+Generated and non-reviewable
 files (lockfiles, minified bundles, vendored directories, binaries) are skipped
 automatically, and secrets are redacted from the diff before it is sent to the
 model.
@@ -43,7 +47,7 @@ latency:
 
 - `max_files` (default 50) — reviews the top-N changed files and notes how many were skipped.
 - `max_input_tokens` (default 100k) — batches the diff to fit the model's budget.
-- `categories` (default all five) — which review lenses to run; each is a concurrent model call, so narrowing the list means fewer calls.
+- `categories` (default all seven) — which review lenses to run; each is a concurrent model call, so narrowing the list means fewer calls.
 - `min_severity` (default `info`) plus `include_paths` / `exclude_paths` — focus the review on what you care about.
 
 See [Configure .lgtmaybe.yml](docs/how-to/configure-lgtmaybe-yml.md) for every knob.
