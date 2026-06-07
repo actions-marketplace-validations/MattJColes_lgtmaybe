@@ -1,0 +1,61 @@
+"""Shared unified-diff parsing primitives."""
+
+from __future__ import annotations
+
+from lgtmaybe.core.diffparse import parse_hunk_header, split_by_file
+
+_TWO_FILE_DIFF = """\
+diff --git a/src/a.py b/src/a.py
+index 111..222 100644
+--- a/src/a.py
++++ b/src/a.py
+@@ -1,2 +1,3 @@
+ x = 1
++y = 2
+ z = 3
+diff --git a/src/b.py b/src/b.py
+index 333..444 100644
+--- a/src/b.py
++++ b/src/b.py
+@@ -10 +10 @@
+-old
++new
+"""
+
+
+class TestSplitByFile:
+    def test_splits_into_one_patch_per_file(self):
+        parts = split_by_file(_TWO_FILE_DIFF, ["src/a.py", "src/b.py"])
+        paths = [path for path, _ in parts]
+        assert paths == ["src/a.py", "src/b.py"]
+
+    def test_each_patch_keeps_its_own_header_and_hunk(self):
+        parts = dict(split_by_file(_TWO_FILE_DIFF, []))
+        assert "+y = 2" in parts["src/a.py"]
+        assert "+y = 2" not in parts["src/b.py"]
+        assert "+new" in parts["src/b.py"]
+
+    def test_no_headers_falls_back_to_first_changed_file(self):
+        parts = split_by_file("@@ -1 +1 @@\n-a\n+b\n", ["only.py"])
+        assert parts == [("only.py", "@@ -1 +1 @@\n-a\n+b\n")]
+
+    def test_no_headers_and_no_files_uses_unknown(self):
+        parts = split_by_file("just text", [])
+        assert parts == [("unknown", "just text")]
+
+
+class TestParseHunkHeader:
+    def test_parses_full_header_with_lengths_and_section(self):
+        h = parse_hunk_header("@@ -1,2 +3,4 @@ def foo():")
+        assert h is not None
+        assert (h.old_start, h.old_len, h.new_start, h.new_len) == (1, 2, 3, 4)
+        assert h.section == " def foo():"
+
+    def test_omitted_lengths_default_to_one(self):
+        h = parse_hunk_header("@@ -10 +20 @@")
+        assert h is not None
+        assert (h.old_start, h.old_len, h.new_start, h.new_len) == (10, 1, 20, 1)
+
+    def test_non_hunk_line_returns_none(self):
+        assert parse_hunk_header(" context line") is None
+        assert parse_hunk_header("diff --git a/x b/x") is None

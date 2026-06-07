@@ -1,5 +1,5 @@
 name: lgtmaybe
-description: Provider-agnostic PR reviewer — five providers, one flag, no static keys for cloud.
+description: Provider-agnostic PR reviewer — six providers, one flag, no static keys for cloud.
 author: Matt Coles
 branding:
   icon: check-circle
@@ -7,7 +7,7 @@ branding:
 
 inputs:
   provider:
-    description: "LLM provider: openai, anthropic, openrouter, bedrock, vertex, or ollama."
+    description: "LLM provider: openai, anthropic, openrouter, bedrock, vertex, azure, or ollama."
     required: false
     default: ""
   model:
@@ -19,7 +19,11 @@ inputs:
     required: false
     default: ""
   api_key:
-    description: "API key for key-based providers (openai/anthropic/openrouter). Leave empty for bedrock/vertex/ollama."
+    description: "API key for key-based providers (openai/anthropic/openrouter/azure). Leave empty for bedrock/vertex/ollama."
+    required: false
+    default: ""
+  api_base:
+    description: "Resource endpoint for azure (https://<resource>.openai.azure.com), or a custom base URL for other providers."
     required: false
     default: ""
   aws_role_arn:
@@ -36,6 +40,14 @@ inputs:
     default: ""
   gcp_service_account:
     description: "GCP service account email to impersonate via WIF (used with gcp_wif_provider)."
+    required: false
+    default: ""
+  azure_client_id:
+    description: "Entra (Azure AD) client ID with a federated credential trusting this repo — keyless azure via GitHub OIDC. No static key is stored."
+    required: false
+    default: ""
+  azure_tenant_id:
+    description: "Entra (Azure AD) tenant ID for keyless azure (used with azure_client_id)."
     required: false
     default: ""
   config_path:
@@ -68,6 +80,29 @@ runs:
         workload_identity_provider: ${{ inputs.gcp_wif_provider }}
         service_account: ${{ inputs.gcp_service_account }}
 
+    - name: Federate to Azure (OIDC, keyless)
+      if: ${{ inputs.azure_client_id != '' }}
+      shell: bash
+      env:
+        AZURE_CLIENT_ID: ${{ inputs.azure_client_id }}
+        AZURE_TENANT_ID: ${{ inputs.azure_tenant_id }}
+      run: |
+        set -euo pipefail
+        # Exchange the workflow's GitHub OIDC token (needs `id-token: write`) for a
+        # file that azure-identity's WorkloadIdentityCredential reads inside the
+        # container. No client secret or static key is ever stored.
+        token_file="${RUNNER_TEMP}/lgtmaybe-azure-oidc-token"
+        resp=$(curl -fsSL \
+          -H "Authorization: Bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
+          "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=api://AzureADTokenExchange")
+        python3 -c "import json,sys; sys.stdout.write(json.load(sys.stdin)['value'])" \
+          <<<"$resp" > "$token_file"
+        {
+          echo "AZURE_FEDERATED_TOKEN_FILE=${token_file}"
+          echo "AZURE_CLIENT_ID=${AZURE_CLIENT_ID}"
+          echo "AZURE_TENANT_ID=${AZURE_TENANT_ID}"
+        } >> "$GITHUB_ENV"
+
     - name: Run lgtmaybe
       shell: bash
       env:
@@ -76,6 +111,7 @@ runs:
         INPUT_MODEL: ${{ inputs.model }}
         INPUT_FALLBACK_MODEL: ${{ inputs.fallback_model }}
         INPUT_API_KEY: ${{ inputs.api_key }}
+        INPUT_API_BASE: ${{ inputs.api_base }}
         INPUT_CONFIG_PATH: ${{ inputs.config_path }}
         LGTMAYBE_IMAGE: ${{ inputs.image }}
       run: |
@@ -85,11 +121,13 @@ runs:
           -e GITHUB_EVENT_NAME -e GITHUB_EVENT_PATH \
           -e GITHUB_REPOSITORY -e GITHUB_SERVER_URL \
           -e INPUT_PROVIDER -e INPUT_MODEL -e INPUT_FALLBACK_MODEL \
-          -e INPUT_API_KEY -e INPUT_CONFIG_PATH \
+          -e INPUT_API_KEY -e INPUT_API_BASE -e INPUT_CONFIG_PATH \
           -e AWS_ACCESS_KEY_ID -e AWS_SECRET_ACCESS_KEY -e AWS_SESSION_TOKEN \
           -e AWS_REGION -e AWS_DEFAULT_REGION \
           -e GOOGLE_APPLICATION_CREDENTIALS -e GOOGLE_GHA_CREDS_PATH \
           -e CLOUDSDK_CORE_PROJECT -e GOOGLE_CLOUD_PROJECT \
+          -e AZURE_FEDERATED_TOKEN_FILE -e AZURE_CLIENT_ID -e AZURE_TENANT_ID \
+          -e AZURE_AUTHORITY_HOST \
           -v "${GITHUB_EVENT_PATH}:${GITHUB_EVENT_PATH}:ro" \
           -v "${GITHUB_WORKSPACE}:${GITHUB_WORKSPACE}" \
           -v "${RUNNER_TEMP}:${RUNNER_TEMP}" \

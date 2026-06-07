@@ -11,17 +11,13 @@ files are dropped before review to save tokens and avoid noise.
 
 from __future__ import annotations
 
-import re
 from fnmatch import fnmatch
+
+from lgtmaybe.core.diffparse import FILE_HEADER_RE, parse_hunk_header
 
 # ---------------------------------------------------------------------------
 # Position map
 # ---------------------------------------------------------------------------
-
-# Match unified-diff file headers: "diff --git a/... b/..."
-_DIFF_FILE_HEADER = re.compile(r"^diff --git a/.+ b/(.+)$")
-# Match hunk headers: "@@ -old_start[,old_len] +new_start[,new_len] @@"
-_HUNK_HEADER = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@")
 
 # Maps (filename, new_file_line_number) → 1-based diff position within that file's hunks.
 PositionMap = dict[tuple[str, int], int]
@@ -46,7 +42,7 @@ def build_position_map(diff: str) -> PositionMap:
     in_hunk = False
 
     for raw_line in diff.splitlines():
-        file_match = _DIFF_FILE_HEADER.match(raw_line)
+        file_match = FILE_HEADER_RE.match(raw_line)
         if file_match:
             current_file = file_match.group(1)
             diff_pos = 0
@@ -57,14 +53,14 @@ def build_position_map(diff: str) -> PositionMap:
         if current_file is None:
             continue
 
-        hunk_match = _HUNK_HEADER.match(raw_line)
-        if hunk_match:
+        hunk = parse_hunk_header(raw_line)
+        if hunk is not None:
             # Hunk header resets the new-file line counter; diff_pos keeps counting
             # across hunks within a file. The hunk header line does NOT occupy a
             # position itself — the first content line after it is position 1 (or
             # position N+1 if prior hunks exist). GitHub's position is a 1-based
             # count of content lines only.
-            new_line = int(hunk_match.group(1))
+            new_line = hunk.new_start
             in_hunk = True
             continue
 

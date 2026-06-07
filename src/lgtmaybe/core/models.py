@@ -52,6 +52,7 @@ class Provider(StrEnum):
     anthropic = "anthropic"
     bedrock = "bedrock"
     vertex = "vertex"
+    azure = "azure"
     ollama = "ollama"
 
 

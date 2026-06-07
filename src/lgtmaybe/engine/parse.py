@@ -25,7 +25,7 @@ class ParseError(Exception):
 _TRAILING_COMMA_RE = re.compile(r",\s*([}\]])")
 
 
-def _strip_fences(text: str) -> str:
+def strip_fences(text: str) -> str:
     """Remove markdown code fences, keeping only the content."""
     text = re.sub(r"```(?:json)?\s*", "", text)
     return text.replace("```", "")
@@ -58,7 +58,7 @@ def parse_findings(raw: str) -> list[ReviewFinding]:
         raise ParseError("Empty response from provider")
 
     text = raw.strip()
-    text = _strip_fences(text)
+    text = strip_fences(text)
     text = text.strip()
     text = _extract_json_blob(text)
     text = _repair_trailing_commas(text)

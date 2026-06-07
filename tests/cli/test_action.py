@@ -101,7 +101,7 @@ class TestActionRouting:
         def fake_build(cfg, runtime):
             captured["provider"] = cfg.provider.value
             captured["model"] = cfg.model
-            captured["fallback_model"] = runtime.get("fallback_model")
+            captured["fallback_model"] = runtime.fallback_model
             return FakeGitHub(), FakeEngine(FakeProvider())
 
         monkeypatch.setattr(cli_module, "build_adapters", fake_build)
@@ -123,4 +123,36 @@ class TestActionRouting:
             "provider": "anthropic",
             "model": "claude-3-5-sonnet",
             "fallback_model": "claude-3-haiku",
+        }
+
+    def test_azure_api_base_input_reaches_runtime(self, tmp_path, monkeypatch):
+        """INPUT_API_BASE carries the azure resource endpoint into the run."""
+        captured: dict[str, object] = {}
+
+        import lgtmaybe.cli as cli_module
+
+        def fake_build(cfg, runtime):
+            captured["api_base"] = runtime.api_base
+            captured["api_key"] = runtime.api_key
+            return FakeGitHub(), FakeEngine(FakeProvider())
+
+        monkeypatch.setattr(cli_module, "build_adapters", fake_build)
+
+        event = _write_event(
+            tmp_path,
+            {"repository": {"full_name": "org/repo"}, "pull_request": {"number": 1}},
+        )
+        monkeypatch.setenv("GITHUB_EVENT_NAME", "pull_request")
+        monkeypatch.setenv("GITHUB_EVENT_PATH", str(event))
+        monkeypatch.setenv("INPUT_PROVIDER", "azure")
+        monkeypatch.setenv("INPUT_MODEL", "gpt-4o")
+        monkeypatch.setenv("INPUT_API_KEY", "azure-secret")
+        monkeypatch.setenv("INPUT_API_BASE", "https://my-resource.openai.azure.com")
+
+        result = CliRunner().invoke(main, ["action"])
+
+        assert result.exit_code == 0, result.output
+        assert captured == {
+            "api_base": "https://my-resource.openai.azure.com",
+            "api_key": "azure-secret",
         }

@@ -7,7 +7,7 @@ import json
 import pytest
 from click.testing import CliRunner
 
-from lgtmaybe.cli import build_adapters, main, run_review
+from lgtmaybe.cli import RuntimeOptions, build_adapters, main, run_review
 from lgtmaybe.core.models import PRContext, ReviewConfig, ReviewFinding
 from lgtmaybe.core.ports import ReviewEngine
 from tests.fakes import FakeEngine, FakeGitHub, FakeProvider
@@ -167,7 +167,7 @@ class TestGitHubReviewErrorSurfacing:
         )
 
         with pytest.raises(click.ClickException):
-            cli_module.execute_review(_default_cfg(), {"pr_url": "x"}, dry_run=False)
+            cli_module.execute_review(_default_cfg(), RuntimeOptions(pr_url="x"), dry_run=False)
 
         assert len(github.posted) == 1
         posted_findings, posted_summary = github.posted[0]
@@ -223,11 +223,7 @@ class TestBuildAdapters:
 
         monkeypatch.setenv("GITHUB_TOKEN", "ghp_test")
         cfg = _default_cfg(provider="ollama", model="llama3")
-        runtime = {
-            "pr_url": "https://github.com/org/repo/pull/7",
-            "api_key": None,
-            "api_base": None,
-        }
+        runtime = RuntimeOptions(pr_url="https://github.com/org/repo/pull/7")
 
         github, engine = build_adapters(cfg, runtime)
 
@@ -237,11 +233,7 @@ class TestBuildAdapters:
     def test_requires_github_token(self, monkeypatch):
         monkeypatch.delenv("GITHUB_TOKEN", raising=False)
         cfg = _default_cfg(provider="ollama", model="llama3")
-        runtime = {
-            "pr_url": "https://github.com/org/repo/pull/7",
-            "api_key": None,
-            "api_base": None,
-        }
+        runtime = RuntimeOptions(pr_url="https://github.com/org/repo/pull/7")
 
         with pytest.raises(ValueError, match="GITHUB_TOKEN"):
             build_adapters(cfg, runtime)
@@ -251,11 +243,7 @@ class TestBuildAdapters:
         monkeypatch.setenv("GITHUB_TOKEN", "ghp_test")
         monkeypatch.delenv("OPENAI_API_KEY", raising=False)
         cfg = _default_cfg(provider="openai", model="gpt-4o")
-        runtime = {
-            "pr_url": "https://github.com/org/repo/pull/7",
-            "api_key": None,
-            "api_base": None,
-        }
+        runtime = RuntimeOptions(pr_url="https://github.com/org/repo/pull/7")
 
         with pytest.raises(ValueError, match="OPENAI_API_KEY"):
             build_adapters(cfg, runtime)
@@ -266,13 +254,31 @@ class TestBuildAdapters:
 
         monkeypatch.setenv("GITHUB_TOKEN", "ghp_test")
         cfg = _default_cfg(provider="ollama", model="llama3")
-        runtime = {
-            "pr_url": "https://github.com/org/repo/pull/7",
-            "api_key": None,
-            "api_base": None,
-            "fallback_model": "llama2",
-        }
+        runtime = RuntimeOptions(
+            pr_url="https://github.com/org/repo/pull/7", fallback_model="llama2"
+        )
 
         _github, _engine, provider = build_review_context(cfg, runtime)
 
         assert provider.fallback_model == "ollama/llama2"
+
+    def test_azure_keyless_ad_token_threads_to_provider(self, monkeypatch):
+        """Keyless azure resolves an ambient AD token and threads it to litellm."""
+        from lgtmaybe.cli import build_review_context
+
+        monkeypatch.setenv("GITHUB_TOKEN", "ghp_test")
+        monkeypatch.delenv("AZURE_API_KEY", raising=False)
+        monkeypatch.setattr(
+            "lgtmaybe.providers.credentials._default_azure_token",
+            lambda: "ad-token-from-oidc",
+        )
+        cfg = _default_cfg(provider="azure", model="my-deployment")
+        runtime = RuntimeOptions(
+            pr_url="https://github.com/org/repo/pull/7",
+            api_base="https://my-resource.openai.azure.com",
+        )
+
+        _github, _engine, provider = build_review_context(cfg, runtime)
+
+        assert provider.default_opts.get("azure_ad_token") == "ad-token-from-oidc"
+        assert "api_key" not in provider.default_opts

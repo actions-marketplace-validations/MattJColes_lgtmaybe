@@ -10,6 +10,8 @@ import json
 from lgtmaybe.core.models import PRContext, ReviewConfig, ReviewFinding
 from lgtmaybe.core.ports import ProviderClient
 
+from .parse import strip_fences
+
 _REFLECT_SYSTEM = """\
 You are a senior code reviewer auditing another reviewer's findings for false positives.
 
@@ -53,9 +55,8 @@ def reflect_findings(
     )
 
     try:
-        raw = result.text.strip()
-        # Strip markdown fences if present
-        raw = raw.replace("```json", "").replace("```", "").strip()
+        # Strip markdown fences if present, then parse the verdict object.
+        raw = strip_fences(result.text.strip()).strip()
         verdicts: dict[str, bool] = json.loads(raw)
     except Exception:
         # If reflection fails to parse, keep all findings (safe default)
