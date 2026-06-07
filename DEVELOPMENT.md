@@ -251,6 +251,28 @@ docker run --rm lgtmaybe:dev --help
 uv run --group docs mkdocs serve   # http://127.0.0.1:8000
 ```
 
+## Evaluating a model (evals/)
+
+Whether a given model/setting actually produces *usable* reviews depends on the
+model — so there's a small eval harness under `evals/` to measure it, rather than
+finding out by hand. Each fixture is a diff with planted bugs plus a manifest of
+the findings a good review should catch (`evals/fixtures/<name>/`).
+
+```bash
+# Needs a live model — NOT part of the pytest gate. Run on demand:
+uv run python -m evals.run --provider ollama --model qwen3.6:35b \
+  --api-base http://localhost:11434
+```
+
+It reviews each fixture and reports, per fixture, whether the model produced
+parseable output and its **recall** against the expected findings, then exits
+non-zero if any fixture failed to parse or fell below `--min-recall` (default
+0.6) — so it can gate a model or prompt change.
+
+The scorer (`evals/scorer.py`) is pure and unit-tested (`tests/evals/`); only the
+runner needs a live model. To add a fixture, drop a `diff.txt` and an
+`expected.json` (matching the `Fixture` schema) under `evals/fixtures/<name>/`.
+
 ## Testing in GitHub Actions
 
 Two distinct CI workflows cover two different things.
