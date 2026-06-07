@@ -273,11 +273,10 @@ class TestBuildAdapters:
             lambda: "ad-token-from-oidc",
         )
         cfg = _default_cfg(provider="azure", model="my-deployment")
-        runtime = {
-            "pr_url": "https://github.com/org/repo/pull/7",
-            "api_key": None,
-            "api_base": "https://my-resource.openai.azure.com",
-        }
+        runtime = RuntimeOptions(
+            pr_url="https://github.com/org/repo/pull/7",
+            api_base="https://my-resource.openai.azure.com",
+        )
 
         _github, _engine, provider = build_review_context(cfg, runtime)
 

@@ -32,7 +32,7 @@ from lgtmaybe.config.loader import load_config
 @click.option(
     "--provider",
     default=None,
-    help="LLM provider (openai, anthropic, bedrock, vertex, ollama, openrouter)",
+    help="LLM provider (openai, anthropic, bedrock, vertex, azure, ollama, openrouter)",
 )
 @click.option("--model", default=None, help="Model name understood by the chosen provider")
 @click.option(
@@ -44,10 +44,13 @@ from lgtmaybe.config.loader import load_config
     "--api-key",
     default=None,
     envvar="LGTMAYBE_API_KEY",
-    help="API key (not needed for bedrock/vertex with ambient creds, or ollama)",
+    help="API key (not needed for bedrock/vertex/keyless-azure ambient creds, or ollama)",
 )
 @click.option(
-    "--api-base", default=None, help="API base URL (useful for ollama: http://localhost:11434)"
+    "--api-base",
+    default=None,
+    help="API base URL (ollama: http://localhost:11434; "
+    "azure: https://<resource>.openai.azure.com)",
 )
 @click.option(
     "--min-severity",
@@ -193,7 +196,11 @@ def action() -> None:
         provider=inputs["provider"],
         model=inputs["model"],
     )
-    runtime = RuntimeOptions(api_key=inputs["api_key"], fallback_model=inputs["fallback_model"])
+    runtime = RuntimeOptions(
+        api_key=inputs["api_key"],
+        api_base=inputs["api_base"],
+        fallback_model=inputs["fallback_model"],
+    )
 
     event = json.loads(Path(os.environ["GITHUB_EVENT_PATH"]).read_text())
     event_name = os.environ.get("GITHUB_EVENT_NAME", "")
