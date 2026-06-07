@@ -29,35 +29,6 @@ from lgtmaybe.providers.factory import build_provider
 _PR_URL_RE = re.compile(r"github\.com/(?P<owner>[^/]+)/(?P<repo>[^/]+)/pull/(?P<number>\d+)")
 
 
-def has_ambient_aws_creds() -> bool:
-    """Return True when AWS credentials appear to be available in the environment.
-
-    Detection seam — real resolution belongs to Track A's credential resolver,
-    wired in the integration step.  Here we check the most common indicators
-    so the CLI can branch without requiring an explicit --api-key for bedrock.
-    """
-    return bool(
-        os.environ.get("AWS_ACCESS_KEY_ID")
-        or os.environ.get("AWS_ROLE_ARN")
-        or os.environ.get("AWS_WEB_IDENTITY_TOKEN_FILE")
-        or os.environ.get("AWS_CONTAINER_CREDENTIALS_RELATIVE_URI")
-        or Path(os.path.expanduser("~/.aws/credentials")).exists()
-    )
-
-
-def has_ambient_gcp_creds() -> bool:
-    """Return True when GCP Application Default Credentials appear to be available.
-
-    Detection seam — real resolution is Track A's responsibility.
-    """
-    adc_path = Path(os.path.expanduser("~/.config/gcloud/application_default_credentials.json"))
-    return bool(
-        os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
-        or os.environ.get("GOOGLE_CLOUD_PROJECT")
-        or adc_path.exists()
-    )
-
-
 def parse_pr_url(pr_url: str) -> tuple[str, int]:
     """Parse a GitHub PR URL into ("owner/repo", pr_number).
 
