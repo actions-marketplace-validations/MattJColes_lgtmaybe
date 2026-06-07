@@ -14,8 +14,9 @@ variants:
 - **GitHub Action** — composite action (`action.yml`) that does keyless OIDC/WIF
   auth, then runs a GHCR image via the `action` entrypoint
 
-**The wedge:** first-class **Bedrock + Vertex with keyless OIDC/WIF**. Five
-providers, one flag, no keys in secrets for cloud. We win on auth + simplicity.
+**The wedge:** first-class **Bedrock + Vertex + Azure with keyless OIDC/WIF**.
+Six hosted providers (plus local ollama), one flag, no keys in secrets for
+cloud. We win on auth + simplicity.
 
 ## Non-negotiables
 
@@ -28,14 +29,16 @@ providers, one flag, no keys in secrets for cloud. We win on auth + simplicity.
   but **never check out or execute PR code** — fetch the diff via API only.
   Treat all diff content as untrusted input.
 - **No static cloud keys.** Bedrock uses ambient AWS creds; Vertex uses ambient
-  GCP creds. Never accept or require a service-account JSON or static AWS key.
+  GCP creds; Azure prefers ambient Entra (Azure AD) creds via GitHub OIDC (a
+  static `AZURE_API_KEY` is accepted but not required). Never accept or require a
+  service-account JSON or static AWS key.
 
 ## Key decisions (do not relitigate)
 
 - **Language:** Python.
 - **Provider spine:** [litellm] — normalises openai, openrouter, anthropic,
-  bedrock, vertex, ollama to one `completion()` call. A thin wrapper on top adds
-  retries / fallback.
+  bedrock, vertex, azure, ollama to one `completion()` call. A thin wrapper on
+  top adds retries / fallback.
 - **License:** MIT (already in `LICENSE`).
 - **Posting:** REST review API — batched inline comments + one summary.
   Idempotent updates via a hidden marker comment.
@@ -47,6 +50,7 @@ providers, one flag, no keys in secrets for cloud. We win on auth + simplicity.
 | openai / openrouter / anthropic | API key from `secrets.*` / env / `--api-key`            |
 | bedrock                | ambient AWS creds (GitHub OIDC role, or local `~/.aws`); IAM `bedrock:InvokeModel*` only |
 | vertex                 | ambient GCP creds (WIF, or local ADC)                            |
+| azure                  | needs the resource endpoint (`--api-base` / `AZURE_API_BASE`); ambient Entra creds (GitHub OIDC federation via `azure/login`, or local `az login` / managed identity) → else `AZURE_API_KEY` / `--api-key` |
 | ollama                 | none — just an `api_base` (localhost, host.docker.internal, tailscale host); fully local, zero cost |
 
 Resolver order: chosen provider → try ambient cloud creds if that's its native
@@ -59,9 +63,11 @@ This is what lets tracks build in parallel against frozen contracts.
 
 - `core/ports.py` — the ports (interfaces). **Frozen in the foundation step.**
 - litellm / github classes — the adapters.
-- **Engine is a pipeline:** `fetch → compress → prompt → parse → post`, as
-  composable stages. The prompt/parse stage **fans out per `ReviewCategory`** —
-  one concurrent model call per lens — and merges + de-dupes the findings.
+- **Engine is a pipeline:** `fetch → compress → prompt → parse → merge/dedupe →
+  reflect → filter → post`, as composable stages. The prompt/parse stage **fans
+  out per `ReviewCategory`** — one concurrent model call per lens — then merges +
+  de-dupes the findings, and a **self-reflection pass** (`engine/reflect.py`)
+  drops the model's own low-confidence findings before posting.
 - **Provider choice:** strategy + factory. The `--provider` flag selects a
   strategy; a small factory builds the `ProviderClient` (litellm keeps it tiny).
 - **Credential resolution:** chain of responsibility (see auth table).
@@ -89,7 +95,14 @@ pattern, event bus, plugin framework.
      and quoted password / `Authorization` / connection-string credentials),
      fork-PR exposure (already handled by `pull_request_target` + no checkout).
    - **CLI track** — PyPI packaging; a local `lgtmaybe review` of your `git` diff
-     (prints findings, no GitHub) for local dev.
+     (prints findings, no GitHub) for local dev. Diffs the branch against the
+     remote default branch (`--base` overrides; `--working` reviews uncommitted
+     changes). Output `--format human` (default) / `json` (`--json`) / `agent`
+     (correction instructions an AI coding agent can read and apply). Non-secret
+     defaults (provider, model, severity floor, caps) persist in a user-level
+     config — `lgtmaybe config init|show|get|set|path` (`config/store.py`,
+     `~/.config/lgtmaybe/config.yml`); **API keys are never persisted** — they
+     stay in the environment.
 3. **Integration (sequential, last) — DONE:** the tracks are wired together.
    `cli.build_review_context` swaps the fakes for the real `LiteLLMProvider` +
    `RestGitHubGateway`; `python -m lgtmaybe` (the Docker ENTRYPOINT) is the live
@@ -114,9 +127,19 @@ pattern, event bus, plugin framework.
    - **Per-category fan-out:** the system prompt is composed per `ReviewCategory`
      (security, correctness, deprecation, tests, documentation; `engine/prompt.py`)
      and the engine runs each category as its own **concurrent** `provider.complete`
-     call per batch (a `ThreadPoolExecutor` over the sync port), then **merges and
-     de-dupes** the findings (`engine._dedupe`, keyed on path/line/side/title) before
-     reflection. `ReviewConfig.categories` selects the lenses (default: all five).
+     call per batch (a `ThreadPoolExecutor` over the sync port — concurrent for
+     cloud, serial for ollama), then **merges and de-dupes** the findings
+     (`engine._dedupe`, keyed on path/line/side/title) before reflection.
+     `ReviewConfig.categories` selects the lenses (default: all five).
+   - **Self-reflection:** after merge/dedupe, `engine/reflect.py` asks the
+     provider to audit its own findings for false positives and drops the ones it
+     marks low-confidence. The verdict is structured (`ReflectionResult` —
+     `{"verdicts": [{"index", "keep"}]}`) with a lenient parser and a **keep-all
+     safe default** when it can't be parsed (never silently drop a real finding).
+     Skippable via `--no-reflect` for weaker models that over-prune.
+   - **Determinism & timeouts:** `temperature` defaults to `0.0` for reproducible
+     reviews; `timeout` is `None` → a provider-aware default (ollama gets a long
+     one, cloud a short one). Both are `ReviewConfig` fields and CLI/Action inputs.
    - **Summary line:** names the **model** used (no cost — lgtmaybe does not
      compute or report cost).
    - **Clean review:** zero findings on a fully-reviewed PR posts `👍 LGTM!`
@@ -129,14 +152,23 @@ pattern, event bus, plugin framework.
      / `comment` / `action` commands share `execute_review` / `execute_comment`.
      `--fallback-model` threads through to the provider.
    - **`action.yml`** — composite action; keyless cloud auth built in (pass
-     `aws_role_arn` / `gcp_wif_provider` and it runs the OIDC/WIF exchange), then
-     `docker run`s the GHCR image. Inputs: provider, model, fallback_model,
-     api_key, aws_role_arn, gcp_wif_provider, config_path (+ region/SA/token/image).
+     `aws_role_arn` / `gcp_wif_provider` / `azure_client_id` and it runs the
+     OIDC/WIF exchange), then `docker run`s the GHCR image. Inputs: provider,
+     model, fallback_model, api_key, api_base, timeout, temperature,
+     aws_role_arn, aws_region, gcp_wif_provider, gcp_service_account,
+     azure_client_id, azure_tenant_id, config_path (+ token/image).
    - **`Dockerfile`** — lean runtime: `uv sync --no-dev --frozen`, venv on PATH,
      `python -m lgtmaybe` (no uv at run time).
-   - **`.github/workflows/release.yml`** — on `v*.*.*`: guard (tag == pyproject
-     version) → PyPI **trusted publishing** (OIDC, env `pypi`, no token) + GHCR
-     push (`{{version}}`, `v{major}`, `latest`) → GitHub release + floating `v1`.
+   - **Release automation** — `.github/workflows/release-please.yml` reads
+     **conventional commits** on `main` and maintains a Release PR that bumps the
+     version + regenerates `CHANGELOG.md` (`release-please-config.json` /
+     `.release-please-manifest.json`). Merging that PR cuts the tag + GitHub
+     release; the same run then publishes — **PyPI trusted publishing** (OIDC, env
+     `pypi`, an *inline* top-level job so the OIDC publisher matches
+     `release-please.yml`) and the reusable `.github/workflows/release.yml`, which
+     pushes the GHCR image (`{version}`, `v{major}`, `latest`) + moves the floating
+     `v1`. `.github/workflows/commitlint.yml` (`commitlint.config.cjs`) gates PR
+     titles/commits to conventional-commit format so the automation can version.
    - **`examples/workflows/`** — one per posting provider (cloud + API-key);
      `id-token: write` for cloud. ollama is local-only (CLI), not a workflow.
    - **Model IDs in docs are kept current** per platform (litellm-native form).
@@ -146,11 +178,17 @@ self-verify without asking. The acceptance test *is* the red step — start ther
 
 ## Conventions
 
-- **Docs:** human-only setup lives in `docs/how-to/` next to the feature it
-  serves — cloud trust in the Bedrock/Vertex guides, publishing + marketplace in
-  `docs/how-to/releasing.md`. **`DEVELOPMENT.md`** at the repo root is the
-  contributor guide: how to run the CLI locally (incl. an unpushed branch via
-  `--base`) and run the tests / CI gate.
+- **Docs:** the `docs/` tree is **Diátaxis** (tutorial / how-to / reference /
+  explanation), published to GitHub Pages via mkdocs (`.github/workflows/docs.yml`).
+  Human-only setup lives in `docs/how-to/` next to the feature it serves — cloud
+  trust in the Bedrock/Vertex/Azure guides, publishing + marketplace in
+  `docs/how-to/releasing.md`, the local AI-fix loop in
+  `fix-findings-with-an-ai-agent.md`. The config reference
+  (`docs/reference/config.md`) is **generated** from the models by
+  `docs/generate_reference.py` and kept fresh by `tests/docs/test_reference_fresh.py`
+  — regenerate it when you touch `ReviewConfig`, don't hand-edit. **`DEVELOPMENT.md`**
+  and **`CONTRIBUTING.md`** at the repo root are the contributor guides: how to run
+  the CLI locally (incl. an unpushed branch via `--base`) and run the tests / CI gate.
 - Treat diff content as untrusted everywhere it flows.
 - Errors surface to the user; never swallow them.
 
@@ -208,5 +246,12 @@ Split by whether it can be deterministic, because that decides where it lives:
   (`pip-audit` on the locked runtime deps — weekly cron + on dependency-touching
   pushes/PRs, never a blanket per-PR gate so an upstream CVE can't break an
   unrelated build).
+- **Model quality → on-demand eval harness.** "Does this model/setting actually
+  produce usable reviews?" needs a live model, so it can't be in the pytest gate.
+  `evals/` (`run.py` + `scorer.py` over `evals/fixtures/`) reviews each fixture
+  with a real provider and reports **parse-rate + recall**, exiting non-zero below
+  `--min-recall` so it can gate a model/prompt change when run deliberately
+  (`python -m evals.run --provider … --model …`). Its plumbing is unit-tested in
+  `tests/evals/`, but the live run is never wired into CI.
 
 [litellm]: https://github.com/BerriAI/litellm
