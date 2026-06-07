@@ -1,9 +1,14 @@
 # Copy into your repo at .github/workflows/lgtmaybe.yml
 #
-# Azure OpenAI (key-based). Add two repo secrets:
-#   AZURE_API_KEY  — a key for your Azure OpenAI resource
-#   AZURE_API_BASE — the resource endpoint, e.g. https://<resource>.openai.azure.com
-# `model` is your Azure *deployment* name, not the upstream OpenAI model name.
+# Azure OpenAI, keyless via GitHub OIDC → Entra (Azure AD). No static key stored.
+# One-time setup: register an Entra app (or managed identity), add a *federated
+# credential* trusting this repo, and grant it the "Cognitive Services OpenAI
+# User" role on your Azure OpenAI resource. Then set two repo secrets:
+#   AZURE_CLIENT_ID, AZURE_TENANT_ID
+# `model` is your Azure *deployment* name; `api_base` is the resource endpoint.
+#
+# Prefer a key instead? Drop azure_client_id/azure_tenant_id and the
+# id-token permission, and pass `api_key: ${{ secrets.AZURE_API_KEY }}`.
 name: lgtmaybe (azure)
 
 on:
@@ -14,6 +19,7 @@ on:
 # pull_request_target runs against the BASE repo (secrets available); the action
 # only ever reads the diff via the API and never checks out PR code.
 permissions:
+  id-token: write          # required for the OIDC token exchange (keyless)
   contents: read
   pull-requests: write
 
@@ -31,6 +37,7 @@ jobs:
       - uses: lgtmaybe/lgtmaybe@v1
         with:
           provider: azure
-          model: my-gpt-4o-deployment
-          api_key: ${{ secrets.AZURE_API_KEY }}
-          api_base: ${{ secrets.AZURE_API_BASE }}
+          model: my-gpt-4o-deployment      # your Azure deployment name
+          api_base: ${{ secrets.AZURE_API_BASE }}  # https://<resource>.openai.azure.com
+          azure_client_id: ${{ secrets.AZURE_CLIENT_ID }}
+          azure_tenant_id: ${{ secrets.AZURE_TENANT_ID }}

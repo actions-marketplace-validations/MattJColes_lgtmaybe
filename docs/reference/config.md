@@ -30,7 +30,7 @@ The user-facing configuration model. Fields map directly to `.lgtmaybe.yml` keys
 
 ### Provider
 
-LLM backend selected by `--provider`. Cloud providers (`bedrock`, `vertex`) use ambient credentials; `azure` uses an API key plus the resource endpoint (`--api-base`).
+LLM backend selected by `--provider`. Cloud providers (`bedrock`, `vertex`, `azure`) use ambient credentials — `azure` also needs the resource endpoint (`--api-base`) and accepts a key as an alternative.
 
 - `anthropic`
 - `azure`

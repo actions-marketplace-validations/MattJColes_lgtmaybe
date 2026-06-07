@@ -1,35 +1,45 @@
-# Review with Azure OpenAI
+# Review with Azure OpenAI (keyless OIDC)
 
-Use this guide to run lgtmaybe against **Azure OpenAI** — your models hosted on
-your own Azure resource, billed through your Azure subscription.
+Use this guide to run lgtmaybe against **Azure OpenAI** using GitHub's OIDC token
+federated to Entra (Azure AD) — no static Azure key stored in secrets. A
+key-based fallback is covered at the end.
 
 ## How it works
 
-Azure OpenAI serves each model from a per-resource endpoint and authenticates
-with a resource key. lgtmaybe needs two things:
+GitHub Actions issues a short-lived OIDC token. Entra (Azure AD) exchanges it —
+via a **federated credential** on an app registration or managed identity — for
+an Azure AD access token scoped to your Azure OpenAI resource. The action does
+that exchange for you (pass `azure_client_id` / `azure_tenant_id`) and lgtmaybe
+picks up the ambient token through `azure-identity`'s `DefaultAzureCredential` —
+no `AZURE_API_KEY` in your secrets.
 
-- **`AZURE_API_KEY`** — a key for your Azure OpenAI resource.
-- **`AZURE_API_BASE`** — the resource endpoint, e.g.
-  `https://<resource>.openai.azure.com`.
-
-litellm reads `AZURE_API_VERSION` directly from the environment and falls back
-to a sensible default, so you only need to set it when you must pin a specific
-API version. Unlike Bedrock and Vertex, Azure is **key-based** — the key lives
-in a GitHub Actions secret, never in `.lgtmaybe.yml`.
+Azure still needs two non-secret values: the **deployment name** (`model`) and
+the **resource endpoint** (`api_base`, `https://<resource>.openai.azure.com`).
 
 ## One-time Azure setup
 
-Do this once in the Azure portal (or with the `az` CLI):
+This is the human-only part — do it once in your Azure tenant:
 
-1. Create an **Azure OpenAI** resource and note its **endpoint**
-   (`https://<resource>.openai.azure.com`) — this is `AZURE_API_BASE`.
-2. **Deploy** the model you want (e.g. `gpt-4o`) and note the **deployment
-   name** — this is what you pass as `model`, *not* the upstream OpenAI name.
-3. Copy a **key** from the resource's *Keys and Endpoint* blade — this is
-   `AZURE_API_KEY`.
-4. Store both as repo secrets (`AZURE_API_KEY`, `AZURE_API_BASE`).
+1. Register an **Entra app** (or use a user-assigned **managed identity**). Note
+   its **client ID** (`azure_client_id`) and your **tenant ID**
+   (`azure_tenant_id`).
+2. Add a **federated credential** to it for GitHub Actions:
+   - Issuer: `https://token.actions.githubusercontent.com`
+   - Subject: scope it to your repo, e.g.
+     `repo:<org>/<repo>:pull_request` (or `:ref:refs/heads/main`, `:environment:…`)
+   - Audience: `api://AzureADTokenExchange`
+3. On the **Azure OpenAI resource**, grant the app the
+   **Cognitive Services OpenAI User** role (least privilege — it can call models,
+   not manage the resource).
+4. **Deploy** the model you want and note the **deployment name** — that is what
+   you pass as `model`, not the upstream OpenAI model id.
+5. Note the resource **endpoint** (`https://<resource>.openai.azure.com`) — it
+   becomes `api_base`. No static key is ever stored.
 
 ## Workflow example
+
+The action performs the OIDC exchange for you — no separate `azure/login` step
+needed. `id-token: write` is required so GitHub will mint the OIDC token.
 
 ```yaml
 name: lgtmaybe
@@ -40,8 +50,9 @@ on:
     types: [created]
 
 permissions:
-  contents: read
+  id-token: write          # required for the OIDC token exchange (keyless)
   pull-requests: write     # required to post review comments
+  contents: read
 
 jobs:
   review:
@@ -52,9 +63,10 @@ jobs:
       - uses: lgtmaybe/lgtmaybe@v1
         with:
           provider: azure
-          model: my-gpt-4o-deployment   # your deployment name
-          api_key: ${{ secrets.AZURE_API_KEY }}
-          api_base: ${{ secrets.AZURE_API_BASE }}
+          model: my-gpt-4o-deployment            # your deployment name
+          api_base: ${{ secrets.AZURE_API_BASE }} # https://<resource>.openai.azure.com
+          azure_client_id: ${{ secrets.AZURE_CLIENT_ID }}
+          azure_tenant_id: ${{ secrets.AZURE_TENANT_ID }}
 ```
 
 ## Choosing the model name
@@ -64,12 +76,15 @@ underlying OpenAI model id. A deployment of `gpt-4o` named `my-gpt-4o-deployment
 is referenced as `model: my-gpt-4o-deployment`. litellm routes it as
 `azure/<deployment-name>`.
 
-## Running locally
+## Running locally with ambient Azure credentials
 
-Set the two environment variables and review your current branch's changes:
+Keyless works locally too. Install the azure extra, sign in (or use a managed
+identity), set the endpoint, and review your current branch's changes:
 
 ```bash
-export AZURE_API_KEY="…"
+pip install 'lgtmaybe[azure]'
+az login
+
 export AZURE_API_BASE="https://<resource>.openai.azure.com"
 
 lgtmaybe review \
@@ -77,18 +92,47 @@ lgtmaybe review \
   --model my-gpt-4o-deployment
 ```
 
-You can also pass them inline with `--api-key` and `--api-base` instead of the
-environment variables.
+`DefaultAzureCredential` finds your `az login` session (or a managed identity, or
+`AZURE_*` env vars) and lgtmaybe never stores a static key.
+
+## Key-based alternative
+
+If you would rather use a resource key, set `AZURE_API_KEY` and `AZURE_API_BASE`
+(no `id-token` permission, no `azure_client_id` needed). The `azure-identity`
+extra is not required in this mode.
+
+```yaml
+      - uses: lgtmaybe/lgtmaybe@v1
+        with:
+          provider: azure
+          model: my-gpt-4o-deployment
+          api_key: ${{ secrets.AZURE_API_KEY }}
+          api_base: ${{ secrets.AZURE_API_BASE }}
+```
+
+Locally: `export AZURE_API_KEY=… AZURE_API_BASE=…` (or pass `--api-key` /
+`--api-base`).
 
 ## Troubleshooting
 
-**`azure requires an API key`** / **`azure requires the resource endpoint`** —
-one of `AZURE_API_KEY` / `AZURE_API_BASE` (or `--api-key` / `--api-base`) is
-missing. The error names the one to set.
+**`azure requires credentials`** — neither a key nor an ambient AD credential was
+found. For keyless, check `id-token: write` is present and the federated
+credential's subject matches the triggering ref/event. For key mode, set
+`AZURE_API_KEY`.
 
-**`DeploymentNotFound` / 404** — `model` must be the **deployment name**, not the
-upstream OpenAI model id, and the deployment must exist on the resource that
-`AZURE_API_BASE` points at.
+**`azure requires the resource endpoint`** — set `api_base` (or `AZURE_API_BASE`)
+to `https://<resource>.openai.azure.com`.
 
-**`Unsupported API version`** — pin one explicitly by setting `AZURE_API_VERSION`
-(e.g. `2024-08-01-preview`) in the environment.
+**`keyless azure needs the azure-identity package`** — running keyless on the CLI
+without the extra; install `lgtmaybe[azure]`. (The Action image already bundles
+it.)
+
+**`AADSTS70021` / no matching federated identity** — the federated credential's
+issuer/subject/audience don't match this workflow. Audience must be
+`api://AzureADTokenExchange` and the subject must match the repo and event.
+
+**`DeploymentNotFound` / 404** — `model` must be the **deployment name** on the
+resource that `api_base` points at, not the upstream OpenAI model id.
+
+**`Unsupported API version`** — pin one by setting `AZURE_API_VERSION`
+(e.g. `2024-08-01-preview`) in the environment; litellm otherwise uses a default.

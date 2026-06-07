@@ -54,5 +54,5 @@ before anything leaves for the model, and a clean PR just gets a 👍 **LGTM!**.
 | `openrouter` | `OPENROUTER_API_KEY` |
 | `bedrock` | Ambient AWS creds — GitHub OIDC, no static key |
 | `vertex` | Ambient GCP creds — Workload Identity Federation, no key |
-| `azure` | `AZURE_API_KEY` + `AZURE_API_BASE` (resource endpoint) |
+| `azure` | Ambient Azure AD creds — GitHub OIDC, no static key (or `AZURE_API_KEY`) + endpoint |
 | `ollama` | None — local only, zero cost |

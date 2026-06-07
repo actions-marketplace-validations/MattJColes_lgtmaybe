@@ -41,6 +41,7 @@ def build_provider(
     *,
     api_key: str | None = None,
     api_base: str | None = None,
+    azure_ad_token: str | None = None,
     fallback_model: str | None = None,
     **extra_opts: Any,
 ) -> LiteLLMProvider:
@@ -51,6 +52,10 @@ def build_provider(
 
     if api_key is not None:
         opts["api_key"] = api_key
+
+    # Keyless Azure: an Azure AD bearer token instead of a static key.
+    if azure_ad_token is not None:
+        opts["azure_ad_token"] = azure_ad_token
 
     is_ollama = provider is Provider.ollama
     if is_ollama:

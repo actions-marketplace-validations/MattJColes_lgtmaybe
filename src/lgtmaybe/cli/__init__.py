@@ -150,6 +150,7 @@ def build_review_context(
         cfg.model,
         api_key=auth.api_key,
         api_base=auth.api_base,
+        azure_ad_token=auth.azure_ad_token,
         fallback_model=runtime.get("fallback_model"),
         timeout=cfg.timeout,
         temperature=cfg.temperature,
@@ -210,7 +211,7 @@ def main() -> None:
     "--api-key",
     default=None,
     envvar="LGTMAYBE_API_KEY",
-    help="API key (not needed for bedrock/vertex with ambient creds, or ollama)",
+    help="API key (not needed for bedrock/vertex/keyless-azure ambient creds, or ollama)",
 )
 @click.option(
     "--api-base",
@@ -350,6 +351,7 @@ def execute_local_review(
             cfg.model,
             api_key=auth.api_key,
             api_base=auth.api_base,
+            azure_ad_token=auth.azure_ad_token,
             fallback_model=runtime.get("fallback_model"),
             timeout=cfg.timeout,
             temperature=cfg.temperature,

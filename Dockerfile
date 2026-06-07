@@ -9,7 +9,8 @@ WORKDIR /app
 COPY pyproject.toml README.md uv.lock ./
 COPY src ./src
 
-RUN uv sync --no-dev --frozen
+# Bundle the azure extra so keyless Azure (Azure AD via OIDC) works out of the box.
+RUN uv sync --no-dev --frozen --extra azure
 
 ENV PATH="/app/.venv/bin:$PATH"
 

@@ -76,6 +76,20 @@ class TestBuildProvider:
         assert provider.default_opts.get("api_base") == "https://my-resource.openai.azure.com"
         assert provider.model == "azure/gpt-4o"
 
+    def test_build_provider_azure_keyless_carries_ad_token(self) -> None:
+        from lgtmaybe.providers.litellm_provider import LiteLLMProvider
+
+        provider = build_provider(
+            Provider.azure,
+            "gpt-4o",
+            api_base="https://my-resource.openai.azure.com",
+            azure_ad_token="ad-token-xyz",
+        )
+        assert isinstance(provider, LiteLLMProvider)
+        assert provider.default_opts.get("azure_ad_token") == "ad-token-xyz"
+        assert provider.default_opts.get("api_base") == "https://my-resource.openai.azure.com"
+        assert "api_key" not in provider.default_opts
+
     def test_build_provider_stores_resolved_model_string(self) -> None:
         provider = build_provider(Provider.bedrock, "anthropic.claude-3-haiku-20240307-v1:0")
         assert provider.model == "bedrock/anthropic.claude-3-haiku-20240307-v1:0"

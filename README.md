@@ -85,7 +85,7 @@ up the [GitHub Action](#use-as-a-github-action). See
 | `openrouter` | `OPENROUTER_API_KEY` |
 | `bedrock` | Ambient AWS creds — GitHub OIDC, no static key |
 | `vertex` | Ambient GCP creds — Workload Identity Federation, no key |
-| `azure` | `AZURE_API_KEY` + `AZURE_API_BASE` (resource endpoint) |
+| `azure` | Ambient Azure AD creds — GitHub OIDC, no static key (or `AZURE_API_KEY`) + endpoint |
 | `ollama` | None — local only, zero cost |
 
 ## Documentation
@@ -146,9 +146,10 @@ jobs:
 ```
 
 Copy-paste workflows for every cloud and API-key provider live in
-[`examples/workflows/`](examples/workflows/). Cloud providers (Bedrock, Vertex)
-are **keyless** — pass `aws_role_arn` / `gcp_wif_provider` and the action does
-the OIDC/WIF exchange for you (needs `id-token: write`). See
+[`examples/workflows/`](examples/workflows/). Cloud providers (Bedrock, Vertex,
+Azure) are **keyless** — pass `aws_role_arn` / `gcp_wif_provider` /
+`azure_client_id` and the action does the OIDC/WIF exchange for you (needs
+`id-token: write`). See
 [Use as a GitHub Action](docs/how-to/use-as-github-action.md). ollama is local
 only — run it through the [CLI](docs/how-to/run-locally-with-ollama.md) instead.
 

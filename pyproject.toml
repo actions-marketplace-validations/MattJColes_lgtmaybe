@@ -15,6 +15,13 @@ dependencies = [
     "tenacity>=9.1.4",
 ]
 
+[project.optional-dependencies]
+# Keyless Azure OpenAI (Azure AD / Entra token via GitHub OIDC or local creds).
+# Only needed for `--provider azure` without an API key; the Action image bundles it.
+azure = [
+    "azure-identity>=1.19",
+]
+
 [project.scripts]
 lgtmaybe = "lgtmaybe.cli:main"
 
@@ -74,4 +81,9 @@ strict = true
 
 [[tool.mypy.overrides]]
 module = ["litellm", "litellm.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+# azure-identity is an optional extra (keyless Azure); it ships no stubs.
+module = ["azure.*"]
 ignore_missing_imports = true

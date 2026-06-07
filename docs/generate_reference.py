@@ -134,8 +134,9 @@ def generate() -> str:
             "Provider",
             [p.value for p in Provider],
             "LLM backend selected by `--provider`. "
-            "Cloud providers (`bedrock`, `vertex`) use ambient credentials; "
-            "`azure` uses an API key plus the resource endpoint (`--api-base`).",
+            "Cloud providers (`bedrock`, `vertex`, `azure`) use ambient "
+            "credentials — `azure` also needs the resource endpoint "
+            "(`--api-base`) and accepts a key as an alternative.",
         )
     )
     sections.append(
