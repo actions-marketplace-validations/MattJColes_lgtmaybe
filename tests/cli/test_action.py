@@ -125,6 +125,35 @@ class TestActionRouting:
             "fallback_model": "claude-3-haiku",
         }
 
+    def test_timeout_and_temperature_inputs_reach_config(self, tmp_path, monkeypatch):
+        """INPUT_TIMEOUT / INPUT_TEMPERATURE tune the run from the Action."""
+        captured: dict[str, object] = {}
+
+        import lgtmaybe.cli as cli_module
+
+        def fake_build(cfg, runtime):
+            captured["timeout"] = cfg.timeout
+            captured["temperature"] = cfg.temperature
+            return FakeGitHub(), FakeEngine(FakeProvider())
+
+        monkeypatch.setattr(cli_module, "build_adapters", fake_build)
+
+        event = _write_event(
+            tmp_path,
+            {"repository": {"full_name": "org/repo"}, "pull_request": {"number": 1}},
+        )
+        monkeypatch.setenv("GITHUB_EVENT_NAME", "pull_request")
+        monkeypatch.setenv("GITHUB_EVENT_PATH", str(event))
+        monkeypatch.setenv("INPUT_PROVIDER", "ollama")
+        monkeypatch.setenv("INPUT_MODEL", "llama3")
+        monkeypatch.setenv("INPUT_TIMEOUT", "900")
+        monkeypatch.setenv("INPUT_TEMPERATURE", "0.2")
+
+        result = CliRunner().invoke(main, ["action"])
+
+        assert result.exit_code == 0, result.output
+        assert captured == {"timeout": 900, "temperature": 0.2}
+
     def test_azure_api_base_input_reaches_runtime(self, tmp_path, monkeypatch):
         """INPUT_API_BASE carries the azure resource endpoint into the run."""
         captured: dict[str, object] = {}

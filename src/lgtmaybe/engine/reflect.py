@@ -1,28 +1,32 @@
 """Self-reflection pass: ask the provider to judge confidence in each finding.
 
-Drops findings the model marks as low-confidence (keep=False).
+Drops findings the model marks as low-confidence (keep=False). The verdict is
+constrained to a structured schema (litellm ``response_format``) the same way the
+review calls are, with a lenient parser + keep-all safe default as fallback.
 """
 
 from __future__ import annotations
 
 import json
+from typing import Any
 
-from lgtmaybe.core.models import PRContext, ReviewConfig, ReviewFinding
+from lgtmaybe.core.models import PRContext, ReflectionResult, ReviewConfig, ReviewFinding
 from lgtmaybe.core.ports import ProviderClient
 
-from .parse import strip_fences
+from .parse import _strip_think_blocks, strip_fences
 
 _REFLECT_SYSTEM = """\
 You are a senior code reviewer auditing another reviewer's findings for false positives.
 
 Given a list of findings (as JSON) and the diff that generated them, return a JSON object \
-mapping each finding's index (as a string key) to a boolean: true to keep it, false to drop it.
+with a single key "verdicts": a list of {"index": <finding index>, "keep": <true|false>} objects, \
+one per finding.
 
 Keep a finding only if you are confident it is a real issue in the actual changed code.
 Drop it if it is speculative, out of scope, or referring to unchanged lines.
 
 Return ONLY the JSON object, nothing else. Example:
-{"0": true, "1": false, "2": true}
+{"verdicts": [{"index": 0, "keep": true}, {"index": 1, "keep": false}]}
 """
 
 
@@ -34,7 +38,9 @@ def reflect_findings(
 ) -> list[ReviewFinding]:
     """Filter *findings* by asking the provider to score confidence.
 
-    Returns only findings the provider marks as keep=True.
+    Returns only findings the provider marks as keep=True. If the verdict can't be
+    parsed, keeps everything (safe default — better an unfiltered finding than a
+    dropped real one).
     """
     if not findings:
         return []
@@ -46,27 +52,44 @@ def reflect_findings(
         "Return the confidence verdict JSON object."
     )
 
+    opts: dict[str, Any] = {"response_format": ReflectionResult} if cfg.structured_output else {}
     result = provider.complete(
         messages=[
             {"role": "system", "content": _REFLECT_SYSTEM},
             {"role": "user", "content": user_content},
         ],
         model=cfg.model,
+        **opts,
     )
 
     try:
-        # Strip markdown fences if present, then parse the verdict object.
-        raw = strip_fences(result.text.strip()).strip()
-        verdicts: dict[str, bool] = json.loads(raw)
+        verdicts = _parse_verdicts(result.text)
     except Exception:
-        # If reflection fails to parse, keep all findings (safe default)
+        # If reflection fails to parse, keep all findings (safe default).
         return findings
 
-    kept = []
-    for i, finding in enumerate(findings):
-        # Accept both int and string keys
-        keep = verdicts.get(str(i), verdicts.get(i, True))  # type: ignore[call-overload]
-        if keep:
-            kept.append(finding)
+    return [finding for i, finding in enumerate(findings) if verdicts.get(i, True)]
 
-    return kept
+
+def _parse_verdicts(raw: str) -> dict[int, bool]:
+    """Parse the reflection verdict into an ``{index: keep}`` map.
+
+    Accepts the structured ``{"verdicts": [{"index": i, "keep": bool}, ...]}``
+    envelope, and (as a fallback for models that ignore the schema) the legacy
+    ``{"0": true, "1": false}`` index-to-bool map. Reasoning blocks and code
+    fences are stripped first.
+    """
+    text = strip_fences(_strip_think_blocks(raw).strip()).strip()
+    data = json.loads(text)
+
+    if isinstance(data, dict) and isinstance(data.get("verdicts"), list):
+        out: dict[int, bool] = {}
+        for v in data["verdicts"]:
+            if isinstance(v, dict) and "index" in v and "keep" in v:
+                out[int(v["index"])] = bool(v["keep"])
+        return out
+
+    if isinstance(data, dict):  # legacy {"0": true, ...}
+        return {int(k): bool(val) for k, val in data.items()}
+
+    raise ValueError(f"unrecognised verdict shape: {type(data).__name__}")
