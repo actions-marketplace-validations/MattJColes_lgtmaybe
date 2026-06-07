@@ -118,7 +118,7 @@ Markdown sources below.
 - [Architecture](docs/explanation/architecture.md) — ports and adapters, the review pipeline
 - [Auth Model](docs/explanation/auth-model.md) — why keyless cloud, how credential resolution works
 - [Data and Privacy](docs/explanation/data-and-privacy.md) — what is sent where, secret redaction, ollama local mode
-- [Trust and Cost](docs/explanation/trust-and-cost.md) — who can trigger a review, why it costs money, and how the default workflows gate strangers out
+- [Trust and Cost](docs/explanation/trust-and-cost.md) — choosing who reviews run for (everyone, trusted contributors, or admins) and the small cost angle
 
 ## Use as a GitHub Action
 
@@ -155,14 +155,13 @@ Azure) are **keyless** — pass `aws_role_arn` / `gcp_wif_provider` /
 [Use as a GitHub Action](docs/how-to/use-as-github-action.md). ollama is local
 only — run it through the [CLI](docs/how-to/run-locally-with-ollama.md) instead.
 
-> **💸 Security & cost.** Every review spends your provider tokens, so on a
-> public repo you don't want strangers triggering one. The example workflows
-> gate the `review` job on author association — only `OWNER`, `MEMBER`, and
-> `COLLABORATOR` can start a review, so a fork PR or drive-by `/review` comment
-> from a stranger never spends your budget. See
+> **🔧 Choose who can trigger reviews.** You decide who reviews run for —
+> everyone, trusted contributors, or just admins. The example workflows default
+> to trusted contributors (`OWNER`, `MEMBER`, `COLLABORATOR`), and it's a
+> one-line change to open it up or tighten it. With ollama this is free; on a
+> hosted provider it also keeps token spend predictable. See
 > [Who can trigger a review](docs/how-to/use-as-github-action.md#who-can-trigger-a-review)
-> for how to tune the gate, and [Trust and Cost](docs/explanation/trust-and-cost.md)
-> for the full model.
+> and [Trust and Cost](docs/explanation/trust-and-cost.md).
 
 ## Distribution
 

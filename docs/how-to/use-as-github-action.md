@@ -23,29 +23,35 @@ The action derives the PR from the triggering event, so there is no `pr-url`
 input to set. On an `issue_comment` event it routes the slash command
 (`/review`, `/ask`, `/describe`, `/improve`) to the same engine.
 
-> **⚠️ Cost disclaimer.** Each run calls your chosen LLM provider and **you pay
-> for those tokens**. On a public repository the default triggers let *anyone* —
-> including strangers opening fork PRs or posting `/ask` / `/review` comments —
-> spend your provider budget, and every push to a PR triggers another run. The
-> built-in `max_files` and `max_input_tokens` settings bound a single run, but
-> not the number of runs. You are responsible for your provider
-> spend: gate the workflow to trusted authors, use a cheap model, and set
-> spending limits in your provider console.
+> **Note on cost.** With ollama the model runs on your own hardware, so reviews
+> are free. On a hosted provider each run uses tokens you pay for, so it's worth
+> a moment's thought about who can trigger one (next section) — the default keeps
+> that to people you trust, and `max_files` / `max_input_tokens` keep any single
+> run modest.
 
 ## Who can trigger a review
 
-The example workflows gate the `review` job on the triggering user's
-[author association](https://docs.github.com/en/graphql/reference/enums#commentauthorassociation):
-only `OWNER`, `MEMBER`, and `COLLABORATOR` can start a review. So a fork PR from a
-stranger — or a drive-by `/ask` / `/review` comment — never spends your provider
-budget. A maintainer can still review an external contributor's PR by commenting
-`/review` on it (the maintainer's own association passes the gate).
+You choose who reviews run for. The example workflows gate the `review` job on
+the triggering user's
+[author association](https://docs.github.com/en/graphql/reference/enums#commentauthorassociation)
+and default to **trusted contributors** — `OWNER`, `MEMBER`, and `COLLABORATOR`.
+A maintainer can also review an outside contributor's PR any time by commenting
+`/review` on it (their own association passes the gate).
 
-To widen or narrow this, edit the `if:` on the `review` job — for example drop
-`COLLABORATOR`, or add `CONTRIBUTOR` to also auto-review anyone whose PR has been
-merged before. For defence in depth, also require approval for fork-PR workflow
-runs in **Settings → Actions → General → Fork pull request workflows**, or move
-the provider key behind a protected `environment`.
+To change the policy, edit the `if:` on the `review` job:
+
+- **Everyone** — drop the `if:` so any PR or `/ask` / `/review` comment runs a
+  review (a friendly choice for an open project; on a hosted provider it means
+  anyone can start a run, so pick it deliberately).
+- **Returning contributors too** — add `CONTRIBUTOR` to auto-review anyone whose
+  PR has merged before.
+- **Admins only** — keep just `OWNER` (plus `MEMBER` for your org).
+
+For extra guardrails, you can also require approval for fork-PR workflow runs in
+**Settings → Actions → General → Fork pull request workflows**, or move the
+provider key behind a protected `environment`. See
+[Trust and Cost](../explanation/trust-and-cost.md) for the reasoning behind these
+options.
 
 ## Minimal workflow — openai
 
