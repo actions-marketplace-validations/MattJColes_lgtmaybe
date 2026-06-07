@@ -128,7 +128,6 @@ Every config field can be overridden at the command line:
 
 ```bash
 lgtmaybe review \
-  --pr-url https://github.com/owner/repo/pull/42 \
   --provider anthropic \
   --model claude-haiku-4-5 \
   --min-severity high

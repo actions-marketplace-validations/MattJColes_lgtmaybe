@@ -1,4 +1,10 @@
-"""Secret redaction: scrub obvious secrets from patches before they reach the provider."""
+"""Secret redaction: scrub obvious secrets from patches before they reach the provider.
+
+This is a defence against leaking credentials to a third-party LLM provider
+(OWASP A02 *Cryptographic Failures* / A07 *Identification and Authentication
+Failures* — secrets exposure). It is best-effort pattern matching, not a
+guarantee; it complements, never replaces, keeping real secrets out of git.
+"""
 
 from __future__ import annotations
 
@@ -6,30 +12,59 @@ import re
 
 REDACTED_PLACEHOLDER = "[REDACTED]"
 
-# Simple patterns — replaced wholesale.
+# Simple patterns — the whole match is replaced wholesale.
 _SIMPLE_PATTERNS: list[re.Pattern[str]] = [
     # AWS access key IDs (AKIA... 20 chars)
     re.compile(r"AKIA[0-9A-Z]{16}"),
     # OpenAI keys: sk- followed by at least 20 word chars
     re.compile(r"sk-[A-Za-z0-9\-_]{20,}"),
-    # GitHub tokens: ghp_, gho_, ghs_, ghr_ followed by at least 20 word chars
+    # GitHub tokens: ghp_, gho_, ghs_, ghr_, ght_ followed by at least 20 word chars
     re.compile(r"gh[poshrt]_[A-Za-z0-9]{20,}"),
+    # GitHub fine-grained PATs: github_pat_ followed by base62/underscore
+    re.compile(r"github_pat_[A-Za-z0-9_]{22,}"),
+    # Slack tokens: xoxb-/xoxp-/xoxa-/xoxr-/xoxs- bot/user/app tokens
+    re.compile(r"xox[baprs]-[A-Za-z0-9\-]{10,}"),
+    # Google API keys: AIza followed by 35 url-safe chars
+    re.compile(r"AIza[0-9A-Za-z\-_]{35}"),
+    # Stripe live/test secret keys
+    re.compile(r"sk_(?:live|test)_[A-Za-z0-9]{16,}"),
+    # PEM private-key blocks (RSA/EC/OPENSSH/generic) — match the whole block.
+    re.compile(
+        r"-----BEGIN (?:RSA |EC |OPENSSH |DSA |PGP )?PRIVATE KEY-----"
+        r".*?-----END (?:RSA |EC |OPENSSH |DSA |PGP )?PRIVATE KEY-----",
+        re.DOTALL,
+    ),
 ]
 
-# Capturing-group patterns — only the captured value is replaced, not the key name.
+# Capturing-group patterns — only the named ``secret`` group is replaced, so the
+# surrounding key name / scheme stays readable in the diff.
 _VALUE_PATTERNS: list[re.Pattern[str]] = [
     # Generic high-entropy assignments: api_key = "..." or token = "..." (value ≥ 16 chars)
     re.compile(
-        r"(?i)(api[_\-]?key|api[_\-]?secret|access[_\-]?token|secret[_\-]?key|token)"
-        r'\s*[=:]\s*["\']?([A-Za-z0-9\-_/+=]{16,})["\']?'
+        r"(?i)(?:api[_\-]?key|api[_\-]?secret|access[_\-]?token|secret[_\-]?key|token)"
+        r'\s*[=:]\s*["\']?(?P<secret>[A-Za-z0-9\-_/+=]{16,})["\']?'
     ),
+    # Quoted password / passphrase literals: password = "hunter2" (value ≥ 4 chars).
+    # Quotes required so we don't swallow prose like "password reset".
+    re.compile(
+        r"(?i)(?:password|passwd|passphrase|pwd)\s*[=:]\s*"
+        r"(?P<q>[\"'])(?P<secret>[^\"']{4,})(?P=q)"
+    ),
+    # Authorization headers carrying a Bearer/Basic credential. Tolerates a quoted
+    # key and a quoted value, e.g. JSON `"Authorization": "Bearer <token>"`.
+    re.compile(
+        r"(?i)[\"']?authorization[\"']?\s*[=:]\s*[\"']?(?:bearer|basic)\s+"
+        r"(?P<secret>[A-Za-z0-9\-._~+/=]{16,})"
+    ),
+    # Credentials embedded in connection-string URLs: scheme://user:secret@host
+    re.compile(r"[a-z][a-z0-9+.\-]*://[^:/?#\s]+:(?P<secret>[^@/?#\s]{4,})@"),
 ]
 
 
 def _replace_value(m: re.Match[str]) -> str:
-    """Replace only the secret value group (group 2), preserving the key name (group 1)."""
+    """Replace only the captured ``secret`` group, preserving the key name / scheme."""
     full = m.group(0)
-    value = m.group(2)
+    value = m.group("secret")
     return full.replace(value, REDACTED_PLACEHOLDER, 1)
 
 
