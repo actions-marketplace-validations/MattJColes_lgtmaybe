@@ -4,11 +4,11 @@
 
 # lgtmaybe
 
+</div>
+
 Provider-agnostic PR reviewer. Five providers, one flag, and no static keys for
 cloud providers. It posts inline comments and a summary straight onto the pull
 request.
-
-</div>
 
 lgtmaybe fetches the diff from the GitHub API and reviews the lines a pull
 request changes. It never checks out or runs your code. To judge each change in
