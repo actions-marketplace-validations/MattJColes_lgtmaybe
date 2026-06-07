@@ -82,7 +82,8 @@ pattern, event bus, plugin framework.
    - **Track C** — hardening: **prompt-injection defense** (PR text trying to
      steer the reviewer), **secret redaction in diffs before they leave for the
      LLM**, fork-PR exposure (already handled by `pull_request_target` + no checkout).
-   - **CLI track** — PyPI packaging, `--dry-run` for local dev.
+   - **CLI track** — PyPI packaging; a local `lgtmaybe review` of your `git` diff
+     (prints findings, no GitHub) for local dev.
 3. **Integration (sequential, last) — DONE:** the tracks are wired together.
    `cli.build_review_context` swaps the fakes for the real `LiteLLMProvider` +
    `RestGitHubGateway`; `python -m lgtmaybe` (the Docker ENTRYPOINT) is the live

@@ -1,16 +1,15 @@
 # Getting Started with lgtmaybe
 
-This tutorial walks you through your first PR review using **ollama** — a fully
-local model that costs nothing and requires no API keys. By the end you will
-have posted a real review comment on a pull request.
+This tutorial walks you through your first review using **ollama** — a fully
+local model that costs nothing and needs no API keys. By the end you will have
+reviewed a branch and seen the findings in your terminal, with no GitHub token
+and no pull request required.
 
 ## What you need
 
 - Python 3.12 or later
 - [ollama](https://ollama.com) running locally
-- A GitHub personal access token with `repo` scope (or `pull_requests: write`
-  for a fine-grained token)
-- A GitHub pull request URL to review
+- A local git repository with some changes on a branch to review
 
 ## Step 1 — Install lgtmaybe
 
@@ -33,57 +32,57 @@ ollama pull qwen3.6:27b    # or any model you prefer
 
 Leave `ollama serve` running in a separate terminal.
 
-## Step 3 — Export your GitHub token
+## Step 3 — Review your changes
 
-```bash
-export GITHUB_TOKEN=ghp_your_token_here
-```
-
-lgtmaybe reads `GITHUB_TOKEN` from the environment; no config file needed for
-this first run.
-
-## Step 4 — Run a dry run first
-
-Before posting anything to GitHub, use `--dry-run` to see what the reviewer
-would say:
+From inside a git repo, on a branch with some changes, run:
 
 ```bash
 lgtmaybe review \
-  --pr-url https://github.com/owner/repo/pull/42 \
-  --provider ollama \
-  --model qwen3.6:27b \
-  --api-base http://localhost:11434 \
-  --dry-run
-```
-
-lgtmaybe fetches the PR diff via the GitHub API, sends it to your local qwen3.6:27b
-instance, and prints the findings to stdout. Nothing is written to GitHub.
-
-## Step 5 — Post a real review
-
-Remove `--dry-run` to post the review:
-
-```bash
-lgtmaybe review \
-  --pr-url https://github.com/owner/repo/pull/42 \
   --provider ollama \
   --model qwen3.6:27b \
   --api-base http://localhost:11434
 ```
 
-lgtmaybe posts inline comments for each finding and a summary comment on the PR.
-Re-running it is safe — it updates the existing summary comment rather than
-creating a duplicate.
+lgtmaybe diffs your current branch against the default branch, sends the changed
+lines to your local qwen3.6:27b instance, and prints the findings to your
+terminal:
+
+```console
+src/app.py:2  [MEDIUM] Import order
+  sys should be sorted before os
+
+1 finding · model qwen3.6:27b · approx cost $0.0000
+```
+
+No GitHub token is involved and nothing is posted anywhere. To review only your
+uncommitted edits, add `--working`; to diff against a different base, pass
+`--base main`.
+
+## Step 4 — Get the findings as JSON
+
+Add `--json` to print the findings as a JSON array instead of a listing, ready
+to pipe into other tooling:
+
+```bash
+lgtmaybe review --provider ollama --model qwen3.6:27b \
+  --api-base http://localhost:11434 --json
+```
+
+## Step 5 — Post reviews on real pull requests
+
+The CLI reviews local changes. To run lgtmaybe on actual pull requests — inline
+comments and a summary posted back to GitHub — add the GitHub Action to your
+repo. See [Use as a GitHub Action](../how-to/use-as-github-action.md).
 
 ## What happened under the hood
 
-lgtmaybe ran five pipeline stages:
+lgtmaybe ran its pipeline over your local diff:
 
-1. **fetch** — pulled the PR diff and metadata from the GitHub REST API
+1. **fetch** — read the diff from your local repo with `git diff`
 2. **compress** — stripped generated files, binaries, and lockfiles
 3. **prompt** — built a structured prompt asking for JSON output
 4. **parse** — validated the model's JSON against the `ReviewFinding` schema
-5. **post** — batched the findings into a single GitHub review request
+5. **render** — printed the findings (the Action posts them to the PR instead)
 
 ## Next steps
 
