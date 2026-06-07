@@ -55,11 +55,12 @@ fetch → redact → split + skip generated → file cap → expand hunks → ba
 ```
 
 The fan-out is the key non-obvious bit: the system prompt is composed per
-`ReviewCategory` (security, correctness, deprecation, tests, documentation), and
+`ReviewCategory` (security, correctness, deprecation, tests, documentation,
+performance, complexity), and
 the engine issues **one concurrent model call per category per batch** (a
 `ThreadPoolExecutor` over the synchronous provider port), then merges and
 de-duplicates the findings before the reflection pass. `ReviewConfig.categories`
-selects which lenses run (default: all five) — it's a `.lgtmaybe.yml` knob, not a
+selects which lenses run (default: all seven) — it's a `.lgtmaybe.yml` knob, not a
 CLI flag. Narrowing it means fewer model calls.
 
 ## Running locally

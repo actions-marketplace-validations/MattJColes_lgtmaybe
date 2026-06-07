@@ -2,9 +2,10 @@
 
 The prompt is composed, not monolithic: a shared header (role + severity rubric
 + output contract + example) and shared rules wrap one focused **category**
-section. The engine asks for each ``ReviewCategory`` in its own LLM call, so each
-call concentrates on a single lens. ``build_system_prompt()`` with no category
-returns the union of every section (the original monolithic prompt).
+section (security, correctness, deprecation, tests, documentation, performance,
+complexity). The engine asks for each ``ReviewCategory`` in its own LLM call, so
+each call concentrates on a single lens. ``build_system_prompt()`` with no
+category returns the union of every section (the original monolithic prompt).
 """
 
 from __future__ import annotations
@@ -150,12 +151,61 @@ doc comment, or whose name or signature contradicts what they actually do
 helpers, local variables, or self-evident code — well-named code documents
 itself, and noise here is unwelcome."""
 
+_PERFORMANCE_SECTION = """\
+## Performance
+
+Flag performance regressions the change introduces, graded by impact (`low` to
+`high` — higher when the cost scales with input size or runs in a hot path):
+
+- **N+1 queries / calls in a loop** — a database query, network request, or other
+  expensive call issued once per iteration where it could be batched or hoisted.
+- **Inefficient algorithms** — accidentally quadratic (`O(n²)`) work where linear
+  is feasible, nested scans over the same collection, or a linear search where a
+  set/dict lookup would do.
+- **Redundant or repeated computation** — recomputing the same value inside a loop
+  instead of hoisting it out, or work that could be memoised/cached.
+- **Unnecessary allocations & copies** — building large intermediate collections
+  or copying big buffers on a hot path when streaming or in-place work suffices.
+- **Blocking I/O on a hot or latency-sensitive path** — synchronous I/O, sleeps,
+  or lock contention where async/non-blocking handling is expected.
+- **Unbounded or over-fetching queries** — loading an entire table/collection into
+  memory, missing pagination/limits, or selecting far more data than is used.
+
+Reason about the surrounding context, but only raise findings on changed lines.
+Do not speculate about micro-optimisations with no measurable impact."""
+
+_COMPLEXITY_SECTION = """\
+## Complexity
+
+Flag code that is harder to read, test, or maintain than it needs to be (grade
+`info` to `medium`). Be restrained — only raise a finding when the complexity is
+genuine, and prefer a concrete simplification in the `suggestion` field:
+
+- **High cyclomatic complexity / deep nesting** — many branches in one function,
+  or deeply nested conditionals and loops that would read better with early
+  returns or guard clauses.
+- **Over-long, low-cohesion functions** — a function doing several unrelated
+  things that should be split into well-named smaller pieces.
+- **Duplicated logic** — the same non-trivial logic repeated in the diff that
+  should be extracted into a shared helper.
+- **Excessive parameters / boolean-flag arguments** — long parameter lists or
+  flag arguments that toggle behaviour and would be clearer split apart.
+- **Convoluted expressions** — clever one-liners or tangled boolean/ternary
+  expressions that obscure intent.
+- **Dead or unreachable code** — branches that can never run, unused locals, or
+  code left behind after a change.
+
+Do NOT nag about self-evident or already-simple code — well-structured code needs
+no comment, and noise here is unwelcome."""
+
 _CATEGORY_SECTIONS: dict[ReviewCategory, str] = {
     ReviewCategory.security: _SECURITY_SECTION,
     ReviewCategory.correctness: _CORRECTNESS_SECTION,
     ReviewCategory.deprecation: _DEPRECATION_SECTION,
     ReviewCategory.tests: _TESTS_SECTION,
     ReviewCategory.documentation: _DOCUMENTATION_SECTION,
+    ReviewCategory.performance: _PERFORMANCE_SECTION,
+    ReviewCategory.complexity: _COMPLEXITY_SECTION,
 }
 
 _SHARED_RULES = """\

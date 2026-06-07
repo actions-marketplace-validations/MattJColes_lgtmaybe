@@ -21,7 +21,9 @@
         "correctness",
         "deprecation",
         "tests",
-        "documentation"
+        "documentation",
+        "performance",
+        "complexity"
       ],
       "title": "ReviewCategory",
       "type": "string"
@@ -60,7 +62,9 @@
         "correctness",
         "deprecation",
         "tests",
-        "documentation"
+        "documentation",
+        "performance",
+        "complexity"
       ],
       "items": {
         "$ref": "#/$defs/ReviewCategory"
