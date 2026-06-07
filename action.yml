@@ -3,7 +3,7 @@ description: Provider-agnostic PR reviewer — five providers, one flag, no stat
 author: Matt Coles
 branding:
   icon: check-circle
-  color: purple
+  color: green
 
 inputs:
   provider:

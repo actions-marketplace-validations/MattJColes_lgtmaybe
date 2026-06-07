@@ -1,16 +1,27 @@
-<p align="center" markdown>
-  ![lgtmaybe logo — a shrugging face with curly-brace arms](assets/logo.svg){ width="128" }
-</p>
+<div class="hero" markdown>
+
+![lgtmaybe logo — a shrugging face with curly-brace arms](assets/logo.svg){ width="128" }
 
 # lgtmaybe
 
-Provider-agnostic PR reviewer. Five providers, one flag, no static keys for
-cloud providers. It posts inline review comments and a summary on a pull request.
+Provider-agnostic PR reviewer. Five providers, one flag, and no static keys for
+cloud providers. It posts inline comments and a summary straight onto the pull
+request.
 
-lgtmaybe reviews the **changed lines in a pull request** — it fetches the PR diff
-from the GitHub API (it never checks out or runs your code), skips generated and
-binary files, redacts secrets, and returns structured findings: a comment on the
-exact changed line plus one summary. A clean PR gets a 👍 **LGTM!**.
+</div>
+
+lgtmaybe fetches the diff from the GitHub API and reviews the lines a pull
+request changes. It never checks out or runs your code. To judge each change in
+context it also reads a few surrounding lines from the file, so a finding lands
+with the function around it in view, but it only ever comments on what the PR
+actually changed.
+
+Reviews surface the things you'd want a careful reviewer to catch: correctness
+bugs, security weaknesses, and readability problems. Every finding is graded from
+`info` up to `critical` and posted as an inline comment on the exact line, with
+one summary at the top. Generated files and binaries are skipped, secrets are
+redacted before anything leaves for the model, and a clean PR just gets a
+👍 **LGTM!**.
 
 ## Start here
 

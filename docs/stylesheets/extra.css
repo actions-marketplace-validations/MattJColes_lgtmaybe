@@ -1,0 +1,35 @@
+/* Brand palette, taken straight from the logo: slate #2f3b45, mint #54d090. */
+
+[data-md-color-scheme="default"] {
+  --md-primary-fg-color:        #2f3b45;
+  --md-primary-fg-color--light: #3c4a56;
+  --md-primary-fg-color--dark:  #232c34;
+  --md-primary-bg-color:        #ffffff;
+  --md-primary-bg-color--light: rgba(255, 255, 255, 0.7);
+
+  --md-accent-fg-color:             #54d090;
+  --md-accent-fg-color--transparent: rgba(84, 208, 144, 0.1);
+
+  /* Body links use a deepened mint so they clear WCAG AA on white. */
+  --md-typeset-a-color:         #157a4b;
+}
+
+[data-md-color-scheme="slate"] {
+  --md-primary-fg-color:        #2f3b45;
+  --md-primary-fg-color--light: #3c4a56;
+  --md-primary-fg-color--dark:  #232c34;
+
+  /* On the dark scheme the bright mint reads well as both link and accent. */
+  --md-accent-fg-color:             #54d090;
+  --md-accent-fg-color--transparent: rgba(84, 208, 144, 0.1);
+  --md-typeset-a-color:         #54d090;
+}
+
+/* Homepage hero: centre the logo, wordmark, and tagline as a single block. */
+.md-typeset .hero {
+  text-align: center;
+}
+
+.md-typeset .hero h1 {
+  margin-top: 0.4rem;
+}
