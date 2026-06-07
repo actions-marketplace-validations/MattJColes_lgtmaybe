@@ -86,6 +86,16 @@
     "provider": {
       "$ref": "#/$defs/Provider"
     },
+    "reflect": {
+      "default": true,
+      "title": "Reflect",
+      "type": "boolean"
+    },
+    "temperature": {
+      "default": 0.0,
+      "title": "Temperature",
+      "type": "number"
+    },
     "timeout": {
       "default": 60,
       "title": "Timeout",

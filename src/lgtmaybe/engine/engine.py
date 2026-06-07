@@ -84,7 +84,8 @@ class LLMReviewEngine(ReviewEngine):
 
         # 6. Self-reflection: filter out low-confidence findings. Reflect against
         #    only the reviewed diff — redacted, and free of skipped/over-cap files.
-        if all_findings:
+        #    Skippable (--no-reflect) for weaker models that drop valid findings here.
+        if cfg.reflect and all_findings:
             reviewed_diff = "\n".join(patch for _, patch in file_patches)
             clean_ctx = ctx.model_copy(update={"diff": reviewed_diff})
             all_findings = reflect_findings(all_findings, clean_ctx, cfg, self._provider)

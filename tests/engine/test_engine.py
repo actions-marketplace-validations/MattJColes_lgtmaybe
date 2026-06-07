@@ -159,6 +159,32 @@ def test_summary_names_the_model_without_cost() -> None:
 
 
 # ---------------------------------------------------------------------------
+# reflection toggle
+# ---------------------------------------------------------------------------
+
+
+def test_reflect_false_skips_the_reflection_pass() -> None:
+    provider = _provider_for([_HIGH])
+    engine = LLMReviewEngine(provider)
+    cfg = ReviewConfig(provider=Provider.ollama, model="llama3", reflect=False)
+
+    findings, _ = engine.review(_CTX, cfg)
+
+    assert [f.title for f in findings] == ["real bug"]
+    assert len(provider.calls) == 1  # review only — no second (reflection) call
+
+
+def test_reflect_true_runs_the_reflection_pass() -> None:
+    provider = _provider_for([_HIGH], reflection_keeps_all=True)
+    engine = LLMReviewEngine(provider)
+    cfg = ReviewConfig(provider=Provider.ollama, model="llama3")  # reflect defaults True
+
+    engine.review(_CTX, cfg)
+
+    assert len(provider.calls) == 2  # review + reflection
+
+
+# ---------------------------------------------------------------------------
 # injection: malicious diff still produces normal structured review
 # ---------------------------------------------------------------------------
 
