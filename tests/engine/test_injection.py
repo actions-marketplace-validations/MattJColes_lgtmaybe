@@ -40,3 +40,10 @@ def test_delimiter_instructs_ignore_inside() -> None:
         or "do not follow" in lower
         or "data only" in lower
     )
+
+
+def test_wrap_diff_restates_the_review_task() -> None:
+    """The wrapper must restate the review task so weaker models still produce findings."""
+    lower = wrap_diff("@@ -1 +1 @@\n+x\n").lower()
+    assert "review" in lower
+    assert "json" in lower

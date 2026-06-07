@@ -85,6 +85,11 @@
     },
     "provider": {
       "$ref": "#/$defs/Provider"
+    },
+    "timeout": {
+      "default": 60,
+      "title": "Timeout",
+      "type": "integer"
     }
   },
   "required": [

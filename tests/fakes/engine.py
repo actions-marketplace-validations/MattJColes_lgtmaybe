@@ -24,5 +24,5 @@ class FakeEngine(ReviewEngine):
             for f in (ReviewFinding.model_validate(item) for item in raw)
             if f.severity >= cfg.min_severity
         ]
-        summary = f"{len(findings)} findings · cost ${result.cost_usd:.4f}"
+        summary = f"{len(findings)} findings · model {cfg.model}"
         return findings, summary

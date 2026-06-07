@@ -110,3 +110,6 @@ class ReviewConfig(_Strict):
     # Ceiling on surrounding context lines added around each hunk. The engine
     # uses min(context_lines, what the token budget allows); 0 disables it.
     context_lines: int = 20
+    # Per-request timeout (seconds) for each provider completion call. Raise it
+    # for slow local models (e.g. a large model on CPU).
+    timeout: int = 60
