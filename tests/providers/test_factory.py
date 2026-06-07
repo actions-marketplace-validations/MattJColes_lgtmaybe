@@ -102,6 +102,25 @@ class TestBuildProvider:
         provider = build_provider(Provider.ollama, "llama2", timeout=600)
         assert provider.default_opts.get("timeout") == 600
 
+    def test_ollama_gets_a_long_default_timeout_when_unset(self) -> None:
+        provider = build_provider(Provider.ollama, "llama2")
+        assert provider.default_opts.get("timeout") == 300
+
+    def test_cloud_gets_a_short_default_timeout_when_unset(self) -> None:
+        provider = build_provider(Provider.openai, "gpt-4o", api_key="sk-test")
+        assert provider.default_opts.get("timeout") == 60
+
+    def test_explicit_timeout_overrides_the_provider_default(self) -> None:
+        provider = build_provider(Provider.ollama, "llama2", timeout=45)
+        assert provider.default_opts.get("timeout") == 45
+
+
+class TestDefaultTimeout:
+    def test_ollama_default_is_longer_than_cloud(self) -> None:
+        from lgtmaybe.providers.factory import default_timeout_for
+
+        assert default_timeout_for(Provider.ollama) > default_timeout_for(Provider.openai)
+
     def test_build_provider_threads_temperature_into_default_opts(self) -> None:
         provider = build_provider(Provider.ollama, "llama2", temperature=0.0)
         assert provider.default_opts.get("temperature") == 0.0

@@ -159,9 +159,15 @@ A few things worth knowing when a local run misbehaves:
   can therefore "succeed" with zero findings even though every call struggled —
   check the debug log, and prefer a model that follows the structured-output
   instruction. `parse.py` tolerates fenced JSON but not arbitrary prose.
-- **Fan-out makes N concurrent calls** (one per category, five by default), so a
-  slow local model multiplies wall-clock pressure. Narrow `categories` in
-  `.lgtmaybe.yml` while iterating, and raise `--timeout` for large models on CPU.
+- **Fan-out makes N calls** (one per category, five by default). They run
+  **concurrently for cloud** providers but **serially for ollama** (a single
+  ollama instance serves one request at a time, so concurrency would only cause
+  timeouts). A slow local model therefore takes ≈ `categories × per-call time` —
+  narrow `categories` in `.lgtmaybe.yml` while iterating. ollama gets a **300 s
+  default timeout** automatically; raise it with `--timeout` for very large models.
+- **`⚠️ review incomplete` (non-zero exit)** means every category call errored or
+  returned unparseable output — lgtmaybe reports this rather than a false LGTM.
+  Raise `--timeout`, pick a more reliable model, or check `LITELLM_LOG=DEBUG`.
 - **`--no-reflect`** removes the extra confidence-filtering call — useful when a
   weaker model drops valid findings during reflection, and one fewer call to wait
   on.

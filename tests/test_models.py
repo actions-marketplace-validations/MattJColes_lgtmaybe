@@ -79,9 +79,10 @@ def test_review_config_api_base_defaults_to_none() -> None:
     assert cfg.api_base is None
 
 
-def test_review_config_timeout_defaults_to_60() -> None:
+def test_review_config_timeout_defaults_to_none_auto() -> None:
+    # None means "auto" — the factory resolves a provider-aware default.
     cfg = ReviewConfig(provider=Provider.ollama, model="llama3")
-    assert cfg.timeout == 60
+    assert cfg.timeout is None
 
 
 def test_review_config_accepts_timeout() -> None:
