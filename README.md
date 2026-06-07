@@ -48,7 +48,7 @@ title, an explanation, and an optional suggested fix — so it renders the same
 everywhere:
 
 - **On a GitHub PR** — an inline comment on the exact changed line for each finding, plus one summary comment naming the model and approximate cost. Re-running updates the same comments instead of duplicating them, and a clean PR gets a 👍 **LGTM!**.
-- **On the CLI** — `lgtmaybe review` reads your local `git` diff and prints the findings (a readable listing, or a JSON array with `--json`); nothing is posted to GitHub.
+- **On the CLI** — `lgtmaybe review` reads your local `git` diff and prints the findings (a readable listing, a JSON array with `--json`, or `--format agent` for an AI coding agent to read and apply); nothing is posted to GitHub.
 
 A fuller walkthrough with example output is in
 [What gets reviewed](docs/explanation/what-gets-reviewed.md).
@@ -139,11 +139,12 @@ jobs:
           api_key: ${{ secrets.OPENAI_API_KEY }}
 ```
 
-Copy-paste workflows for every provider live in
+Copy-paste workflows for every cloud and API-key provider live in
 [`examples/workflows/`](examples/workflows/). Cloud providers (Bedrock, Vertex)
 are **keyless** — pass `aws_role_arn` / `gcp_wif_provider` and the action does
 the OIDC/WIF exchange for you (needs `id-token: write`). See
-[Use as a GitHub Action](docs/how-to/use-as-github-action.md).
+[Use as a GitHub Action](docs/how-to/use-as-github-action.md). ollama is local
+only — run it through the [CLI](docs/how-to/run-locally-with-ollama.md) instead.
 
 ## Distribution
 

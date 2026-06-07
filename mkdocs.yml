@@ -59,6 +59,7 @@ nav:
       - Getting started: tutorial/getting-started.md
   - How-to:
       - Run locally with ollama: how-to/run-locally-with-ollama.md
+      - Fix findings with an AI agent: how-to/fix-findings-with-an-ai-agent.md
       - Review with Bedrock OIDC: how-to/review-with-bedrock-oidc.md
       - Review with Vertex WIF: how-to/review-with-vertex-wif.md
       - Use as a GitHub Action: how-to/use-as-github-action.md

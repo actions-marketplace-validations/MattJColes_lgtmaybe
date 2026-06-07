@@ -58,15 +58,19 @@ No GitHub token is involved and nothing is posted anywhere. To review only your
 uncommitted edits, add `--working`; to diff against a different base, pass
 `--base main`.
 
-## Step 4 — Get the findings as JSON
+## Step 4 — Change the output format
 
-Add `--json` to print the findings as a JSON array instead of a listing, ready
-to pipe into other tooling:
+`--format` controls what `review` prints. `--json` (shorthand for
+`--format json`) emits a JSON array ready to pipe into other tooling:
 
 ```bash
 lgtmaybe review --provider ollama --model qwen3.6:27b \
   --api-base http://localhost:11434 --json
 ```
+
+`--format agent` instead prints the findings as correction instructions an AI
+coding agent can read and apply, for a local review-and-fix loop — see
+[Fix findings with an AI agent](../how-to/fix-findings-with-an-ai-agent.md).
 
 ## Step 5 — Post reviews on real pull requests
 

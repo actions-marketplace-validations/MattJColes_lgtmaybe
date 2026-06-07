@@ -130,7 +130,8 @@ pattern, event bus, plugin framework.
    - **`.github/workflows/release.yml`** — on `v*.*.*`: guard (tag == pyproject
      version) → PyPI **trusted publishing** (OIDC, env `pypi`, no token) + GHCR
      push (`{{version}}`, `v{major}`, `latest`) → GitHub release + floating `v1`.
-   - **`examples/workflows/`** — one per provider; `id-token: write` for cloud.
+   - **`examples/workflows/`** — one per posting provider (cloud + API-key);
+     `id-token: write` for cloud. ollama is local-only (CLI), not a workflow.
    - **Model IDs in docs are kept current** per platform (litellm-native form).
 
 Every task carries its inputs/outputs and an acceptance test so an agent can
