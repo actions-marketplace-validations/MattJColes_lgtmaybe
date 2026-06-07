@@ -101,7 +101,7 @@ class TestActionRouting:
         def fake_build(cfg, runtime):
             captured["provider"] = cfg.provider.value
             captured["model"] = cfg.model
-            captured["fallback_model"] = runtime.get("fallback_model")
+            captured["fallback_model"] = runtime.fallback_model
             return FakeGitHub(), FakeEngine(FakeProvider())
 
         monkeypatch.setattr(cli_module, "build_adapters", fake_build)
