@@ -114,6 +114,30 @@ class TestBuildProvider:
         provider = build_provider(Provider.ollama, "llama2", timeout=45)
         assert provider.default_opts.get("timeout") == 45
 
+    def test_ollama_disables_thinking(self) -> None:
+        # Thinking models return empty content under structured output otherwise.
+        provider = build_provider(Provider.ollama, "qwen3.6:35b", api_base="http://localhost:11434")
+        assert provider.default_opts.get("think") is False
+
+    def test_cloud_does_not_set_think(self) -> None:
+        provider = build_provider(Provider.openai, "gpt-4o", api_key="sk-test")
+        assert "think" not in provider.default_opts
+
+    def test_ollama_sets_a_large_num_ctx(self) -> None:
+        # The default ollama context (~4k) truncates real review prompts.
+        provider = build_provider(Provider.ollama, "qwen3.6:35b", api_base="http://localhost:11434")
+        assert provider.default_opts.get("num_ctx", 0) >= 16384
+
+    def test_ollama_num_ctx_is_overridable(self) -> None:
+        provider = build_provider(
+            Provider.ollama, "qwen3.6:35b", api_base="http://localhost:11434", num_ctx=32768
+        )
+        assert provider.default_opts.get("num_ctx") == 32768
+
+    def test_cloud_does_not_set_num_ctx(self) -> None:
+        provider = build_provider(Provider.openai, "gpt-4o", api_key="sk-test")
+        assert "num_ctx" not in provider.default_opts
+
 
 class TestDefaultTimeout:
     def test_ollama_default_is_longer_than_cloud(self) -> None:

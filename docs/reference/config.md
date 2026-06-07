@@ -23,6 +23,7 @@ The user-facing configuration model. Fields map directly to `.lgtmaybe.yml` keys
 | `model` | string | Yes | — | Model |
 | `provider` | `anthropic` / `azure` / `bedrock` / `ollama` / `openai` / `openrouter` / `vertex` | Yes | — |  |
 | `reflect` | boolean | No | `True` | Reflect |
+| `structured_output` | boolean | No | `True` | Structured Output |
 | `temperature` | number | No | `0.0` | Temperature |
 | `timeout` | integer / null | No | `null` | Timeout |
 
@@ -208,6 +209,11 @@ The canonical machine-readable schemas. These are the source of truth for provid
     "reflect": {
       "default": true,
       "title": "Reflect",
+      "type": "boolean"
+    },
+    "structured_output": {
+      "default": true,
+      "title": "Structured Output",
       "type": "boolean"
     },
     "temperature": {

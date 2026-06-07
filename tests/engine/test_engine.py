@@ -13,6 +13,7 @@ from lgtmaybe.core.models import (
     ReviewCategory,
     ReviewConfig,
     ReviewFinding,
+    ReviewResult,
     Severity,
 )
 from lgtmaybe.engine import LLMReviewEngine, ReviewIncompleteError
@@ -421,6 +422,36 @@ def test_categories_config_narrows_the_fan_out() -> None:
 # ---------------------------------------------------------------------------
 # provider-aware concurrency
 # ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# structured output: response_format on review calls, never on reflection
+# ---------------------------------------------------------------------------
+
+
+def test_structured_output_sets_response_format_on_review_calls() -> None:
+    provider = _provider_for([_HIGH], reflection_keeps_all=True)
+    engine = LLMReviewEngine(provider)
+    cfg = ReviewConfig(provider=Provider.ollama, model="llama3")  # structured_output default True
+
+    engine.review(_CTX, cfg)
+
+    review = _review_calls(provider)
+    assert review and all(c["opts"].get("response_format") is ReviewResult for c in review)
+    # The reflection call must NOT be forced into the findings schema.
+    assert all("response_format" not in c["opts"] for c in _reflection_calls(provider))
+
+
+def test_structured_output_disabled_omits_response_format() -> None:
+    provider = _provider_for([_HIGH])
+    engine = LLMReviewEngine(provider)
+    cfg = ReviewConfig(
+        provider=Provider.ollama, model="llama3", reflect=False, structured_output=False
+    )
+
+    engine.review(_CTX, cfg)
+
+    assert all("response_format" not in c["opts"] for c in _review_calls(provider))
 
 
 def test_ollama_fans_out_serially() -> None:

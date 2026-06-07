@@ -31,6 +31,14 @@ def test_prompt_contains_json_contract() -> None:
         assert field in prompt, f"JSON field '{field}' missing from system prompt"
 
 
+def test_prompt_asks_for_findings_envelope() -> None:
+    """Structured output expects {"findings": [...]}, not a bare array."""
+    prompt = build_system_prompt()
+    assert "findings" in prompt
+    assert '"findings"' in prompt
+    assert '{"findings": []}' in prompt  # the empty-review shape
+
+
 def test_prompt_instructs_changed_lines_only() -> None:
     prompt = build_system_prompt()
     # Must instruct model to comment only on changed lines

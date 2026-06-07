@@ -34,6 +34,10 @@ _PREFIXES: dict[Provider, str] = {
 _OLLAMA_TIMEOUT = 300
 _CLOUD_TIMEOUT = 60
 
+# Ollama context window. Big enough to hold a real review prompt + diff + the
+# emitted findings; ollama's own default (~4k) truncates the output to a stub.
+_OLLAMA_NUM_CTX = 16384
+
 
 def default_timeout_for(provider: Provider) -> int:
     """The auto timeout (seconds) for a provider when none is given explicitly."""
@@ -78,6 +82,16 @@ def build_provider(
     is_ollama = provider is Provider.ollama
     if is_ollama:
         opts["api_base"] = api_base or DEFAULT_OLLAMA_BASE
+        # Disable "thinking" for ollama models. Thinking models (qwen3.x) otherwise
+        # route their whole answer to the reasoning channel and return EMPTY content
+        # under structured output — so JSON-mode yields nothing to parse. With
+        # think=False they emit the findings JSON directly.
+        opts["think"] = False
+        # Ollama's default context window (~4k) is smaller than a real review
+        # prompt (system prompt + wrapped diff + context lines), which truncates
+        # the output to a stub. Give it enough room to read the prompt AND emit the
+        # findings. Overridable for very large diffs or memory-constrained hosts.
+        opts.setdefault("num_ctx", _OLLAMA_NUM_CTX)
     elif api_base is not None:
         # Azure routes to a per-resource endpoint; any other provider that
         # supplies an explicit base (e.g. a proxy) is honoured too.

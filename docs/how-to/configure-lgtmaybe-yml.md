@@ -143,6 +143,20 @@ timeout: 900   # 15 minutes per call, e.g. for a big model on CPU
 Default: auto (ollama 300 s, cloud 60 s). See
 [Run locally with ollama](run-locally-with-ollama.md#slow-models-and-timeouts).
 
+### structured_output
+
+Constrain the model to emit the findings JSON schema using the provider's native
+JSON mode (litellm `response_format`). This keeps models — especially local ones —
+from returning prose or reasoning instead of findings. Leave it on unless a
+particular model/provider doesn't support structured output, in which case the
+lenient parser is the fallback.
+
+```yaml
+structured_output: false   # only if your model rejects JSON-schema mode
+```
+
+Default: `true`.
+
 ## CLI flag overrides
 
 Every config field can be overridden at the command line:

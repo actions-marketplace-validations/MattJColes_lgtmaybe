@@ -130,6 +130,14 @@ model that follows instructions more reliably, or check `LITELLM_LOG=DEBUG` outp
 for the underlying error. lgtmaybe reports this (and exits non-zero) rather than
 pretending the PR is clean.
 
+For a **large diff** this can mean the prompt plus the findings don't fit in
+ollama's context window and the output gets truncated. lgtmaybe runs ollama with
+a generous context (`num_ctx` of 16384) and **structured JSON output** (it also
+disables "thinking" so reasoning models like qwen3.x emit the findings directly),
+which covers most reviews. If a very large diff still truncates, narrow it with
+`include_paths` / `exclude_paths` or a lower `max_files` in `.lgtmaybe.yml`, or run
+a model with a bigger context window.
+
 **Review is empty or truncated** — the diff may exceed the model's context
 window. Add a path filter in `.lgtmaybe.yml` to reduce diff size, or set
 `max_files` to a lower value.
