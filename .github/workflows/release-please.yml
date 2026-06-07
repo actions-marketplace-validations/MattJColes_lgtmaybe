@@ -1,0 +1,39 @@
+name: release-please
+
+# Reads conventional commits on main and maintains a "Release PR" that bumps the
+# version + regenerates the changelog. Merging that PR creates the vX.Y.Z tag and
+# GitHub release, then this same run calls the reusable publish workflow.
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    outputs:
+      release_created: ${{ steps.rp.outputs.release_created }}
+      tag_name: ${{ steps.rp.outputs.tag_name }}
+    steps:
+      - uses: googleapis/release-please-action@v4
+        id: rp
+        with:
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+
+  # release-please creates the tag with GITHUB_TOKEN, which can't trigger an
+  # `on: push: tags` workflow — so we call the publish workflow directly here.
+  publish:
+    needs: release-please
+    if: ${{ needs.release-please.outputs.release_created == 'true' }}
+    uses: ./.github/workflows/release.yml
+    with:
+      tag: ${{ needs.release-please.outputs.tag_name }}
+    permissions:
+      id-token: write # PyPI trusted publishing
+      contents: write # move floating major tag
+      packages: write # GHCR push
+    secrets: inherit
