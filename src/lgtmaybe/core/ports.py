@@ -22,7 +22,7 @@ class ProviderClient(ABC):
 
     @abstractmethod
     def complete(self, messages: list[Message], model: str, **opts: Any) -> ProviderResult:
-        """Run one completion and return text + usage + cost."""
+        """Run one completion and return text + token usage."""
         raise NotImplementedError
 
 

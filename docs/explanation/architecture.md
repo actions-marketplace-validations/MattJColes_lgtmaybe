@@ -31,7 +31,7 @@ lets tests swap in fakes without patching.
 **`core/ports.py`** — the seam. Three abstract base classes:
 
 - `ProviderClient` — one method: `complete(messages, model)` returns a
-  `ProviderResult` (text + usage + cost).
+  `ProviderResult` (text + token usage).
 - `GitHubGateway` — `get_pr_context()` fetches the PR diff and metadata;
   `post_review()` posts batched inline comments and a summary.
 - `ReviewEngine` — `review(ctx, cfg)` returns `(findings, summary)`.
