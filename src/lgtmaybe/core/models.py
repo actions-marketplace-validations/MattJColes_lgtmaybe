@@ -52,6 +52,8 @@ class ReviewCategory(StrEnum):
     deprecation = "deprecation"
     tests = "tests"
     documentation = "documentation"
+    performance = "performance"
+    complexity = "complexity"
 
 
 class Provider(StrEnum):
