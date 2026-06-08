@@ -246,9 +246,7 @@ class TestDefaultGcpProbe:
         monkeypatch.setenv("CLOUDSDK_CONFIG", str(gcloud_dir))
         assert _default_gcp_probe() is True
 
-    def test_no_creds_anywhere_is_absent(
-        self, monkeypatch: pytest.MonkeyPatch, tmp_path
-    ) -> None:
+    def test_no_creds_anywhere_is_absent(self, monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
         _clear(monkeypatch, _GCP_ENV_VARS, str(tmp_path))
         monkeypatch.setenv("CLOUDSDK_CONFIG", str(tmp_path / "empty"))
         assert _default_gcp_probe() is False
@@ -275,8 +273,6 @@ class TestDefaultAwsProbe:
         monkeypatch.setenv("AWS_SHARED_CREDENTIALS_FILE", str(creds))
         assert _default_aws_probe() is True
 
-    def test_no_creds_anywhere_is_absent(
-        self, monkeypatch: pytest.MonkeyPatch, tmp_path
-    ) -> None:
+    def test_no_creds_anywhere_is_absent(self, monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
         _clear(monkeypatch, _AWS_ENV_VARS, str(tmp_path))
         assert _default_aws_probe() is False
