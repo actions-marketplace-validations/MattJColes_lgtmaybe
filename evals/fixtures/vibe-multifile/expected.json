@@ -51,6 +51,16 @@
       "label": "off-by-one in paginate(): 1-indexed page should subtract one",
       "line": 6,
       "keywords": ["off-by-one", "index", "page", "start", "boundary", "1-indexed"]
+    },
+    {
+      "label": "N+1 query in scores_for_users (one SELECT per user in a loop)",
+      "line": 22,
+      "keywords": ["n+1", "loop", "query", "per iteration", "batch", "performance", "round trip"]
+    },
+    {
+      "label": "deeply nested format_user_label with duplicated logic (complexity)",
+      "line": 22,
+      "keywords": ["complexity", "nesting", "nested", "cyclomatic", "early return", "duplicat", "refactor"]
     }
   ]
 }

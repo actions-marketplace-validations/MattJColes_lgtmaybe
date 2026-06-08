@@ -30,6 +30,16 @@
       "line": 30,
       "keywords": ["injection", "shell", "command"],
       "severity_at_least": "high"
+    },
+    {
+      "label": "quadratic nested loops in count_shared_tags (performance)",
+      "line": 36,
+      "keywords": ["quadratic", "o(n^2)", "o(n²)", "nested loop", "performance", "n+1", "inefficient"]
+    },
+    {
+      "label": "deeply nested classify_account begs for early returns (complexity)",
+      "line": 45,
+      "keywords": ["complexity", "nesting", "nested", "cyclomatic", "early return", "guard", "refactor"]
     }
   ]
 }
