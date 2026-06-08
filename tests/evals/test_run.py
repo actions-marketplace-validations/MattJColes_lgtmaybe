@@ -32,7 +32,7 @@ class _ShellInjectionProvider(FakeProvider):
 
 def test_runner_loads_fixtures_and_scores(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(run_mod, "build_provider", lambda *a, **k: _ShellInjectionProvider())
-    # The provider catches 1 of the 5 planted issues — passes a low bar, fails a high one.
+    # The provider catches 1 of the planted issues — passes a low bar, fails a high one.
     assert run_mod.main(["--provider", "ollama", "--model", "x", "--min-recall", "0.0"]) == 0
     assert run_mod.main(["--provider", "ollama", "--model", "x", "--min-recall", "0.9"]) == 1
 
