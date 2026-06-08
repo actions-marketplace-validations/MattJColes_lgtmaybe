@@ -63,6 +63,8 @@ vulnerability class in the title. It actively looks for:
   analytics: passwords, API keys, tokens/session IDs, SSNs, or payment-card data.
 - **Resource / DoS safety** — missing timeouts, unbounded loops or allocations.
 
+![An inline lgtmaybe review comment flagging a [CRITICAL] SQL injection vulnerability in a find_user function, explaining the unsafe string concatenation and suggesting a parameterized query](../assets/screenshot-sql-injection.jpeg){ width="640" }
+
 This shapes *what* the reviewer flags. It is separate from how lgtmaybe protects
 **itself** from a malicious PR — see
 [Data and Privacy](data-and-privacy.md) for secret redaction and prompt-injection
@@ -185,6 +187,14 @@ lgtmaybe posts **one review** containing:
 
 - an **inline comment** on the exact changed line for each finding, and
 - a **summary comment** that names the model used.
+
+Each finding lands on the line that triggered it, with its severity in the title,
+the explanation in the body, and — where the fix is clear — a suggested change you
+can commit straight from the PR:
+
+![An inline lgtmaybe review comment flagging a [MEDIUM] server-side request forgery (SSRF) risk where a user_id is concatenated into a URL, with a suggested validation fix](../assets/screenshot-ssrf.jpeg){ width="620" }
+
+![An inline lgtmaybe review comment flagging a [CRITICAL] command injection vulnerability in an archive function using subprocess with shell=True, with a suggested fix that avoids the shell](../assets/screenshot-command-injection.jpeg){ width="620" }
 
 The summary carries a hidden marker (`<!-- lgtmaybe -->`), so re-running on the
 same PR **updates** the existing review instead of creating duplicates. When a
