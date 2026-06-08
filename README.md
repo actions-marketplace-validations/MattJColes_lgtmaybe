@@ -60,7 +60,13 @@ everywhere:
 - **On the CLI** — `lgtmaybe review` reads your local `git` diff and prints the findings (a readable listing, a JSON array with `--json`, or `--format agent` for an AI coding agent to read and apply); nothing is posted to GitHub.
 
 <p align="center">
-  <img src="docs/assets/screenshot-sql-injection.jpeg" alt="An inline lgtmaybe review comment on a GitHub pull request flagging a [CRITICAL] SQL injection vulnerability, with an explanation and a suggested parameterized-query fix" width="640">
+  <img src="docs/assets/review-sql-injection.png" alt="An inline lgtmaybe review comment on a GitHub pull request flagging a [CRITICAL] SQL injection vulnerability, with an explanation and a suggested parameterized-query fix" width="640">
+</p>
+
+<p align="center"><em>On a GitHub PR — an inline comment on the changed line. The same findings on the CLI:</em></p>
+
+<p align="center">
+  <img src="docs/assets/cli-example.png" alt="The lgtmaybe review command running in a terminal, printing a finding with its file, line, severity, and a summary line naming the model" width="640">
 </p>
 
 A fuller walkthrough with example output is in
