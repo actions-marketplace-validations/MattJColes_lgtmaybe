@@ -43,6 +43,14 @@ hunt the bugs a change introduces and grade them by impact:
 - **Resource leaks & ordering** — handles or locks not released, use-after-close,
   bad concurrent sequencing.
 
+=== "On a GitHub PR"
+
+    ![An inline lgtmaybe review comment flagging a [HIGH] possible None dereference, where get_user can return None but .email is accessed without a guard](../assets/review-correctness.png){ width="660" }
+
+=== "On the CLI"
+
+    ![The lgtmaybe CLI printing a [HIGH] None-dereference finding for demo/orders.py](../assets/cli-correctness.png){ width="660" }
+
 ## Security review
 
 Security findings are first-class. The model is prompted with an OWASP-aligned
@@ -63,7 +71,13 @@ vulnerability class in the title. It actively looks for:
   analytics: passwords, API keys, tokens/session IDs, SSNs, or payment-card data.
 - **Resource / DoS safety** — missing timeouts, unbounded loops or allocations.
 
-![An inline lgtmaybe review comment flagging a [CRITICAL] SQL injection vulnerability in a find_user function, explaining the unsafe string concatenation and suggesting a parameterized query](../assets/screenshot-sql-injection.jpeg){ width="640" }
+=== "On a GitHub PR"
+
+    ![An inline lgtmaybe review comment flagging a [CRITICAL] SQL injection vulnerability in a find_user function, explaining the unsafe string concatenation and suggesting a parameterized query](../assets/review-sql-injection.png){ width="660" }
+
+=== "On the CLI"
+
+    ![The lgtmaybe CLI printing a [CRITICAL] SQL injection finding for demo/db_queries.py](../assets/cli-security.png){ width="660" }
 
 This shapes *what* the reviewer flags. It is separate from how lgtmaybe protects
 **itself** from a malicious PR — see
@@ -84,6 +98,14 @@ code when the diff shows it — these are objective, not stylistic:
 The reviewer only raises these when the diff itself shows the change; it does not
 speculate about code it cannot see.
 
+=== "On a GitHub PR"
+
+    ![An inline lgtmaybe review comment flagging a [MEDIUM] deprecated datetime.utcnow() call and suggesting datetime.now(timezone.utc)](../assets/review-deprecation.png){ width="660" }
+
+=== "On the CLI"
+
+    ![The lgtmaybe CLI printing a [MEDIUM] deprecated-API finding for demo/scheduler.py](../assets/cli-deprecation.png){ width="660" }
+
 ## Test coverage & documentation
 
 Two lighter-weight checks round out a review:
@@ -97,6 +119,26 @@ Two lighter-weight checks round out a review:
   a name or signature that contradicts what the code does, are flagged at
   `info`/`low`. This is deliberately restrained: private helpers and self-evident
   code are not nagged about, so well-named code is left to document itself.
+
+A missing test — note the runnable test dropped into the suggestion:
+
+=== "On a GitHub PR"
+
+    ![An inline lgtmaybe review comment flagging a [LOW] new branch added without a test, with a runnable pytest suggestion](../assets/review-tests.png){ width="660" }
+
+=== "On the CLI"
+
+    ![The lgtmaybe CLI printing a [LOW] missing-test finding for demo/discount.py](../assets/cli-tests.png){ width="660" }
+
+A documentation gap on a new public function:
+
+=== "On a GitHub PR"
+
+    ![An inline lgtmaybe review comment flagging an [INFO] public function missing a docstring, with a suggested docstring](../assets/review-documentation.png){ width="660" }
+
+=== "On the CLI"
+
+    ![The lgtmaybe CLI printing an [INFO] missing-docstring finding for demo/client.py](../assets/cli-documentation.png){ width="660" }
 
 ## Performance
 
@@ -120,6 +162,14 @@ in a hot path):
 It sticks to changes the diff actually shows and avoids micro-optimisations with
 no measurable impact.
 
+=== "On a GitHub PR"
+
+    ![An inline lgtmaybe review comment flagging a [HIGH] N+1 query inside a loop, suggesting a single batched query](../assets/review-performance.png){ width="660" }
+
+=== "On the CLI"
+
+    ![The lgtmaybe CLI printing a [HIGH] N+1-query finding for demo/reports.py](../assets/cli-performance.png){ width="660" }
+
 ## Complexity
 
 A lighter, restrained lens that flags code harder to read, test, or maintain than
@@ -136,6 +186,14 @@ it needs to be (`info`/`medium`), preferring a concrete simplification in the
   and **dead / unreachable code**.
 
 Like the documentation lens, it stays quiet on self-evident, already-simple code.
+
+=== "On a GitHub PR"
+
+    ![An inline lgtmaybe review comment flagging a [MEDIUM] deeply nested conditional and suggesting guard clauses](../assets/review-complexity.png){ width="660" }
+
+=== "On the CLI"
+
+    ![The lgtmaybe CLI printing a [MEDIUM] deep-nesting finding for demo/router.py](../assets/cli-complexity.png){ width="660" }
 
 ## How the scope is bounded
 
@@ -192,9 +250,9 @@ Each finding lands on the line that triggered it, with its severity in the title
 the explanation in the body, and — where the fix is clear — a suggested change you
 can commit straight from the PR:
 
-![An inline lgtmaybe review comment flagging a [MEDIUM] server-side request forgery (SSRF) risk where a user_id is concatenated into a URL, with a suggested validation fix](../assets/screenshot-ssrf.jpeg){ width="620" }
+![An inline lgtmaybe review comment flagging a [MEDIUM] server-side request forgery (SSRF) risk where a user_id is concatenated into a URL, with a suggested validation fix](../assets/review-ssrf.png){ width="660" }
 
-![An inline lgtmaybe review comment flagging a [CRITICAL] command injection vulnerability in an archive function using subprocess with shell=True, with a suggested fix that avoids the shell](../assets/screenshot-command-injection.jpeg){ width="620" }
+![An inline lgtmaybe review comment flagging a [CRITICAL] command injection vulnerability in an archive function using subprocess with shell=True, with a suggested fix that avoids the shell](../assets/review-command-injection.png){ width="660" }
 
 The summary carries a hidden marker (`<!-- lgtmaybe -->`), so re-running on the
 same PR **updates** the existing review instead of creating duplicates. When a
@@ -226,6 +284,8 @@ src/app.py:2  [MEDIUM] Import order
 
 1 finding · model qwen3.6:27b
 ```
+
+![The lgtmaybe review command running in a terminal, printing a [MEDIUM] import-order finding with its file and line, then a summary line naming the model](../assets/cli-example.png){ width="660" }
 
 `--format` selects the output. `--json` is shorthand for `--format json`, which
 prints the findings as a JSON array so the same structured data can be piped into
