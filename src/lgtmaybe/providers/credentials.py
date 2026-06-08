@@ -30,26 +30,57 @@ _AZURE_OPENAI_SCOPE = "https://cognitiveservices.azure.com/.default"
 
 
 def _default_aws_probe() -> bool:
-    """Detect ambient AWS credentials via environment variables."""
-    import os
+    """Detect ambient AWS credentials.
 
-    return bool(
+    Covers the CI/OIDC env vars and exported keys, plus a local shared-config
+    file (`~/.aws/credentials` / `~/.aws/config`, or the path given by
+    ``AWS_SHARED_CREDENTIALS_FILE`` / ``AWS_CONFIG_FILE``) so the documented
+    "credentials via ~/.aws" local flow is recognised even without
+    ``AWS_PROFILE`` exported.
+    """
+    import os
+    from pathlib import Path
+
+    if (
         os.environ.get("AWS_ACCESS_KEY_ID")
         or os.environ.get("AWS_PROFILE")
         or os.environ.get("AWS_ROLE_ARN")
         or os.environ.get("AWS_WEB_IDENTITY_TOKEN_FILE")
+    ):
+        return True
+
+    aws_home = Path.home() / ".aws"
+    candidates = (
+        os.environ.get("AWS_SHARED_CREDENTIALS_FILE") or str(aws_home / "credentials"),
+        os.environ.get("AWS_CONFIG_FILE") or str(aws_home / "config"),
     )
+    return any(Path(path).is_file() for path in candidates)
 
 
 def _default_gcp_probe() -> bool:
-    """Detect ambient GCP credentials via environment variables."""
-    import os
+    """Detect ambient GCP credentials.
 
-    return bool(
+    Covers the CI/WIF env vars (``GOOGLE_APPLICATION_CREDENTIALS``) and a project
+    set via any of the recognised vars (``GOOGLE_CLOUD_PROJECT``,
+    ``GCLOUD_PROJECT``, ``CLOUDSDK_CORE_PROJECT``, ``VERTEXAI_PROJECT``), plus the
+    Application Default Credentials well-known file written by
+    ``gcloud auth application-default login`` — which sets no env var — so the
+    documented local Vertex flow is recognised.
+    """
+    import os
+    from pathlib import Path
+
+    if (
         os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
         or os.environ.get("GOOGLE_CLOUD_PROJECT")
         or os.environ.get("GCLOUD_PROJECT")
-    )
+        or os.environ.get("CLOUDSDK_CORE_PROJECT")
+        or os.environ.get("VERTEXAI_PROJECT")
+    ):
+        return True
+
+    config_dir = os.environ.get("CLOUDSDK_CONFIG") or str(Path.home() / ".config" / "gcloud")
+    return (Path(config_dir) / "application_default_credentials.json").is_file()
 
 
 def _default_azure_token() -> str | None:
