@@ -59,3 +59,16 @@ def test_vibe_multifile_has_high_signal_and_subtle_findings() -> None:
     assert "eval()" in labels
     # ...and the subtler bugs that prove depth.
     assert "off-by-one" in labels
+
+
+def test_fixtures_cover_performance_and_complexity_lenses() -> None:
+    """Both fixtures plant a performance and a complexity issue so the e2e exercises
+    all seven review lenses, not just security + correctness. Guards against a future
+    edit silently dropping these lower-severity lenses from the live recall check."""
+    for name in ("badcode", "vibe-multifile"):
+        _diff, manifest = _fixture(name)
+        keywords = " ".join(k.lower() for e in manifest.expected for k in e.keywords)
+        assert "n+1" in keywords or "quadratic" in keywords, f"{name}: no performance finding"
+        assert "complexity" in keywords and "cyclomatic" in keywords, (
+            f"{name}: no complexity finding"
+        )

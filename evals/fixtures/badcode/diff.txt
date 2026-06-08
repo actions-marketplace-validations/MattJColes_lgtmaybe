@@ -3,7 +3,7 @@ new file mode 100644
 index 0000000..1111111
 --- /dev/null
 +++ b/badcode.py
-@@ -0,0 +1,30 @@
+@@ -0,0 +1,60 @@
 +"""Demo helpers — deliberately buggy, for the reviewer eval."""
 +import subprocess
 +import requests
@@ -34,3 +34,33 @@ index 0000000..1111111
 +def run_report(report_name):
 +    cmd = "generate-report --name " + report_name
 +    subprocess.run(cmd, shell=True)
++
++
++def count_shared_tags(items):
++    # For every pair of items, count how many tags they have in common.
++    total = 0
++    for a in items:
++        for b in items:
++            for tag in a["tags"]:
++                if tag in b["tags"]:
++                    total += 1
++    return total
++
++
++def classify_account(account):
++    if account is not None:
++        if account.get("status") == "active":
++            if account.get("balance", 0) > 0:
++                if account.get("verified"):
++                    if account.get("tier") == "gold":
++                        return "gold-active"
++                    else:
++                        return "active"
++                else:
++                    return "unverified"
++            else:
++                return "empty"
++        else:
++            return "inactive"
++    else:
++        return "missing"

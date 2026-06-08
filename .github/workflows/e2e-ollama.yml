@@ -2,10 +2,12 @@
 #
 # Unlike action-e2e.yml (hosted providers, real spend, label-gated), this runs a
 # genuinely local model on the runner — free, no secrets — so it can run on every
-# PR. It pulls a tiny model (qwen3:0.6b) and reviews the eval fixtures through the
+# PR. It pulls a tiny model (qwen3:1.7b) and reviews the eval fixtures through the
 # full pipeline (redact → batch → per-category fan-out → parse → reflect), with a
 # generous timeout and a large ollama context window so a big multi-file diff
-# ("vibe-coded" commit) isn't truncated.
+# ("vibe-coded" commit) isn't truncated. The fixtures plant security and
+# correctness bugs alongside blatant performance (N+1 / quadratic) and complexity
+# (deep nesting / duplication) issues, so every review lens is exercised live.
 #
 # This is the proof the ollama path actually works on a large change without
 # hand-holding — the pytest suite only ever mocks ollama. The eval runner exits

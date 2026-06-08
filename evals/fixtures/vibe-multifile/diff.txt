@@ -3,7 +3,7 @@ new file mode 100644
 index 0000000..1111111
 --- /dev/null
 +++ b/src/api/handlers.py
-@@ -0,0 +1,17 @@
+@@ -0,0 +1,33 @@
 +"""User API request handlers (new feature)."""
 +import requests
 +
@@ -21,12 +21,28 @@ index 0000000..1111111
 +
 +def find(username):
 +    return find_user(username)
++
++
++def format_user_label(user):
++    if user is not None:
++        if user.get("name"):
++            if user.get("role") == "admin":
++                if user.get("active"):
++                    return "admin: " + user["name"].strip().lower()
++                else:
++                    return "inactive admin: " + user["name"].strip().lower()
++            else:
++                if user.get("active"):
++                    return "user: " + user["name"].strip().lower()
++                else:
++                    return "inactive user: " + user["name"].strip().lower()
++    return "unknown"
 diff --git a/src/db/queries.py b/src/db/queries.py
 new file mode 100644
 index 0000000..2222222
 --- /dev/null
 +++ b/src/db/queries.py
-@@ -0,0 +1,16 @@
+@@ -0,0 +1,25 @@
 +"""Database query helpers."""
 +import sqlite3
 +
@@ -43,6 +59,15 @@ index 0000000..2222222
 +def top_scores(limit):
 +    rows = _DB.execute("SELECT score FROM scores ORDER BY score DESC").fetchall()
 +    return [r[0] for r in rows[1:limit]]
++
++
++def scores_for_users(usernames):
++    # Look up each user's score, one at a time.
++    results = []
++    for name in usernames:
++        row = _DB.execute("SELECT score FROM scores WHERE user = ?", (name,)).fetchone()
++        results.append(row[0] if row else 0)
++    return results
 diff --git a/src/utils/shell.py b/src/utils/shell.py
 new file mode 100644
 index 0000000..3333333
