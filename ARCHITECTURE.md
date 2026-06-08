@@ -157,7 +157,7 @@ to the same engine/provider.
 
 ## Features
 
-**Review intelligence** — per-category fan-out across five lenses (each its own
+**Review intelligence** — per-category fan-out across seven lenses (each its own
 concurrent model call, merged & de-duped):
 - **Security** — OWASP-aligned checklist: injection, XSS, hardcoded secrets,
   broken authn/authz, path traversal, SSRF, insecure deserialization, weak
@@ -169,6 +169,11 @@ concurrent model call, merged & de-duped):
 - **Test coverage** — missing tests for changed paths, with a runnable test in
   the suggestion.
 - **Documentation** — undocumented or mis-described public surfaces only.
+- **Performance** — N+1 queries, accidentally quadratic work, redundant
+  computation, hot-path allocations/blocking I/O, unbounded queries (graded by
+  impact).
+- **Complexity** — high cyclomatic complexity / deep nesting, over-long
+  functions, duplicated logic, dead code (restrained, `info`/`medium`).
 
 **Output & posting** — structured findings (path, line, severity, title, body,
 optional suggestion). On GitHub: inline comments on the exact changed line + one

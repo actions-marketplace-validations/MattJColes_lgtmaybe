@@ -13,7 +13,7 @@ The user-facing configuration model. Fields map directly to `.lgtmaybe.yml` keys
 | Field | Type | Required | Default | Description |
 |---|---|---|---|---|
 | `api_base` | string / null | No | `null` | Api Base |
-| `categories` | list[`correctness` / `deprecation` / `documentation` / `security` / `tests`] | No | `['security', 'correctness', 'deprecation', 'tests', 'documentation']` | Categories |
+| `categories` | list[`complexity` / `correctness` / `deprecation` / `documentation` / `performance` / `security` / `tests`] | No | `['security', 'correctness', 'deprecation', 'tests', 'documentation', 'performance', 'complexity']` | Categories |
 | `context_lines` | integer | No | `20` | Context Lines |
 | `exclude_paths` | list[string] | No | `[]` | Exclude Paths |
 | `include_paths` | list[string] | No | `[]` | Include Paths |
@@ -120,7 +120,9 @@ The canonical machine-readable schemas. These are the source of truth for provid
         "correctness",
         "deprecation",
         "tests",
-        "documentation"
+        "documentation",
+        "performance",
+        "complexity"
       ],
       "title": "ReviewCategory",
       "type": "string"
@@ -159,7 +161,9 @@ The canonical machine-readable schemas. These are the source of truth for provid
         "correctness",
         "deprecation",
         "tests",
-        "documentation"
+        "documentation",
+        "performance",
+        "complexity"
       ],
       "items": {
         "$ref": "#/$defs/ReviewCategory"

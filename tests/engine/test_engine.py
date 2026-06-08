@@ -356,6 +356,8 @@ _CATEGORY_BY_MARKER = {
     "end-of-life": ("deprecation finding", 30),
     "accompanying test": ("tests finding", 40),
     "docstring": ("documentation finding", 50),
+    "n+1": ("performance finding", 60),
+    "cyclomatic": ("complexity finding", 70),
 }
 
 
@@ -401,7 +403,7 @@ def test_duplicate_findings_across_categories_are_deduped() -> None:
 
     findings, _ = engine.review(_CTX, cfg)
 
-    assert len(findings) == 1  # five identical copies collapse to one
+    assert len(findings) == 1  # seven identical copies collapse to one
 
 
 def test_dedupe_keeps_the_highest_severity_for_a_shared_location() -> None:

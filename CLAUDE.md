@@ -125,12 +125,13 @@ pattern, event bus, plugin framework.
    - **Error surfacing:** any failure posts a short "review failed" comment and
      the CLI exits non-zero (`ClickException`) — never fails silently.
    - **Per-category fan-out:** the system prompt is composed per `ReviewCategory`
-     (security, correctness, deprecation, tests, documentation; `engine/prompt.py`)
+     (security, correctness, deprecation, tests, documentation, performance,
+     complexity; `engine/prompt.py`)
      and the engine runs each category as its own **concurrent** `provider.complete`
      call per batch (a `ThreadPoolExecutor` over the sync port — concurrent for
      cloud, serial for ollama), then **merges and de-dupes** the findings
      (`engine._dedupe`, keyed on path/line/side/title) before reflection.
-     `ReviewConfig.categories` selects the lenses (default: all five).
+     `ReviewConfig.categories` selects the lenses (default: all seven).
    - **Self-reflection:** after merge/dedupe, `engine/reflect.py` asks the
      provider to audit its own findings for false positives and drops the ones it
      marks low-confidence. The verdict is structured (`ReflectionResult` —
@@ -211,8 +212,13 @@ Two distinct concerns, kept separate:
   boundary errors, mismatched/inverted ranges, unhandled error paths;
   "Correctness & logic" section), **missing tests** for changed code paths
   (flagged `low`/`medium`, with a runnable test in the finding's `suggestion`
-  field; "Test coverage" section), and **documentation gaps** on public APIs
-  (`info`/`low`, restrained to public surfaces; "Documentation" section).
+  field; "Test coverage" section), **documentation gaps** on public APIs
+  (`info`/`low`, restrained to public surfaces; "Documentation" section),
+  **performance regressions** (N+1 queries, accidentally quadratic work, redundant
+  computation, hot-path allocations/blocking I/O, unbounded queries; graded by
+  impact up to `high`; "Performance" section), and needless **complexity** (deep
+  nesting / high cyclomatic complexity, over-long low-cohesion functions,
+  duplicated logic, dead code; `info`/`medium`, restrained; "Complexity" section).
 
 Both are covered by tests in `tests/engine/` (`test_redact.py`, `test_injection.py`,
 `test_prompt.py`, `test_parse.py`, `test_engine.py`) and `tests/github/test_diff.py`.
@@ -224,7 +230,8 @@ dependencies** in the PRs it reviews (prompt section "Deprecation & dependency
 health"; covered by `test_prompt.py`). Every scan category is asserted in
 `test_prompt.py` (`test_prompt_asks_for_logic_and_edge_case_review`,
 `test_prompt_asks_for_test_coverage`, `test_prompt_asks_for_documentation_review`,
-`test_prompt_names_pii_and_secrets_in_logs`) — extend those when you change the
+`test_prompt_names_pii_and_secrets_in_logs`, `test_prompt_asks_for_performance_review`,
+`test_prompt_asks_for_complexity_review`) — extend those when you change the
 prompt's checklist.
 
 ## Code-quality & dependency hygiene

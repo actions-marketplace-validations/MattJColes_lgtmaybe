@@ -104,8 +104,8 @@ Default: `100000`.
 Which review lenses to run. The reviewer asks for each category in its own
 concurrent model call and merges the findings, so a focused prompt concentrates
 on one concern at a time. One or more of `security`, `correctness`,
-`deprecation`, `tests`, `documentation`. Narrowing the list trades thoroughness
-for fewer model calls (and lower token usage).
+`deprecation`, `tests`, `documentation`, `performance`, `complexity`. Narrowing
+the list trades thoroughness for fewer model calls (and lower token usage).
 
 ```yaml
 categories:
@@ -113,7 +113,7 @@ categories:
   - correctness
 ```
 
-Default: all five categories.
+Default: all seven categories.
 
 ### context_lines
 
