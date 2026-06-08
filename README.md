@@ -59,6 +59,10 @@ everywhere:
 - **On a GitHub PR** — an inline comment on the exact changed line for each finding, plus one summary comment naming the model used. Re-running updates the same comments instead of duplicating them, and a clean PR gets a 👍 **LGTM!**.
 - **On the CLI** — `lgtmaybe review` reads your local `git` diff and prints the findings (a readable listing, a JSON array with `--json`, or `--format agent` for an AI coding agent to read and apply); nothing is posted to GitHub.
 
+<p align="center">
+  <img src="docs/assets/screenshot-sql-injection.jpeg" alt="An inline lgtmaybe review comment on a GitHub pull request flagging a [CRITICAL] SQL injection vulnerability, with an explanation and a suggested parameterized-query fix" width="640">
+</p>
+
 A fuller walkthrough with example output is in
 [What gets reviewed](docs/explanation/what-gets-reviewed.md).
 
