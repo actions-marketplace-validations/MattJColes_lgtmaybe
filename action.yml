@@ -35,7 +35,7 @@ inputs:
     required: false
     default: ""
   num_ctx:
-    description: "Ollama context window (ollama only; ignored for hosted providers). Raise it so a large multi-file diff isn't truncated. Leave empty for the default (16384)."
+    description: "Ollama context window (ollama only; ignored for hosted providers). Raise it so a large multi-file diff isn't truncated. Leave empty for the default (32768)."
     required: false
     default: ""
   max_input_tokens:

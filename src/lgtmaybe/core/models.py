@@ -160,7 +160,7 @@ class ReviewConfig(_Strict):
     max_input_tokens: int = 100_000
     # Ollama's context window (num_ctx). Ollama only — hosted providers manage
     # their own context window server-side and litellm won't forward this, so it
-    # is ignored for them. None keeps the factory default (16384); raise it so a
+    # is ignored for them. None keeps the factory default (32768); raise it so a
     # large multi-file diff plus the emitted findings isn't truncated.
     num_ctx: int | None = None
     # Ceiling on surrounding context lines added around each hunk. The engine

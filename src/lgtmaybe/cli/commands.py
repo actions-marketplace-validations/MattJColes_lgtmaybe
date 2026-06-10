@@ -71,7 +71,7 @@ from lgtmaybe.config.loader import load_config
     default=None,
     type=int,
     help="ollama context window (ollama only; ignored for hosted providers). "
-    "Raise it so a large multi-file diff isn't truncated; default 16384",
+    "Raise it so a large multi-file diff isn't truncated; default 32768",
 )
 @click.option(
     "--base",
