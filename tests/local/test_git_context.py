@@ -188,3 +188,29 @@ def test_working_mode_honours_base_override(repo: Path) -> None:
 
     assert "+    return 99" in ctx.diff
     assert ctx.base_sha == _git(repo, "rev-parse", "main")
+
+
+# ---------------------------------------------------------------------------
+# --uncommitted: only the working-tree edits, vs HEAD
+# ---------------------------------------------------------------------------
+
+
+def test_uncommitted_reviews_only_uncommitted_changes(repo: Path) -> None:
+    """--uncommitted is the narrow view: working-tree edits vs HEAD, with the
+    branch's committed changes excluded."""
+    (repo / "app.py").write_text("def f():\n    return 2\n")
+    _git(repo, "commit", "-am", "feat: return two")
+    (repo / "app.py").write_text("def f():\n    return 99\n")  # uncommitted on top
+
+    ctx = local_pr_context(uncommitted=True, cwd=repo)
+
+    assert "+    return 99" in ctx.diff
+    assert "+    return 2" not in ctx.diff  # the committed change is excluded
+    assert ctx.base_sha == _git(repo, "rev-parse", "HEAD")
+    # Uncommitted edits aren't described by any commit message — no stated intent.
+    assert ctx.commit_messages == []
+
+
+def test_working_and_uncommitted_are_mutually_exclusive(repo: Path) -> None:
+    with pytest.raises(ValueError, match="mutually exclusive"):
+        local_pr_context(working=True, uncommitted=True, cwd=repo)

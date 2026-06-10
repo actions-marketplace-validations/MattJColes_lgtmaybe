@@ -55,7 +55,8 @@ src/app.py:2  [MEDIUM] Import order
 ```
 
 To review the whole worktree — your branch's commits plus uncommitted edits —
-add `--working`; to diff against a different base, pass `--base main`.
+add `--working`; for only the uncommitted edits, add `--uncommitted`; to diff
+against a different base, pass `--base main`.
 
 ## Step 4 — Change the output format
 

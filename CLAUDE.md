@@ -101,8 +101,10 @@ pattern, event bus, plugin framework.
      remote primary branch — base resolution `origin/HEAD` → `origin/main` →
      `origin/master` → `main` → `master` (`--base` overrides); `--working`
      reviews the whole worktree (branch commits + uncommitted edits) against the
-     merge-base with that same base; commit subjects vs the base feed the intent
-     lens in both modes. Output `--format human` (default) / `json` (`--json`) / `agent`
+     merge-base with that same base; `--uncommitted` reviews only the
+     working-tree edits vs HEAD (mutually exclusive with `--working`, no stated
+     intent); commit subjects vs the base feed the intent lens in branch and
+     working mode. Output `--format human` (default) / `json` (`--json`) / `agent`
      (correction instructions an AI coding agent can read and apply). Non-secret
      defaults (provider, model, severity floor, caps) persist in a user-level
      config — `lgtmaybe config init|show|get|set|path` (`config/store.py`,

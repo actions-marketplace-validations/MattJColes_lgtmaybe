@@ -20,34 +20,48 @@ def local_pr_context(
     *,
     base: str | None = None,
     working: bool = False,
+    uncommitted: bool = False,
     cwd: Path | None = None,
 ) -> PRContext:
     """Return a PRContext for the local repo, compared against the remote primary branch.
 
-    Both modes resolve the same base — the remote's default branch
-    (``origin/HEAD``, else the first of ``origin/main``/``origin/master``/
+    Branch and ``working`` mode resolve the same base — the remote's default
+    branch (``origin/HEAD``, else the first of ``origin/main``/``origin/master``/
     ``main``/``master`` that exists), overridable with ``base``:
 
     - default: the branch's committed changes (``git diff <base>...HEAD``).
     - ``working``: the whole worktree — branch commits **plus** uncommitted
       edits — diffed against the merge-base with ``base``, so commits that only
       exist on the remote don't show up as reversed changes.
+    - ``uncommitted``: the narrow view — only working-tree edits, vs HEAD
+      (no base involved). Mutually exclusive with ``working``.
 
-    Commit subjects between the base and HEAD are collected in both modes (the
-    stated intent for the intent lens). Raises ValueError when git is missing or
-    this is not a git repository.
+    Commit subjects between the base and HEAD are collected in branch and
+    working mode (the stated intent for the intent lens); uncommitted edits are
+    not described by any commit, so ``uncommitted`` mode collects none. Raises
+    ValueError when git is missing or this is not a git repository.
     """
+    if working and uncommitted:
+        raise ValueError("--working and --uncommitted are mutually exclusive")
+
     _ensure_repo(cwd)
 
-    base_ref = base or _default_base(cwd)
-
-    if working:
-        merge_base = _git(cwd, "merge-base", base_ref, "HEAD").strip()
-        spec = merge_base
-        base_sha = merge_base
+    if uncommitted:
+        spec = "HEAD"
+        base_sha = _git(cwd, "rev-parse", "HEAD").strip()
+        commit_messages: list[str] = []
     else:
-        spec = f"{base_ref}...HEAD"
-        base_sha = _git(cwd, "rev-parse", base_ref).strip()
+        base_ref = base or _default_base(cwd)
+        if working:
+            merge_base = _git(cwd, "merge-base", base_ref, "HEAD").strip()
+            spec = merge_base
+            base_sha = merge_base
+        else:
+            spec = f"{base_ref}...HEAD"
+            base_sha = _git(cwd, "rev-parse", base_ref).strip()
+        # Commit names are the local stated intent — the CLI counterpart to a PR
+        # title — feeding the intent lens. Empty when HEAD sits on the base.
+        commit_messages = _commit_subjects(cwd, base_ref)
 
     diff = _git(cwd, "diff", spec)
     name_output = _git(cwd, "diff", "--name-only", spec)
@@ -60,9 +74,7 @@ def local_pr_context(
         head_sha=_git(cwd, "rev-parse", "HEAD").strip(),
         repo=_repo_name(cwd),
         pr_number=0,
-        # Commit names are the local stated intent — the CLI counterpart to a PR
-        # title — feeding the intent lens. Empty when HEAD sits on the base.
-        commit_messages=_commit_subjects(cwd, base_ref),
+        commit_messages=commit_messages,
     )
 
 

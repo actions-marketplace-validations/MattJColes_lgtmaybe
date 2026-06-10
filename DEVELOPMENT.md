@@ -99,6 +99,7 @@ uv run lgtmaybe review --base main      # diff against your LOCAL main
 uv run lgtmaybe review --base develop   # forked off a different branch
 uv run lgtmaybe review --base 1a2b3c4   # or an exact commit
 uv run lgtmaybe review --working        # whole worktree (commits + uncommitted) vs base
+uv run lgtmaybe review --uncommitted    # only uncommitted edits, vs HEAD
 ```
 
 One case needs an explicit `--base`: you have an `origin` remote but haven't
@@ -111,6 +112,7 @@ Useful flags for local iteration (full list: `uv run lgtmaybe review --help`):
 |---|---|
 | `--base <ref>` | Diff against `<ref>` (default: remote primary branch — `origin/HEAD` → `origin/main` → `origin/master` → `main` → `master`) |
 | `--working` | Review the whole worktree (branch commits + uncommitted edits) against the base |
+| `--uncommitted` | Review only uncommitted working-tree edits, vs HEAD (mutually exclusive with `--working`) |
 | `--json` / `--format agent` | Machine-readable output (JSON array, or correction instructions for an AI agent) |
 | `--min-severity medium` | Only surface findings at/above a severity |
 | `--max-files 10` | Cap how many changed files are reviewed |

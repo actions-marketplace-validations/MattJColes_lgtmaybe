@@ -327,8 +327,9 @@ the findings — it posts nothing and needs no GitHub token. By default it diffs
 the current branch against the remote primary branch (`origin/HEAD`, falling
 back to `origin/main`/`origin/master`, then a local `main`/`master`);
 `--working` reviews the whole worktree — branch commits plus uncommitted edits —
-against that same base, and `--base <ref>` picks a different base. The default
-output is a readable listing followed by the summary line:
+against that same base, `--uncommitted` reviews only the uncommitted edits
+against HEAD, and `--base <ref>` picks a different base. The default output is a
+readable listing followed by the summary line:
 
 ```console
 $ lgtmaybe review --provider ollama --model qwen3.6:27b --api-base http://localhost:11434
