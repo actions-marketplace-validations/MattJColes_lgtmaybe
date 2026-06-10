@@ -179,7 +179,9 @@ class ReviewConfig(_Strict):
     reflect: bool = True
     # Review lenses to run. Each is asked in its own concurrent LLM call and the
     # findings are merged + deduped. Defaults to all of them; narrow it to trade
-    # thoroughness for fewer calls.
+    # thoroughness for fewer calls. `default=` (not default_factory) on purpose:
+    # pydantic copies it per instance, and only a plain default reaches the JSON
+    # schema that docs/generate_reference.py renders.
     categories: list[ReviewCategory] = Field(default=list(ReviewCategory))
     # Constrain model output to the findings JSON schema via litellm
     # response_format (provider-native JSON mode). Keeps models from returning

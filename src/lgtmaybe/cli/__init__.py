@@ -243,7 +243,9 @@ def _post_failure(github: GitHubGateway, exc: Exception) -> None:
 def pr_url_from_event(event: dict[str, Any]) -> str:
     """Build the PR URL from a pull_request(_target) event payload.
 
-    Uses ``GITHUB_SERVER_URL`` so it works on GitHub Enterprise too.
+    Honours ``GITHUB_SERVER_URL`` for the link, though only github.com is
+    supported end to end — the URL parser and the REST gateway both speak to
+    api.github.com.
     """
     server = os.environ.get("GITHUB_SERVER_URL", "https://github.com").rstrip("/")
     repo = event["repository"]["full_name"]
@@ -272,7 +274,7 @@ def action_inputs() -> dict[str, str | None]:
         "temperature": get("TEMPERATURE"),
         "num_ctx": get("NUM_CTX"),
         "max_input_tokens": get("MAX_INPUT_TOKENS"),
-        "config_path": os.environ.get("INPUT_CONFIG_PATH") or ".lgtmaybe.yml",
+        "config_path": get("CONFIG_PATH"),
     }
 
 
