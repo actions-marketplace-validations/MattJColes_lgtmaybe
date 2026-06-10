@@ -98,8 +98,11 @@ pattern, event bus, plugin framework.
      fork-PR exposure (already handled by `pull_request_target` + no checkout).
    - **CLI track** — PyPI packaging; a local `lgtmaybe review` of your `git` diff
      (prints findings, no GitHub) for local dev. Diffs the branch against the
-     remote default branch (`--base` overrides; `--working` reviews uncommitted
-     changes). Output `--format human` (default) / `json` (`--json`) / `agent`
+     remote primary branch — base resolution `origin/HEAD` → `origin/main` →
+     `origin/master` → `main` → `master` (`--base` overrides); `--working`
+     reviews the whole worktree (branch commits + uncommitted edits) against the
+     merge-base with that same base; commit subjects vs the base feed the intent
+     lens in both modes. Output `--format human` (default) / `json` (`--json`) / `agent`
      (correction instructions an AI coding agent can read and apply). Non-secret
      defaults (provider, model, severity floor, caps) persist in a user-level
      config — `lgtmaybe config init|show|get|set|path` (`config/store.py`,

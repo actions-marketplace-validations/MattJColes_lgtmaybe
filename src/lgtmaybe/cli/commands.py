@@ -76,14 +76,15 @@ from lgtmaybe.config.loader import load_config
 @click.option(
     "--base",
     default=None,
-    help="Base ref to diff the current branch against "
-    "(default: the remote's default branch, else main)",
+    help="Base ref to diff against (default: the remote's primary branch — "
+    "origin/HEAD, else origin/main / origin/master, else a local main/master)",
 )
 @click.option(
     "--working",
     is_flag=True,
     default=False,
-    help="Review uncommitted working-tree changes instead of the branch vs base",
+    help="Review the whole worktree — branch commits plus uncommitted edits — "
+    "against the base, instead of only the committed branch changes",
 )
 @click.option(
     "--format",

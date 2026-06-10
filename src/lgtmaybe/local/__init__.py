@@ -22,38 +22,47 @@ def local_pr_context(
     working: bool = False,
     cwd: Path | None = None,
 ) -> PRContext:
-    """Return a PRContext for the local repo.
+    """Return a PRContext for the local repo, compared against the remote primary branch.
 
-    ``working`` reviews uncommitted changes (``git diff HEAD``). Otherwise the
-    current branch is diffed against ``base`` (``git diff <base>...HEAD``);
-    ``base`` defaults to the remote's default branch, falling back to ``main``.
-    Raises ValueError when git is missing or this is not a git repository.
+    Both modes resolve the same base — the remote's default branch
+    (``origin/HEAD``, else the first of ``origin/main``/``origin/master``/
+    ``main``/``master`` that exists), overridable with ``base``:
+
+    - default: the branch's committed changes (``git diff <base>...HEAD``).
+    - ``working``: the whole worktree — branch commits **plus** uncommitted
+      edits — diffed against the merge-base with ``base``, so commits that only
+      exist on the remote don't show up as reversed changes.
+
+    Commit subjects between the base and HEAD are collected in both modes (the
+    stated intent for the intent lens). Raises ValueError when git is missing or
+    this is not a git repository.
     """
     _ensure_repo(cwd)
 
+    base_ref = base or _default_base(cwd)
+
     if working:
-        base_ref = "HEAD"
-        spec = "HEAD"
+        merge_base = _git(cwd, "merge-base", base_ref, "HEAD").strip()
+        spec = merge_base
+        base_sha = merge_base
     else:
-        base_ref = base or _default_base(cwd)
         spec = f"{base_ref}...HEAD"
+        base_sha = _git(cwd, "rev-parse", base_ref).strip()
 
     diff = _git(cwd, "diff", spec)
     name_output = _git(cwd, "diff", "--name-only", spec)
     changed_files = [line for line in name_output.splitlines() if line]
 
-    # Commit names are the local stated intent — the CLI counterpart to a PR
-    # title — feeding the intent lens. Uncommitted changes state no intent yet.
-    commit_messages = [] if working else _commit_subjects(cwd, base_ref)
-
     return PRContext(
         diff=diff,
         changed_files=changed_files,
-        base_sha=_git(cwd, "rev-parse", base_ref).strip(),
+        base_sha=base_sha,
         head_sha=_git(cwd, "rev-parse", "HEAD").strip(),
         repo=_repo_name(cwd),
         pr_number=0,
-        commit_messages=commit_messages,
+        # Commit names are the local stated intent — the CLI counterpart to a PR
+        # title — feeding the intent lens. Empty when HEAD sits on the base.
+        commit_messages=_commit_subjects(cwd, base_ref),
     )
 
 
@@ -92,11 +101,30 @@ def _commit_subjects(cwd: Path | None, base_ref: str) -> list[str]:
 
 
 def _default_base(cwd: Path | None) -> str:
-    """The remote's default branch (e.g. origin/main), or 'main' if unknown."""
+    """The remote primary branch, falling back through local names.
+
+    ``origin/HEAD`` is only set by a normal clone of a non-empty repo; after
+    ``git remote add`` (or cloning an empty repo) it is missing, and a bare
+    ``main`` fallback would silently compare against a possibly stale LOCAL
+    main. So prefer the remote-tracking refs before any local branch, and end
+    at HEAD (an empty comparison) rather than failing.
+    """
     try:
         return _git(cwd, "rev-parse", "--abbrev-ref", "origin/HEAD").strip()
     except ValueError:
-        return "main"
+        pass
+    for candidate in ("origin/main", "origin/master", "main", "master"):
+        if _ref_exists(cwd, candidate):
+            return candidate
+    return "HEAD"
+
+
+def _ref_exists(cwd: Path | None, ref: str) -> bool:
+    try:
+        _git(cwd, "rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}")
+    except ValueError:
+        return False
+    return True
 
 
 def _repo_name(cwd: Path | None) -> str:

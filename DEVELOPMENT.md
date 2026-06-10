@@ -63,8 +63,9 @@ de-duplicates the findings before the reflection pass. `ReviewConfig.categories`
 selects which lenses run (default: all eight) — it's a `.lgtmaybe.yml` knob, not a
 CLI flag. Narrowing it means fewer model calls. The `intent` lens reads the PR's
 stated intent (title/description/commit names on GitHub; local `git log` commit
-names on the CLI) and is skipped automatically when nothing states an intent —
-e.g. `--working` on uncommitted changes.
+names on the CLI, in both branch and `--working` mode) and is skipped
+automatically when nothing states an intent — e.g. no commits beyond the base
+branch yet.
 
 ## Running locally
 
@@ -89,29 +90,27 @@ pushed or have an open PR. It runs `git diff <base>...HEAD`, where the three-dot
 form means "everything this branch added since it forked off `<base>`" (it uses
 the merge-base, so changes that landed on mainline meanwhile are ignored).
 
-`--base` chooses what mainline is. It defaults to `origin/HEAD`, falling back to
-the literal `main`:
+`--base` chooses what mainline is. It defaults to the **remote primary branch**,
+resolved as `origin/HEAD` → `origin/main` → `origin/master` → local `main` →
+local `master` (→ `HEAD`, an empty comparison, when none exist):
 
 ```bash
 uv run lgtmaybe review --base main      # diff against your LOCAL main
 uv run lgtmaybe review --base develop   # forked off a different branch
 uv run lgtmaybe review --base 1a2b3c4   # or an exact commit
-uv run lgtmaybe review --working        # uncommitted changes, not yet committed
+uv run lgtmaybe review --working        # whole worktree (commits + uncommitted) vs base
 ```
 
-Two cases need an explicit `--base`:
-
-- You have an `origin` remote but haven't fetched — the default `origin/HEAD` can
-  be **stale**; pass `--base main` to use your local mainline.
-- There's no `origin` **and** no local branch named `main` — the default can't
-  resolve and you'll get a clear `git` error; pass your actual base branch.
+One case needs an explicit `--base`: you have an `origin` remote but haven't
+fetched — the remote-tracking refs can be **stale**; pass `--base main` to use
+your local mainline (or just `git fetch` first).
 
 Useful flags for local iteration (full list: `uv run lgtmaybe review --help`):
 
 | Flag | What it does |
 |---|---|
-| `--base <ref>` | Diff the branch against `<ref>` (default: remote default branch, else `main`) |
-| `--working` | Review uncommitted working-tree changes instead of branch-vs-base |
+| `--base <ref>` | Diff against `<ref>` (default: remote primary branch — `origin/HEAD` → `origin/main` → `origin/master` → `main` → `master`) |
+| `--working` | Review the whole worktree (branch commits + uncommitted edits) against the base |
 | `--json` / `--format agent` | Machine-readable output (JSON array, or correction instructions for an AI agent) |
 | `--min-severity medium` | Only surface findings at/above a severity |
 | `--max-files 10` | Cap how many changed files are reviewed |

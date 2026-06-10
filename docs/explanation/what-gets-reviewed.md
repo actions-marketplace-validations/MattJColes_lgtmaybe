@@ -235,9 +235,10 @@ Where the stated intent comes from:
 
 - **On a GitHub PR** — the PR title, description, and the first line of each
   commit message, fetched via the API.
-- **On the CLI** — the commit names from your local `git log` against the base
-  branch, so the lens works without GitHub. `--working` (uncommitted changes)
-  states no intent yet, so the lens is skipped.
+- **On the CLI** — the commit names from your local `git log` against the
+  remote primary branch, so the lens works without GitHub — in `--working`
+  mode too. With no commits beyond the base yet, nothing states an intent and
+  the lens is skipped.
 
 The intent text is attacker-controlled on a fork PR, so it is treated exactly
 like the diff: secrets are redacted, it is wrapped as untrusted data with
@@ -323,9 +324,11 @@ the PR as a short comment.
 
 `lgtmaybe review` runs the same pipeline over your local `git` diff and prints
 the findings — it posts nothing and needs no GitHub token. By default it diffs
-the current branch against the default branch; `--working` reviews uncommitted
-edits and `--base <ref>` picks a different base. The default output is a readable
-listing followed by the summary line:
+the current branch against the remote primary branch (`origin/HEAD`, falling
+back to `origin/main`/`origin/master`, then a local `main`/`master`);
+`--working` reviews the whole worktree — branch commits plus uncommitted edits —
+against that same base, and `--base <ref>` picks a different base. The default
+output is a readable listing followed by the summary line:
 
 ```console
 $ lgtmaybe review --provider ollama --model qwen3.6:27b --api-base http://localhost:11434

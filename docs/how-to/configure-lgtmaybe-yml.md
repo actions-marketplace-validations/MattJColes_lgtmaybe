@@ -110,10 +110,11 @@ usage).
 
 The `intent` lens checks the diff against the PR's stated intent — title,
 description, and commit names on GitHub; your `git log` commit names on the
-CLI. When nothing states an intent (e.g. `--working` on uncommitted changes),
-it is skipped automatically, so it never costs an extra call. It is also the
-only lens that sends the PR title/description/commit names to the provider —
-drop it from `categories` if you don't want that text sent at all.
+CLI (in both branch and `--working` mode). When nothing states an intent (e.g.
+no commits beyond the base branch yet), it is skipped automatically, so it
+never costs an extra call. It is also the only lens that sends the PR
+title/description/commit names to the provider — drop it from `categories` if
+you don't want that text sent at all.
 
 ```yaml
 categories:

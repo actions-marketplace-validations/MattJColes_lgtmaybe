@@ -82,7 +82,7 @@ A fuller walkthrough with example output is in
 ## Quick start (60 seconds, local, zero cost)
 
 From inside a git repo, on a branch with changes, review your diff against the
-default branch and print the findings:
+remote primary branch and print the findings:
 
 ```bash
 pip install lgtmaybe
