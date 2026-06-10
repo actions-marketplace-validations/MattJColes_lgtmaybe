@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from lgtmaybe.engine.compress import batch_files, count_tokens, expand_hunks
+from lgtmaybe.engine.compress import _token_encoder, batch_files, count_tokens, expand_hunks
 
 # ---------------------------------------------------------------------------
 # helpers
@@ -10,6 +10,17 @@ from lgtmaybe.engine.compress import batch_files, count_tokens, expand_hunks
 
 _SMALL_DIFF = "@@ -1,3 +1,4 @@\n context\n+added line\n context\n"
 _FILE_BLOCK = "diff --git a/{name} b/{name}\n{diff}"
+
+
+def test_token_encoder_is_cached() -> None:
+    """The tiktoken encoder is built once and reused across count_tokens calls
+    (it is loaded once per file during batching — building it each time is slow)."""
+    assert _token_encoder() is _token_encoder()
+
+
+def test_count_tokens_is_stable_and_positive() -> None:
+    assert count_tokens("hello world") == count_tokens("hello world")
+    assert count_tokens("x") >= 1
 
 
 def _make_diff(n_files: int, lines_per_file: int = 5) -> list[tuple[str, str]]:
