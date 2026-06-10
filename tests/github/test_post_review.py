@@ -119,6 +119,50 @@ def test_post_review_updates_existing_review_on_second_call() -> None:
 
 
 @respx.mock
+def test_post_review_finds_existing_review_past_first_page() -> None:
+    """The marker review is found even when it sits beyond the first page of
+    reviews (GitHub returns 30 per page), so a busy PR still gets its review
+    updated in place rather than duplicated."""
+    existing_review_id = 99
+    page1 = [{"id": i, "body": f"human review {i}"} for i in range(30)]
+    page2 = [{"id": existing_review_id, "body": f"Old summary {MARKER}"}]
+    page2_url = f"{REVIEWS_URL}?page=2"
+
+    # One route serves both pages in order: a respx URL pattern without a query
+    # string matches any query, so registering page 2 separately would be
+    # shadowed by the page-1 route.
+    respx.route(method="GET", url=REVIEWS_URL).mock(
+        side_effect=[
+            httpx.Response(200, json=page1, headers={"Link": f'<{page2_url}>; rel="next"'}),
+            httpx.Response(200, json=page2),
+        ]
+    )
+
+    update_url = f"{REVIEWS_URL}/{existing_review_id}"
+    updated_bodies: list[dict[object, object]] = []
+
+    def capture_update(request: httpx.Request) -> httpx.Response:
+        updated_bodies.append(json.loads(request.content))
+        return httpx.Response(200, json={"id": existing_review_id})
+
+    create_calls: list[httpx.Request] = []
+
+    def capture_create(request: httpx.Request) -> httpx.Response:
+        create_calls.append(request)
+        return httpx.Response(201, json={"id": 100})
+
+    respx.route(method="PUT", url=update_url).mock(side_effect=capture_update)
+    respx.route(method="POST", url=REVIEWS_URL).mock(side_effect=capture_create)
+
+    gw = RestGitHubGateway(repo=REPO, pr_number=PR_NUMBER, token=TOKEN, client=httpx.Client())
+    gw.post_review(FINDINGS, "New summary", diff=SAMPLE_DIFF)
+
+    assert len(create_calls) == 0, "must not duplicate a review that exists on a later page"
+    assert len(updated_bodies) == 1
+    assert MARKER in str(updated_bodies[0].get("body", ""))
+
+
+@respx.mock
 def test_post_issue_comment_posts_to_issues_endpoint() -> None:
     """post_issue_comment posts a standalone comment to the PR conversation."""
     posted: list[dict[object, object]] = []
