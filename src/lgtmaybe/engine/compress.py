@@ -16,6 +16,7 @@ if TYPE_CHECKING:
     class _Encoder(Protocol):
         def encode(self, text: str) -> list[int]: ...
 
+
 _MAX_CONTEXT_LINES = 20
 _MIN_CONTEXT_LINES = 0
 # Scale: remaining_tokens / _SCALE gives context lines, capped at _MAX_CONTEXT_LINES.
