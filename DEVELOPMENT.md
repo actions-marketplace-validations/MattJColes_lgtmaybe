@@ -56,12 +56,15 @@ fetch → redact → split + skip generated → file cap → expand hunks → ba
 
 The fan-out is the key non-obvious bit: the system prompt is composed per
 `ReviewCategory` (security, correctness, deprecation, tests, documentation,
-performance, complexity), and
+performance, complexity, intent), and
 the engine issues **one concurrent model call per category per batch** (a
 `ThreadPoolExecutor` over the synchronous provider port), then merges and
 de-duplicates the findings before the reflection pass. `ReviewConfig.categories`
-selects which lenses run (default: all seven) — it's a `.lgtmaybe.yml` knob, not a
-CLI flag. Narrowing it means fewer model calls.
+selects which lenses run (default: all eight) — it's a `.lgtmaybe.yml` knob, not a
+CLI flag. Narrowing it means fewer model calls. The `intent` lens reads the PR's
+stated intent (title/description/commit names on GitHub; local `git log` commit
+names on the CLI) and is skipped automatically when nothing states an intent —
+e.g. `--working` on uncommitted changes.
 
 ## Running locally
 
@@ -160,7 +163,8 @@ A few things worth knowing when a local run misbehaves:
   can therefore "succeed" with zero findings even though every call struggled —
   check the debug log, and prefer a model that follows the structured-output
   instruction. `parse.py` tolerates fenced JSON but not arbitrary prose.
-- **Fan-out makes N calls** (one per category, five by default). They run
+- **Fan-out makes N calls** (one per category — all eight by default, seven when
+  nothing states an intent). They run
   **concurrently for cloud** providers but **serially for ollama** (a single
   ollama instance serves one request at a time, so concurrency would only cause
   timeouts). A slow local model therefore takes ≈ `categories × per-call time` —

@@ -20,11 +20,12 @@ actually changed.
 
 Reviews surface the things you'd want a careful reviewer to catch:
 
-- **Logic and correctness bugs** — edge cases, null/None dereferences, off-by-one and boundary errors, mismatched or inverted ranges, and unhandled error paths.
-- **Security vulnerabilities** — an OWASP-aligned sweep: injection, XSS, hardcoded secrets, broken authn/authz, path traversal, SSRF, insecure deserialization, weak crypto, resource/DoS safety, and secrets or PII (passwords, tokens, SSNs, card data) leaking into logs.
-- **Missing tests** — changed code paths shipped without a test, flagged with a suggested test to drop in.
-- **Documentation gaps** — public APIs added without a docstring, or names that contradict what the code does.
-- **Deprecated and end-of-life code** — deprecated APIs and end-of-life or vulnerable dependencies, flagged when the diff shows them (with the modern replacement suggested where known).
+- **Logic and correctness bugs** — edge cases, null/None dereferences, off-by-one and boundary errors, mismatched or inverted ranges, unhandled error paths, races and TOCTOU, missed `await`s, and numeric or timezone bugs.
+- **Security vulnerabilities** — an OWASP-aligned sweep: injection, XSS, CSRF and open redirects, hardcoded secrets, broken authn/authz (including JWT pitfalls), path traversal, unrestricted uploads, SSRF, insecure deserialization and XXE, mass assignment, weak crypto, resource/DoS safety (including ReDoS), secrets or PII (passwords, tokens, SSNs, card data) leaking into logs, and CI/IaC misconfiguration.
+- **Missing or weak tests** — changed code paths shipped without a test (flagged with a suggested test to drop in), and tests that don't really test: assertion-free, over-mocked, or sleep-based.
+- **Documentation gaps and stale docs** — public APIs added without a docstring, names that contradict what the code does, and docstrings or comments the change just made wrong.
+- **Deprecated and end-of-life code** — deprecated APIs, end-of-life or vulnerable dependencies, and typosquat-looking additions, flagged when the diff shows them (with the modern replacement suggested where known).
+- **Intent** — does the PR do what it says? The PR title, description, and commit names (or your local `git log` commit names on the CLI) are compared against the diff, flagging out-of-scope hunks, contradictions, and promised behaviour that never lands.
 
 Every finding is graded from `info` up to `critical`, so you can set the
 severity floor that matters to you, and each one lands as an inline comment on

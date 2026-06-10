@@ -13,7 +13,7 @@ The user-facing configuration model. Fields map directly to `.lgtmaybe.yml` keys
 | Field | Type | Required | Default | Description |
 |---|---|---|---|---|
 | `api_base` | string / null | No | `null` | Api Base |
-| `categories` | list[`complexity` / `correctness` / `deprecation` / `documentation` / `performance` / `security` / `tests`] | No | `['security', 'correctness', 'deprecation', 'tests', 'documentation', 'performance', 'complexity']` | Categories |
+| `categories` | list[`complexity` / `correctness` / `deprecation` / `documentation` / `intent` / `performance` / `security` / `tests`] | No | `['security', 'correctness', 'deprecation', 'tests', 'documentation', 'performance', 'complexity', 'intent']` | Categories |
 | `context_lines` | integer | No | `20` | Context Lines |
 | `exclude_paths` | list[string] | No | `[]` | Exclude Paths |
 | `include_paths` | list[string] | No | `[]` | Include Paths |
@@ -84,11 +84,14 @@ Everything the engine needs about a pull request. Fetched via the GitHub REST AP
 |---|---|---|---|---|
 | `base_sha` | string | Yes | — | Base Sha |
 | `changed_files` | list[string] | Yes | — | Changed Files |
+| `commit_messages` | list[string] | No | `[]` | Commit Messages |
+| `description` | string | No | `` | Description |
 | `diff` | string | Yes | — | Diff |
 | `file_contents` | object | No | — | File Contents |
 | `head_sha` | string | Yes | — | Head Sha |
 | `pr_number` | integer | Yes | — | Pr Number |
 | `repo` | string | Yes | — | Repo |
+| `title` | string | No | `` | Title |
 
 ## Raw JSON schemas
 
@@ -114,7 +117,7 @@ The canonical machine-readable schemas. These are the source of truth for provid
       "type": "string"
     },
     "ReviewCategory": {
-      "description": "A single review lens. The engine asks for each one in its own LLM call.",
+      "description": "A single review lens. The engine asks for each one in its own LLM call.\n\n``intent`` checks the diff against the PR's stated intent (title, description,\ncommit messages); it only runs when the context carries some stated intent.",
       "enum": [
         "security",
         "correctness",
@@ -122,7 +125,8 @@ The canonical machine-readable schemas. These are the source of truth for provid
         "tests",
         "documentation",
         "performance",
-        "complexity"
+        "complexity",
+        "intent"
       ],
       "title": "ReviewCategory",
       "type": "string"
@@ -163,7 +167,8 @@ The canonical machine-readable schemas. These are the source of truth for provid
         "tests",
         "documentation",
         "performance",
-        "complexity"
+        "complexity",
+        "intent"
       ],
       "items": {
         "$ref": "#/$defs/ReviewCategory"
@@ -382,6 +387,18 @@ The canonical machine-readable schemas. These are the source of truth for provid
       "title": "Changed Files",
       "type": "array"
     },
+    "commit_messages": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Commit Messages",
+      "type": "array"
+    },
+    "description": {
+      "default": "",
+      "title": "Description",
+      "type": "string"
+    },
     "diff": {
       "title": "Diff",
       "type": "string"
@@ -403,6 +420,11 @@ The canonical machine-readable schemas. These are the source of truth for provid
     },
     "repo": {
       "title": "Repo",
+      "type": "string"
+    },
+    "title": {
+      "default": "",
+      "title": "Title",
       "type": "string"
     }
   },

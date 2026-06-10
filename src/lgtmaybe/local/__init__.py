@@ -42,6 +42,10 @@ def local_pr_context(
     name_output = _git(cwd, "diff", "--name-only", spec)
     changed_files = [line for line in name_output.splitlines() if line]
 
+    # Commit names are the local stated intent — the CLI counterpart to a PR
+    # title — feeding the intent lens. Uncommitted changes state no intent yet.
+    commit_messages = [] if working else _commit_subjects(cwd, base_ref)
+
     return PRContext(
         diff=diff,
         changed_files=changed_files,
@@ -49,6 +53,7 @@ def local_pr_context(
         head_sha=_git(cwd, "rev-parse", "HEAD").strip(),
         repo=_repo_name(cwd),
         pr_number=0,
+        commit_messages=commit_messages,
     )
 
 
@@ -78,6 +83,12 @@ def _ensure_repo(cwd: Path | None) -> None:
         raise ValueError("not a git repository (run lgtmaybe from inside one)") from exc
     if inside != "true":
         raise ValueError("not a git repository (run lgtmaybe from inside one)")
+
+
+def _commit_subjects(cwd: Path | None, base_ref: str) -> list[str]:
+    """Subject lines of the branch's commits (newest first), excluding *base_ref*."""
+    log = _git(cwd, "log", "--format=%s", f"{base_ref}..HEAD")
+    return [line for line in log.splitlines() if line.strip()]
 
 
 def _default_base(cwd: Path | None) -> str:

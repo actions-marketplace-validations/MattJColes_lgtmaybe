@@ -123,6 +123,9 @@ class RestGitHubGateway(GitHubGateway):
             repo=self._repo,
             pr_number=self._pr_number,
             file_contents=file_contents,
+            title=meta.get("title") or "",
+            description=meta.get("body") or "",
+            commit_messages=self._fetch_commit_subjects(),
         )
 
     def post_review(
@@ -221,6 +224,36 @@ class RestGitHubGateway(GitHubGateway):
         except httpx.HTTPError:
             return None
         return resp.text
+
+    def _fetch_commit_subjects(self) -> list[str]:
+        """First line of each commit message on the PR (the commit "name").
+
+        Stated-intent context for the engine's intent lens. Auxiliary, so it
+        degrades like file contents: any fetch error returns [] (the intent lens
+        still has the PR title/description) rather than failing the review.
+        """
+        url: str | None = (
+            f"https://api.github.com/repos/{self._repo}/pulls/{self._pr_number}"
+            "/commits?per_page=100"
+        )
+        subjects: list[str] = []
+        try:
+            while url is not None:
+                resp = self._client.get(
+                    url,
+                    headers={**self._headers, "Accept": "application/vnd.github+json"},
+                    timeout=_TIMEOUT,
+                )
+                resp.raise_for_status()
+                for item in resp.json():
+                    message: str = (item.get("commit") or {}).get("message") or ""
+                    first_line = message.splitlines()[0].strip() if message else ""
+                    if first_line:
+                        subjects.append(first_line)
+                url = self._next_link(resp)
+        except httpx.HTTPError:
+            return []
+        return subjects
 
     def _fetch_all_files(self, first_url: str) -> list[str]:
         """Follow Link rel=next pagination and collect all filenames."""

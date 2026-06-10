@@ -89,7 +89,9 @@ pattern, event bus, plugin framework.
    - **Track C** — hardening: **prompt-injection defense** (PR text trying to
      steer the reviewer — `engine/injection.py` wraps the diff as untrusted data
      **and neutralises forged `DIFF_START`/`DIFF_END` delimiters** so an attacker
-     diff can't break out of the data block), **secret redaction in diffs before
+     diff can't break out of the data block; the stated-intent block gets the
+     same treatment via `wrap_intent`, with both marker families neutralised in
+     both blocks), **secret redaction in diffs before
      they leave for the LLM** (`engine/redact.py` covers AWS/OpenAI/GitHub
      (classic + fine-grained)/Slack/Google/Stripe keys, PEM private-key blocks,
      and quoted password / `Authorization` / connection-string credentials),
@@ -126,12 +128,20 @@ pattern, event bus, plugin framework.
      the CLI exits non-zero (`ClickException`) — never fails silently.
    - **Per-category fan-out:** the system prompt is composed per `ReviewCategory`
      (security, correctness, deprecation, tests, documentation, performance,
-     complexity; `engine/prompt.py`)
+     complexity, intent; `engine/prompt.py`) — each lens gets its **own worked
+     example** (with a real hunk header, teaching the line-number arithmetic) —
      and the engine runs each category as its own **concurrent** `provider.complete`
      call per batch (a `ThreadPoolExecutor` over the sync port — concurrent for
      cloud, serial for ollama), then **merges and de-dupes** the findings
      (`engine._dedupe`, keyed on path/line/side/title) before reflection.
-     `ReviewConfig.categories` selects the lenses (default: all seven).
+     `ReviewConfig.categories` selects the lenses (default: all eight).
+   - **Intent lens:** "does the PR do what it says?" — `PRContext` carries the
+     stated intent (`title`, `description`, `commit_messages`): PR title/body +
+     commit names via the REST gateway, or `git log` commit names from the local
+     CLI (`local/_commit_subjects`), so it works without GitHub. The engine
+     redacts the intent text, wraps it via `injection.wrap_intent` (its own
+     neutralised `INTENT_START`/`INTENT_END` block), and sends it **only on the
+     intent call**; with no stated intent the lens is skipped (logged, no notice).
    - **Self-reflection:** after merge/dedupe, `engine/reflect.py` asks the
      provider to audit its own findings for false positives and drops the ones it
      marks low-confidence. The verdict is structured (`ReflectionResult` —
@@ -204,21 +214,29 @@ Two distinct concerns, kept separate:
   with no checkout.
 - **What the reviewer looks for** (so it catches issues in *your* PR): the system
   prompt (`engine/prompt.py`) carries an **OWASP-aligned security checklist** —
-  injection, XSS, hardcoded secrets, broken authn/authz, path traversal, SSRF,
-  insecure deserialization, weak crypto, sensitive-data exposure (secrets/PII —
-  passwords, tokens, SSNs, card data — leaking into logs), resource/DoS safety —
-  graded `high`/`critical`. Alongside security it also scans for
+  injection, XSS, CSRF/open redirect, hardcoded secrets, broken authn/authz
+  (incl. JWT/session pitfalls), path traversal, unrestricted file upload, SSRF,
+  insecure deserialization/XXE, mass assignment, weak crypto, sensitive-data
+  exposure (secrets/PII — passwords, tokens, SSNs, card data — leaking into
+  logs), CI/IaC misconfiguration (workflow script injection, unpinned actions,
+  broad IAM, public buckets, privileged containers), resource/DoS safety (incl.
+  ReDoS) — graded `high`/`critical`. Alongside security it also scans for
   **correctness/logic bugs** (edge cases, null/None derefs, off-by-one and
-  boundary errors, mismatched/inverted ranges, unhandled error paths;
-  "Correctness & logic" section), **missing tests** for changed code paths
-  (flagged `low`/`medium`, with a runnable test in the finding's `suggestion`
-  field; "Test coverage" section), **documentation gaps** on public APIs
-  (`info`/`low`, restrained to public surfaces; "Documentation" section),
-  **performance regressions** (N+1 queries, accidentally quadratic work, redundant
-  computation, hot-path allocations/blocking I/O, unbounded queries; graded by
-  impact up to `high`; "Performance" section), and needless **complexity** (deep
+  boundary errors, mismatched/inverted ranges, unhandled error paths, races /
+  TOCTOU / async mistakes, numeric and date/time bugs, aliasing & mutation;
+  "Correctness & logic" section), **missing or weak tests** for changed code
+  paths (flagged `low`/`medium`, with a runnable test in the finding's
+  `suggestion` field; weak = assertion-free / over-mocked / sleep-based; "Test
+  coverage" section), **documentation gaps and stale docs** on public APIs
+  (`info`/`low`, up to `medium` for a docstring/comment the change made wrong;
+  "Documentation" section), **performance regressions** (N+1 queries,
+  accidentally quadratic work, redundant computation, hot-path
+  allocations/blocking I/O, unbounded queries, caches without eviction; graded by
+  impact up to `high`; "Performance" section), needless **complexity** (deep
   nesting / high cyclomatic complexity, over-long low-cohesion functions,
-  duplicated logic, dead code; `info`/`medium`, restrained; "Complexity" section).
+  duplicated logic, dead code; `info`/`medium`, restrained; "Complexity"
+  section), and **intent mismatches** (out-of-scope hunks, contradictions,
+  unfulfilled claims vs the stated intent; `medium`/`high`; "Intent" section).
 
 Both are covered by tests in `tests/engine/` (`test_redact.py`, `test_injection.py`,
 `test_prompt.py`, `test_parse.py`, `test_engine.py`) and `tests/github/test_diff.py`.
@@ -231,8 +249,14 @@ health"; covered by `test_prompt.py`). Every scan category is asserted in
 `test_prompt.py` (`test_prompt_asks_for_logic_and_edge_case_review`,
 `test_prompt_asks_for_test_coverage`, `test_prompt_asks_for_documentation_review`,
 `test_prompt_names_pii_and_secrets_in_logs`, `test_prompt_asks_for_performance_review`,
-`test_prompt_asks_for_complexity_review`) — extend those when you change the
-prompt's checklist.
+`test_prompt_asks_for_complexity_review`, `test_prompt_asks_for_intent_review`,
+plus the topic-coverage block: concurrency/races, numeric/datetime, CSRF /
+redirect / XXE / mass assignment, CI/IaC, weak tests, stale docs, leaks,
+typosquats) — extend those when you change the prompt's checklist. Prompt
+mechanics are guarded too: every focused prompt carries exactly one
+category-matched worked example with a real hunk header, the contract explains
+the `line`/`side` arithmetic, and the injection wrapper's task restatement must
+match the `{"findings": []}` object shape (`test_injection.py`).
 
 ## Code-quality & dependency hygiene
 
@@ -269,8 +293,10 @@ Split by whether it can be deterministic, because that decides where it lives:
   on a large "vibe-coded" diff and still catches the planted bugs (`--min-recall
   0.2`). The fixtures plant security + correctness bugs **and** blatant performance
   (N+1 / quadratic) + complexity (deep nesting / duplication) issues, so the live
-  run exercises all seven review lenses, not just security/correctness — the
-  per-lens coverage is guarded in `tests/evals/test_fixtures.py`. Real-spend
-  hosted-provider e2e remains label-gated in `action-e2e.yml`.
+  run exercises all seven code lenses, not just security/correctness — the
+  per-lens coverage is guarded in `tests/evals/test_fixtures.py`. (The eighth
+  lens, intent, needs a stated intent the fixtures don't carry, so the engine
+  skips it there by design.) Real-spend hosted-provider e2e remains label-gated
+  in `action-e2e.yml`.
 
 [litellm]: https://github.com/BerriAI/litellm

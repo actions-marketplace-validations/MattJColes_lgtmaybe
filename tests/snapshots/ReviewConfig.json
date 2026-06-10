@@ -15,7 +15,7 @@
       "type": "string"
     },
     "ReviewCategory": {
-      "description": "A single review lens. The engine asks for each one in its own LLM call.",
+      "description": "A single review lens. The engine asks for each one in its own LLM call.\n\n``intent`` checks the diff against the PR's stated intent (title, description,\ncommit messages); it only runs when the context carries some stated intent.",
       "enum": [
         "security",
         "correctness",
@@ -23,7 +23,8 @@
         "tests",
         "documentation",
         "performance",
-        "complexity"
+        "complexity",
+        "intent"
       ],
       "title": "ReviewCategory",
       "type": "string"
@@ -64,7 +65,8 @@
         "tests",
         "documentation",
         "performance",
-        "complexity"
+        "complexity",
+        "intent"
       ],
       "items": {
         "$ref": "#/$defs/ReviewCategory"

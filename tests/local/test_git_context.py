@@ -70,3 +70,27 @@ def test_repo_name_from_remote(repo: Path) -> None:
 def test_not_a_git_repo_raises(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="git"):
         local_pr_context(base="main", working=False, cwd=tmp_path)
+
+
+def test_branch_mode_collects_commit_subjects(repo: Path) -> None:
+    """Commit names are the CLI's stated intent — the local counterpart to a PR
+    title — so the intent lens works without GitHub."""
+    (repo / "app.py").write_text("def f():\n    return 2\n")
+    _git(repo, "commit", "-am", "feat: return two")
+    (repo / "app.py").write_text("def f():\n    return 3\n")
+    _git(repo, "commit", "-am", "fix: actually return three")
+
+    ctx = local_pr_context(base="main", working=False, cwd=repo)
+
+    # Newest first, branch commits only — the base commit is not intent.
+    assert ctx.commit_messages == ["fix: actually return three", "feat: return two"]
+    assert ctx.title == ""  # no PR title locally
+
+
+def test_working_mode_has_no_commit_subjects(repo: Path) -> None:
+    """Uncommitted changes state no intent yet; the intent lens stays silent."""
+    (repo / "app.py").write_text("def f():\n    return 99\n")
+
+    ctx = local_pr_context(working=True, cwd=repo)
+
+    assert ctx.commit_messages == []

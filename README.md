@@ -19,21 +19,28 @@ comments on what the PR actually changed, not the whole repository.
 Reviews surface the kind of thing a careful reviewer would flag, each graded from
 `info` up to `critical`: **logic and correctness bugs** (edge cases, null
 dereferences, off-by-one and boundary errors, mismatched ranges, unhandled error
-paths), **missing tests** for changed code paths (with a suggested test to drop
-in), and **undocumented public APIs**. The model is prompted with an
-**OWASP-aligned security checklist** — injection, XSS, hardcoded secrets, broken
-authn/authz, path traversal, SSRF, insecure deserialization, weak crypto,
-resource/DoS safety, and secrets or PII (passwords, tokens, SSNs, card data)
-leaking into logs — so security findings are first-class, not an afterthought. It
-also flags **factually outdated** code — deprecated APIs and end-of-life or
-vulnerable dependencies — when the diff shows them, **performance regressions**
-(N+1 queries, accidentally quadratic work, redundant computation, allocations or
-blocking I/O on hot paths, unbounded queries), and needless **complexity** (deep
-nesting / high cyclomatic complexity, over-long functions, duplicated logic).
-Generated and non-reviewable
-files (lockfiles, minified bundles, vendored directories, binaries) are skipped
-automatically, and secrets are redacted from the diff before it is sent to the
-model.
+paths, races and TOCTOU, missed `await`s, numeric and timezone bugs), **missing
+or weak tests** for changed code paths (with a suggested test to drop in), and
+**undocumented public APIs or stale docs** the change just made wrong. The model
+is prompted with an **OWASP-aligned security checklist** — injection, XSS, CSRF
+and open redirects, hardcoded secrets, broken authn/authz (including JWT
+pitfalls), path traversal, unrestricted uploads, SSRF, insecure deserialization
+and XXE, mass assignment, weak crypto, resource/DoS safety (including ReDoS),
+secrets or PII (passwords, tokens, SSNs, card data) leaking into logs, and CI/IaC
+misconfiguration (workflow script injection, unpinned actions, broad IAM, public
+buckets) — so security findings are first-class, not an afterthought. It also
+flags **factually outdated** code — deprecated APIs, end-of-life or vulnerable
+dependencies, typosquat-looking additions — when the diff shows them,
+**performance regressions** (N+1 queries, accidentally quadratic work, redundant
+computation, allocations or blocking I/O on hot paths, unbounded queries, caches
+that never evict), and needless **complexity** (deep nesting / high cyclomatic
+complexity, over-long functions, duplicated logic). An **intent lens** checks
+that the PR does what it says: it reads the PR title, description, and commit
+names (or your `git log` commit names on the CLI) and flags out-of-scope hunks,
+code that contradicts the stated intent, and promised behaviour the diff never
+implements. Generated and non-reviewable files (lockfiles, minified bundles,
+vendored directories, binaries) are skipped automatically, and secrets are
+redacted from the diff before it is sent to the model.
 
 **Hardened against malicious PRs.** lgtmaybe never checks out or runs PR code,
 treats the diff as untrusted input, defends against prompt injection (including
@@ -47,7 +54,7 @@ latency:
 
 - `max_files` (default 50) — reviews the top-N changed files and notes how many were skipped.
 - `max_input_tokens` (default 100k) — batches the diff to fit the model's budget.
-- `categories` (default all seven) — which review lenses to run; each is a concurrent model call, so narrowing the list means fewer calls.
+- `categories` (default all eight) — which review lenses to run; each is a concurrent model call, so narrowing the list means fewer calls.
 - `min_severity` (default `info`) plus `include_paths` / `exclude_paths` — focus the review on what you care about.
 
 See [Configure .lgtmaybe.yml](docs/how-to/configure-lgtmaybe-yml.md) for every knob.

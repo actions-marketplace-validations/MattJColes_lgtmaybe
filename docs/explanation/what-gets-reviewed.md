@@ -42,6 +42,12 @@ hunt the bugs a change introduces and grade them by impact:
   branches.
 - **Resource leaks & ordering** — handles or locks not released, use-after-close,
   bad concurrent sequencing.
+- **Races & concurrency** — check-then-act (TOCTOU), shared mutable state without
+  synchronisation, coroutines called without `await`, blocking calls in async paths.
+- **Numeric and date/time bugs** — overflow, float equality, division by zero,
+  money in binary floats; timezone-naive datetimes, epoch-unit confusion, DST.
+- **Aliasing & mutation** — mutable default arguments, mutating a collection while
+  iterating it, sharing a mutable value the caller still owns.
 
 === "On a GitHub PR"
 
@@ -59,17 +65,26 @@ vulnerability class in the title. It actively looks for:
 
 - **Injection** — SQL/NoSQL, OS command, and template/LDAP injection.
 - **Cross-site scripting (XSS)** — unescaped user input rendered into HTML/JS.
+- **CSRF & open redirect** — unprotected state-changing endpoints, user-controlled
+  redirect targets.
 - **Hardcoded secrets** — keys, tokens, passwords, or private keys in the diff.
-- **Broken authn / authz** — missing permission checks, IDOR, auth bypass.
-- **Path traversal / unsafe file access** — user input in file paths, `../`.
+- **Broken authn / authz** — missing permission checks, IDOR, auth bypass, and JWT
+  or session pitfalls (unverified signatures, `alg` confusion, missing expiry).
+- **Path traversal / unsafe file access** — user input in file paths, `../`,
+  zip-slip extraction — plus unrestricted file uploads.
 - **SSRF** — server-side fetches of user-controlled URLs without allow-listing.
 - **Insecure deserialization & unsafe eval** — `pickle`/`yaml.load`/`eval` on
-  untrusted data.
+  untrusted data, and XML parsed with external entities enabled (XXE).
+- **Mass assignment / over-posting** — request bodies bound straight onto models.
 - **Weak cryptography** — MD5/SHA1 for passwords, ECB mode, disabled TLS
   verification, predictable randomness for security tokens.
 - **Sensitive-data exposure** — secrets or PII in logs, error responses, or
   analytics: passwords, API keys, tokens/session IDs, SSNs, or payment-card data.
-- **Resource / DoS safety** — missing timeouts, unbounded loops or allocations.
+- **CI / IaC misconfiguration** — untrusted input interpolated into workflow `run:`
+  steps, third-party actions not pinned to a SHA, overly broad IAM policies,
+  public buckets, privileged containers, secrets echoed into build logs.
+- **Resource / DoS safety** — missing timeouts, unbounded loops or allocations,
+  regexes vulnerable to catastrophic backtracking (ReDoS).
 
 === "On a GitHub PR"
 
@@ -92,8 +107,10 @@ code when the diff shows it — these are objective, not stylistic:
 - deprecated language/framework APIs (with the modern replacement suggested when
   known),
 - targeting an end-of-life runtime or language version,
-- adding or pinning an end-of-life / abandoned dependency, and
-- pinning a dependency to a version with a known security advisory.
+- adding or pinning an end-of-life / abandoned dependency,
+- pinning a dependency to a version with a known security advisory, and
+- a new dependency whose name looks like a typosquat of a popular package, or
+  whose license conflicts with the project's.
 
 The reviewer only raises these when the diff itself shows the change; it does not
 speculate about code it cannot see.
@@ -110,15 +127,19 @@ speculate about code it cannot see.
 
 Two lighter-weight checks round out a review:
 
-- **Missing tests** — when the diff adds a new function, branch, or error case
-  with no accompanying test, the reviewer raises a `low`/`medium` finding and
+- **Missing or weak tests** — when the diff adds a new function, branch, or error
+  case with no accompanying test, the reviewer raises a `low`/`medium` finding and
   puts a concrete, runnable test in the finding's `suggestion` field, matching
-  the project's existing test idiom. Renames, comments, and trivial formatting
-  changes are left alone.
-- **Documentation gaps** — public/exported surfaces added without a docstring, or
-  a name or signature that contradicts what the code does, are flagged at
-  `info`/`low`. This is deliberately restrained: private helpers and self-evident
-  code are not nagged about, so well-named code is left to document itself.
+  the project's existing test idiom. Tests added in the diff that don't really
+  test — assertion-free, over-mocked until only the mock is exercised, or flaky
+  (sleep-based waits, wall-clock or ordering dependence) — are flagged too.
+  Renames, comments, and trivial formatting changes are left alone.
+- **Documentation gaps and stale docs** — public/exported surfaces added without
+  a docstring, or a name or signature that contradicts what the code does, are
+  flagged at `info`/`low`; a docstring or comment the change just made wrong is
+  flagged up to `medium` (a comment that lies is worse than no comment). This is
+  deliberately restrained: private helpers and self-evident code are not nagged
+  about, so well-named code is left to document itself.
 
 A missing test — note the runnable test dropped into the suggestion:
 
@@ -158,6 +179,8 @@ in a hot path):
   where non-blocking handling is expected.
 - **Unbounded / over-fetching queries** — loading whole tables into memory or
   missing pagination/limits.
+- **Unbounded growth & leaks** — caches without eviction, listeners or
+  subscriptions never removed, queues that only grow.
 
 It sticks to changes the diff actually shows and avoids micro-optimisations with
 no measurable impact.
@@ -195,6 +218,33 @@ Like the documentation lens, it stays quiet on self-evident, already-simple code
 
     ![The lgtmaybe CLI printing a [MEDIUM] deep-nesting finding for demo/router.py](../assets/cli-complexity.png){ width="660" }
 
+## Intent — does the PR do what it says?
+
+The intent lens compares the diff against the PR's **stated intent** and flags
+mismatches at `medium`, or `high` when the unexplained change is
+security-relevant:
+
+- **Out-of-scope changes** — a hunk unrelated to the stated intent, e.g. a "fix
+  typo" PR that also touches auth logic, CI workflows, dependency pins, or
+  permissions. Smuggled security-relevant changes are the highest-value catch.
+- **Contradictions** — the code does the opposite of, or something materially
+  different from, what the title or commits claim.
+- **Unfulfilled intent** — the PR promises behaviour the diff never implements.
+
+Where the stated intent comes from:
+
+- **On a GitHub PR** — the PR title, description, and the first line of each
+  commit message, fetched via the API.
+- **On the CLI** — the commit names from your local `git log` against the base
+  branch, so the lens works without GitHub. `--working` (uncommitted changes)
+  states no intent yet, so the lens is skipped.
+
+The intent text is attacker-controlled on a fork PR, so it is treated exactly
+like the diff: secrets are redacted, it is wrapped as untrusted data with
+neutralised delimiters, and the model is told never to follow instructions
+inside it. Only the intent lens's model call ever carries it. When a PR states
+no intent at all, the lens is skipped instead of burning a model call.
+
 ## How the scope is bounded
 
 Every run is bounded so a large PR can't run away on latency. All of these are
@@ -205,7 +255,7 @@ configurable in `.lgtmaybe.yml` (see
 |---|---|---|
 | `max_files` | 50 | Reviews the top-N changed files; posts a "reviewed top N of M" notice if there are more. |
 | `max_input_tokens` | 100,000 | Batches the diff so each model call stays within budget. |
-| `categories` | all seven | Which review lenses to run; each runs as its own model call. Narrowing the list means fewer calls. |
+| `categories` | all eight | Which review lenses to run; each runs as its own model call. Narrowing the list means fewer calls. |
 | `context_lines` | 20 | Ceiling on surrounding lines added around each hunk; the budget may use fewer. `0` disables context expansion. |
 | `min_severity` | `info` | Drops findings below the chosen floor (`info` → `low` → `medium` → `high` → `critical`). |
 | `include_paths` / `exclude_paths` | — | Glob filters to focus the review. |
@@ -231,11 +281,11 @@ Each finding has:
 | `suggestion` | Optional suggested replacement code |
 
 Each review category (security, correctness, deprecation, tests, documentation,
-performance, complexity)
-runs as its own concurrent model call with a focused prompt; their findings are
-merged and de-duplicated. A self-reflection pass then runs over the merged set
-and drops low-confidence findings, so the model's first guesses are filtered
-before anything is posted.
+performance, complexity, intent)
+runs as its own concurrent model call with a focused prompt and a worked example
+of its own finding type; their findings are merged and de-duplicated. A
+self-reflection pass then runs over the merged set and drops low-confidence
+findings, so the model's first guesses are filtered before anything is posted.
 
 ## What the response looks like
 
