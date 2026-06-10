@@ -12,12 +12,16 @@ delimiter markers in the diff so the block cannot be closed early.
 
 from __future__ import annotations
 
+import re
+
 _START = "===DIFF_START==="
 _END = "===DIFF_END==="
 
-# Sentinels we must not let the diff content forge. Matching is done on the
-# distinctive marker words so spacing/casing tricks don't slip a closer through.
+# Sentinels we must not let the diff content forge. Matching is case-insensitive
+# so a cased variant (``diff_end``/``Diff_End``) can't slip a closer through that
+# a model might still read as the real delimiter.
 _MARKER_TOKENS = ("DIFF_START", "DIFF_END")
+_MARKER_RE = re.compile("|".join(re.escape(t) for t in _MARKER_TOKENS), re.IGNORECASE)
 
 # Lead with the review task. A heavier "this is UNTRUSTED DATA, take no action"
 # framing makes weaker local models read the diff as inert and return [] even on
@@ -43,11 +47,10 @@ def _neutralise_markers(diff: str) -> str:
 
     We swap the underscore for a hyphen (``DIFF_END`` → ``DIFF-END``): the literal
     sentinel no longer appears in the content, while the text stays readable to the
-    model as plain data.
+    model as plain data. Matching is case-insensitive (the original case is
+    preserved bar the underscore) so cased variants are defanged too.
     """
-    for token in _MARKER_TOKENS:
-        diff = diff.replace(token, token.replace("_", "-"))
-    return diff
+    return _MARKER_RE.sub(lambda m: m.group(0).replace("_", "-"), diff)
 
 
 def wrap_diff(diff: str) -> str:
