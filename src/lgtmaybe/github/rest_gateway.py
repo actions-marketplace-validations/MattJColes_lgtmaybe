@@ -278,14 +278,28 @@ class RestGitHubGateway(GitHubGateway):
         return m.group(1) if m else None
 
     def _find_existing_review(self) -> int | None:
-        """Return the ID of the first review whose body contains the marker, or None."""
-        reviews_url = f"https://api.github.com/repos/{self._repo}/pulls/{self._pr_number}/reviews"
-        reviews = self._get_json(reviews_url)
-        for review in reviews:
-            body: str = review.get("body", "") or ""
-            if self._marker in body:
-                review_id: int = review["id"]
-                return review_id
+        """Return the ID of the first review whose body contains the marker, or None.
+
+        Follows Link rel=next pagination — a busy PR can hold more than one page
+        of reviews, and missing the marker there would duplicate the review
+        instead of updating it.
+        """
+        url: str | None = (
+            f"https://api.github.com/repos/{self._repo}/pulls/{self._pr_number}/reviews"
+        )
+        while url is not None:
+            resp = self._client.get(
+                url,
+                headers={**self._headers, "Accept": "application/vnd.github+json"},
+                timeout=_TIMEOUT,
+            )
+            resp.raise_for_status()
+            for review in resp.json():
+                body: str = review.get("body", "") or ""
+                if self._marker in body:
+                    review_id: int = review["id"]
+                    return review_id
+            url = self._next_link(resp)
         return None
 
     @staticmethod
