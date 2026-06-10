@@ -13,6 +13,18 @@
       "title": "Changed Files",
       "type": "array"
     },
+    "commit_messages": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Commit Messages",
+      "type": "array"
+    },
+    "description": {
+      "default": "",
+      "title": "Description",
+      "type": "string"
+    },
     "diff": {
       "title": "Diff",
       "type": "string"
@@ -34,6 +46,11 @@
     },
     "repo": {
       "title": "Repo",
+      "type": "string"
+    },
+    "title": {
+      "default": "",
+      "title": "Title",
       "type": "string"
     }
   },

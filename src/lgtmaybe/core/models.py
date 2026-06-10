@@ -45,7 +45,11 @@ _SEVERITY_ORDER: list[Severity] = [
 
 
 class ReviewCategory(StrEnum):
-    """A single review lens. The engine asks for each one in its own LLM call."""
+    """A single review lens. The engine asks for each one in its own LLM call.
+
+    ``intent`` checks the diff against the PR's stated intent (title, description,
+    commit messages); it only runs when the context carries some stated intent.
+    """
 
     security = "security"
     correctness = "correctness"
@@ -54,6 +58,7 @@ class ReviewCategory(StrEnum):
     documentation = "documentation"
     performance = "performance"
     complexity = "complexity"
+    intent = "intent"
 
 
 class Provider(StrEnum):
@@ -133,6 +138,13 @@ class PRContext(_Strict):
     # the gateway so the engine can pad hunks with surrounding lines; empty when
     # unavailable (the engine then reviews the bare diff).
     file_contents: dict[str, str] = Field(default_factory=dict)
+    # The PR's stated intent: title + description on GitHub, commit names (the
+    # first line of each commit message) everywhere. Attacker-controlled text —
+    # the engine redacts it and wraps it as untrusted data before it reaches the
+    # model, and only the intent lens carries it. Empty intent skips that lens.
+    title: str = ""
+    description: str = ""
+    commit_messages: list[str] = Field(default_factory=list)
 
 
 class ReviewConfig(_Strict):

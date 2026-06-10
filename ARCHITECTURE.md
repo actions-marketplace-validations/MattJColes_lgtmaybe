@@ -157,17 +157,26 @@ to the same engine/provider.
 
 ## Features
 
-**Review intelligence** — per-category fan-out across seven lenses (each its own
-concurrent model call, merged & de-duped):
-- **Security** — OWASP-aligned checklist: injection, XSS, hardcoded secrets,
-  broken authn/authz, path traversal, SSRF, insecure deserialization, weak
-  crypto, sensitive-data/PII exposure, resource/DoS.
+**Review intelligence** — per-category fan-out across eight lenses (each its own
+concurrent model call with a lens-matched worked example, merged & de-duped):
+- **Security** — OWASP-aligned checklist: injection, XSS, CSRF/open redirect,
+  hardcoded secrets, broken authn/authz (incl. JWT pitfalls), path traversal,
+  unrestricted upload, SSRF, insecure deserialization/XXE, mass assignment, weak
+  crypto, sensitive-data/PII exposure, CI/IaC misconfiguration, resource/DoS
+  (incl. ReDoS).
 - **Correctness & logic** — null derefs, off-by-one/boundary, inverted ranges,
-  unhandled error paths, bad conditionals, resource leaks.
+  unhandled error paths, bad conditionals, resource leaks, races/TOCTOU and
+  async mistakes, numeric and date/time bugs, aliasing/mutation.
 - **Deprecation & dependency health** — deprecated APIs, EOL runtimes, abandoned
-  or vulnerable dependencies (when the diff shows them).
+  or vulnerable dependencies, typosquat/license red flags (when the diff shows
+  them).
 - **Test coverage** — missing tests for changed paths, with a runnable test in
-  the suggestion.
+  the suggestion; weak tests (assertion-free, over-mocked, sleep-based) too.
+- **Intent** — does the PR do what it says? Checks the diff against the PR
+  title/description/commit names (CLI: `git log` commit names), flagging
+  out-of-scope hunks and unfulfilled claims. Skipped when nothing states an
+  intent; the intent text is redacted + wrapped as untrusted data and only this
+  lens's call carries it.
 - **Documentation** — undocumented or mis-described public surfaces only.
 - **Performance** — N+1 queries, accidentally quadratic work, redundant
   computation, hot-path allocations/blocking I/O, unbounded queries (graded by

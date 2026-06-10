@@ -76,14 +76,22 @@ from lgtmaybe.config.loader import load_config
 @click.option(
     "--base",
     default=None,
-    help="Base ref to diff the current branch against "
-    "(default: the remote's default branch, else main)",
+    help="Base ref to diff against (default: the remote's primary branch — "
+    "origin/HEAD, else origin/main / origin/master, else a local main/master)",
 )
 @click.option(
     "--working",
     is_flag=True,
     default=False,
-    help="Review uncommitted working-tree changes instead of the branch vs base",
+    help="Review the whole worktree — branch commits plus uncommitted edits — "
+    "against the base, instead of only the committed branch changes",
+)
+@click.option(
+    "--uncommitted",
+    is_flag=True,
+    default=False,
+    help="Review only the uncommitted working-tree edits (vs HEAD); "
+    "mutually exclusive with --working",
 )
 @click.option(
     "--format",
@@ -143,6 +151,7 @@ def review(
     num_ctx: int | None,
     base: str | None,
     working: bool,
+    uncommitted: bool,
     output_format: str | None,
     as_json: bool,
     context_lines: int | None,
@@ -152,6 +161,8 @@ def review(
     config_path: str,
 ) -> None:
     """Review local git changes and print findings — no GitHub needed."""
+    if working and uncommitted:
+        raise click.UsageError("--working and --uncommitted are mutually exclusive")
     cfg = load_config(
         config_path=Path(config_path),
         user_config_path=store.user_config_path(),
@@ -169,7 +180,7 @@ def review(
 
     runtime = RuntimeOptions(api_key=api_key, api_base=api_base, fallback_model=fallback_model)
     fmt = output_format or ("json" if as_json else "human")
-    execute_local_review(cfg, runtime, base=base, working=working, fmt=fmt)
+    execute_local_review(cfg, runtime, base=base, working=working, uncommitted=uncommitted, fmt=fmt)
 
 
 @main.command()

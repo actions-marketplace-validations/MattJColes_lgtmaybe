@@ -104,8 +104,17 @@ Default: `100000`.
 Which review lenses to run. The reviewer asks for each category in its own
 concurrent model call and merges the findings, so a focused prompt concentrates
 on one concern at a time. One or more of `security`, `correctness`,
-`deprecation`, `tests`, `documentation`, `performance`, `complexity`. Narrowing
-the list trades thoroughness for fewer model calls (and lower token usage).
+`deprecation`, `tests`, `documentation`, `performance`, `complexity`, `intent`.
+Narrowing the list trades thoroughness for fewer model calls (and lower token
+usage).
+
+The `intent` lens checks the diff against the PR's stated intent — title,
+description, and commit names on GitHub; your `git log` commit names on the
+CLI (in both branch and `--working` mode). When nothing states an intent (e.g.
+no commits beyond the base branch yet), it is skipped automatically, so it
+never costs an extra call. It is also the only lens that sends the PR
+title/description/commit names to the provider — drop it from `categories` if
+you don't want that text sent at all.
 
 ```yaml
 categories:
@@ -113,7 +122,7 @@ categories:
   - correctness
 ```
 
-Default: all seven categories.
+Default: all eight categories.
 
 ### context_lines
 

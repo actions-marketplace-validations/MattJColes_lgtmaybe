@@ -150,6 +150,7 @@ def execute_local_review(
     *,
     base: str | None,
     working: bool,
+    uncommitted: bool = False,
     fmt: str,
 ) -> None:
     """Review the local git diff and print findings — no GitHub involvement.
@@ -160,7 +161,7 @@ def execute_local_review(
     """
     try:
         engine, _provider = build_provider_engine(cfg, runtime)
-        ctx = local_pr_context(base=base, working=working)
+        ctx = local_pr_context(base=base, working=working, uncommitted=uncommitted)
         findings, summary = engine.review(ctx, cfg)
     except Exception as exc:
         raise click.ClickException(str(exc)) from exc

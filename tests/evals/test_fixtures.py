@@ -63,8 +63,10 @@ def test_vibe_multifile_has_high_signal_and_subtle_findings() -> None:
 
 def test_fixtures_cover_performance_and_complexity_lenses() -> None:
     """Both fixtures plant a performance and a complexity issue so the e2e exercises
-    all seven review lenses, not just security + correctness. Guards against a future
-    edit silently dropping these lower-severity lenses from the live recall check."""
+    all seven code lenses, not just security + correctness. (The intent lens needs a
+    stated intent the fixtures don't carry, so the engine skips it there.) Guards
+    against a future edit silently dropping these lower-severity lenses from the
+    live recall check."""
     for name in ("badcode", "vibe-multifile"):
         _diff, manifest = _fixture(name)
         keywords = " ".join(k.lower() for e in manifest.expected for k in e.keywords)

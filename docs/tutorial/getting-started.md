@@ -43,9 +43,9 @@ lgtmaybe review \
   --api-base http://localhost:11434
 ```
 
-lgtmaybe diffs your current branch against the default branch, sends the changed
-lines to your local qwen3.6:27b instance, and prints the findings to your
-terminal:
+lgtmaybe diffs your current branch against the remote primary branch
+(`origin/HEAD`, falling back to `origin/main`), sends the changed lines to your
+local qwen3.6:27b instance, and prints the findings to your terminal:
 
 ```console
 src/app.py:2  [MEDIUM] Import order
@@ -54,8 +54,9 @@ src/app.py:2  [MEDIUM] Import order
 1 finding · model qwen3.6:27b
 ```
 
-To review only your uncommitted edits, add `--working`; to diff against a
-different base, pass `--base main`.
+To review the whole worktree — your branch's commits plus uncommitted edits —
+add `--working`; for only the uncommitted edits, add `--uncommitted`; to diff
+against a different base, pass `--base main`.
 
 ## Step 4 — Change the output format
 

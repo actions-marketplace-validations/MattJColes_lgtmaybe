@@ -35,9 +35,11 @@ lgtmaybe review \
   --api-base http://localhost:11434
 ```
 
-This diffs your current branch against the default branch and prints the
-findings. Add `--working` to review only your uncommitted edits, or `--base <ref>`
-to diff against a different base.
+This diffs your current branch against the remote primary branch and prints the
+findings. Add `--working` to review the whole worktree (branch commits plus
+uncommitted edits) against that same base, `--uncommitted` to review only your
+uncommitted edits against HEAD, or `--base <ref>` to diff against a different
+base.
 
 ## Use a remote ollama instance
 
