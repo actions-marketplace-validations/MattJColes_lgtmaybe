@@ -4,8 +4,9 @@
 
 # lgtmaybe
 
-Provider-agnostic PR reviewer. Six providers, one flag, no static keys for
-cloud providers. Posts inline review comments and a summary.
+Provider-agnostic PR reviewer. Six hosted providers plus local ollama, one
+flag, no static keys for cloud providers. Posts inline review comments and a
+summary.
 
 📖 **Full documentation:** <https://mattjcoles.github.io/lgtmaybe/>
 
