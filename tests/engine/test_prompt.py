@@ -20,6 +20,15 @@ _SIGNATURE = {
 }
 
 
+def test_build_system_prompt_is_cached() -> None:
+    """The per-category prompts are deterministic, so building one twice must
+    return the identical cached object (the engine rebuilds them every batch)."""
+    assert build_system_prompt(ReviewCategory.security) is build_system_prompt(
+        ReviewCategory.security
+    )
+    assert build_system_prompt() is build_system_prompt()
+
+
 def test_prompt_contains_all_severity_levels() -> None:
     prompt = build_system_prompt()
     for level in ("info", "low", "medium", "high", "critical"):

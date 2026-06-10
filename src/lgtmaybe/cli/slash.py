@@ -42,7 +42,9 @@ class PRGateway(Protocol):
 
     def get_pr_context(self) -> PRContext: ...
 
-    def post_review(self, findings: list[ReviewFinding], summary: str) -> None: ...
+    def post_review(
+        self, findings: list[ReviewFinding], summary: str, diff: str | None = None
+    ) -> None: ...
 
     def post_issue_comment(self, body: str) -> None: ...
 
@@ -90,7 +92,7 @@ def dispatch(
     if parsed.name in (SlashCommand.review, SlashCommand.improve):
         ctx = github.get_pr_context()
         findings, summary = engine.review(ctx, cfg)
-        github.post_review(findings, summary)
+        github.post_review(findings, summary, diff=ctx.diff)
         return
 
     if parsed.name is SlashCommand.ask:

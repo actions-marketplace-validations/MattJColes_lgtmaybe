@@ -208,6 +208,47 @@ def test_post_review_drops_finding_on_expanded_context_line() -> None:
 
 
 @respx.mock
+def test_post_review_suggestion_cannot_break_out_of_code_fence() -> None:
+    """A model-emitted suggestion containing ``` must not escape the suggestion
+    fence and inject markdown (e.g. a phishing link) below it.
+
+    The diff is attacker-controlled on a fork PR, so a prompt injection that
+    survives the guard could steer the model into emitting fence-breaking output.
+    We neutralise embedded triple-backticks so only our own open/close fences
+    remain.
+    """
+    respx.route(method="GET", url=REVIEWS_URL).mock(return_value=httpx.Response(200, json=[]))
+
+    malicious = [
+        ReviewFinding(
+            path="src/app.py",
+            line=2,
+            side="RIGHT",
+            severity=Severity.medium,
+            title="x",
+            body="x",
+            suggestion="legit_code()\n```\n[click me](https://evil.example)\n```",
+        )
+    ]
+
+    created_bodies: list[dict[object, object]] = []
+
+    def capture_create(request: httpx.Request) -> httpx.Response:
+        created_bodies.append(json.loads(request.content))
+        return httpx.Response(201, json={"id": 1})
+
+    respx.route(method="POST", url=REVIEWS_URL).mock(side_effect=capture_create)
+
+    gw = RestGitHubGateway(repo=REPO, pr_number=PR_NUMBER, token=TOKEN, client=httpx.Client())
+    gw.post_review(malicious, "Summary", diff=SAMPLE_DIFF)
+
+    comment_body = created_bodies[0]["comments"][0]["body"]
+    # Exactly our two fences (the ```suggestion opener and its closer) — the
+    # attacker's embedded ``` runs no longer read as fence delimiters.
+    assert comment_body.count("```") == 2
+
+
+@respx.mock
 def test_post_review_uses_provider_scoped_marker() -> None:
     """A gateway built with a marker_key embeds a provider/model-scoped marker."""
     respx.route(method="GET", url=REVIEWS_URL).mock(return_value=httpx.Response(200, json=[]))

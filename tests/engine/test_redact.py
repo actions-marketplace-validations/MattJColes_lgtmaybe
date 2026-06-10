@@ -151,3 +151,51 @@ def test_idempotent_on_already_redacted_text() -> None:
     once = redact(f"+SLACK={_SLACK_TOKEN}\n")
     twice = redact(once)
     assert once == twice
+
+
+# ---------------------------------------------------------------------------
+# Additional secret classes (JWTs, npm/PyPI tokens, Azure storage keys)
+# ---------------------------------------------------------------------------
+# Assembled from fragments so the contiguous literal never appears in source.
+
+_JWT = (
+    "eyJ" + "hbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9"
+    ".eyJ" + "zdWIiOiIxMjM0NTY3ODkwIiwiZW1haWwiOiJhQGIuY29tIn0"
+    ".dozjgNryP4J3jVmNHl0w5N" + "_XgL0n3I9PlFUP0K1Yc"
+)
+_NPM_TOKEN = "npm_" + "abcdefghijklmnopqrstuvwxyz0123456789AB"
+_PYPI_TOKEN = "pypi-" + "AgEIcHlwaS5vcmcCJD%s" % ("abcd1234" * 6)
+_AZURE_ACCOUNT_KEY = "ABCDdef123" * 6 + "ab=="
+
+
+def test_jwt_redacted() -> None:
+    """A full three-segment JWT (header.payload.signature) must be scrubbed whole."""
+    result = redact(f"+const token = '{_JWT}';\n")
+    assert _JWT not in result
+    # The payload segment carries claims/PII — none of it may survive.
+    assert "zdWIiOiIxMjM0" not in result
+    assert REDACTED_PLACEHOLDER in result
+
+
+def test_npm_token_redacted() -> None:
+    result = redact(f"+//registry.npmjs.org/:_authToken={_NPM_TOKEN}\n")
+    assert _NPM_TOKEN not in result
+    assert REDACTED_PLACEHOLDER in result
+
+
+def test_pypi_token_redacted() -> None:
+    result = redact(f"+TWINE_PASSWORD={_PYPI_TOKEN}\n")
+    assert _PYPI_TOKEN not in result
+    assert REDACTED_PLACEHOLDER in result
+
+
+def test_azure_storage_account_key_redacted() -> None:
+    conn = (
+        "DefaultEndpointsProtocol=https;AccountName=devstore;"
+        f"AccountKey={_AZURE_ACCOUNT_KEY};EndpointSuffix=core.windows.net"
+    )
+    result = redact(f"+AZURE_STORAGE_CONNECTION_STRING={conn}\n")
+    assert _AZURE_ACCOUNT_KEY not in result
+    assert REDACTED_PLACEHOLDER in result
+    # Non-secret structure stays readable for the reviewer.
+    assert "AccountName=devstore" in result

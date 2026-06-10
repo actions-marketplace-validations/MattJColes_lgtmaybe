@@ -70,17 +70,19 @@ jobs:
         run: ollama pull "$OLLAMA_MODEL"
 
       # Review every fixture (incl. the large multi-file one) with a long timeout
-      # and a big context window. min-recall 0.2: the parse must succeed AND the
-      # model must catch at least a fifth of the planted bugs. Reflection is off:
-      # on a small local model the self-reflection pass over-prunes its own valid
-      # findings (CLAUDE.md notes --no-reflect for weaker models).
+      # and a big context window. min-recall 0.3: the parse must succeed AND the
+      # model must catch at least ~a third of the planted bugs — qwen3:1.7b clears
+      # this comfortably, so the bar is tight enough to catch a prompt/pipeline
+      # regression without flaking on model variance. Reflection is off: on a small
+      # local model the self-reflection pass over-prunes its own valid findings
+      # (CLAUDE.md notes --no-reflect for weaker models).
       - name: End-to-end review via ollama
         run: |
           uv run python -m evals.run \
             --provider ollama \
             --model "$OLLAMA_MODEL" \
             --api-base http://localhost:11434 \
-            --min-recall 0.2 \
+            --min-recall 0.3 \
             --timeout 900 \
             --num-ctx 32768 \
             --no-reflect

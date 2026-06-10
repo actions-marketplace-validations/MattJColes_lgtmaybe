@@ -136,7 +136,10 @@ def run_review(
     findings, summary = engine.review(ctx, cfg)
 
     if not dry_run:
-        github.post_review(findings, summary)
+        # Pass the diff we already fetched so post_review doesn't re-fetch the
+        # whole PR context (diff + file list + every file's contents) just to
+        # rebuild the position map.
+        github.post_review(findings, summary, diff=ctx.diff)
 
     return findings, summary
 

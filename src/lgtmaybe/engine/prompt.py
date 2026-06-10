@@ -10,6 +10,8 @@ category returns the union of every section (the original monolithic prompt).
 
 from __future__ import annotations
 
+from functools import lru_cache
+
 from lgtmaybe.core.models import ReviewCategory
 
 _SHARED_HEADER = """\
@@ -220,11 +222,15 @@ _SHARED_RULES = """\
 - Never output anything other than the JSON object."""
 
 
+@lru_cache(maxsize=len(ReviewCategory) + 1)
 def build_system_prompt(category: ReviewCategory | None = None) -> str:
     """Return the system message for the review LLM.
 
     With a ``category``, the prompt carries only that lens's section; with no
     category, it carries the union of every section (the monolithic prompt).
+
+    Cached: the prompts are deterministic, and the engine rebuilds one per
+    category on every batch — caching makes those rebuilds free.
     """
     if category is None:
         body = "\n\n".join(_CATEGORY_SECTIONS[c] for c in ReviewCategory)
