@@ -15,7 +15,7 @@ import argparse
 import sys
 from pathlib import Path
 
-from lgtmaybe.core.models import PRContext, Provider, ReviewConfig
+from lgtmaybe.core.models import PRContext, Provider, ReviewCategory, ReviewConfig
 from lgtmaybe.engine import LLMReviewEngine, ReviewIncompleteError
 from lgtmaybe.providers.factory import build_provider
 
@@ -54,6 +54,25 @@ def _select_fixtures(
     return [(diff, m) for diff, m in fixtures if m.name in wanted]
 
 
+def _parse_categories(value: str | None) -> list[ReviewCategory] | None:
+    """Parse a comma-separated --categories value into review lenses (None = all).
+
+    An unknown name is a hard error, not a silent skip: a typo'd lens would quietly
+    run a different (or empty) fan-out and the recall bar would no longer mean what
+    the CI invocation thinks it does.
+    """
+    if not value:
+        return None
+    valid = {c.value for c in ReviewCategory}
+    names = [n.strip() for n in value.split(",") if n.strip()]
+    unknown = [n for n in names if n not in valid]
+    if unknown:
+        raise SystemExit(
+            f"unknown categor(y/ies): {', '.join(unknown)}. Available: {', '.join(sorted(valid))}"
+        )
+    return [ReviewCategory(n) for n in names]
+
+
 def _review(
     diff: str,
     manifest: Fixture,
@@ -65,6 +84,10 @@ def _review(
     num_ctx: int | None = None,
     max_input_tokens: int | None = None,
     reflect: bool = True,
+    temperature: float | None = None,
+    top_p: float | None = None,
+    top_k: int | None = None,
+    categories: list[ReviewCategory] | None = None,
 ):
     ctx = PRContext(
         diff=diff,
@@ -74,7 +97,11 @@ def _review(
         repo="eval/eval",
         pr_number=0,
     )
-    cfg_overrides = {"max_input_tokens": max_input_tokens} if max_input_tokens is not None else {}
+    cfg_overrides: dict[str, object] = {}
+    if max_input_tokens is not None:
+        cfg_overrides["max_input_tokens"] = max_input_tokens
+    if categories is not None:
+        cfg_overrides["categories"] = categories
     cfg = ReviewConfig(
         provider=provider,
         model=model,
@@ -85,7 +112,19 @@ def _review(
     )
     # num_ctx is ollama's context window — litellm rejects it for hosted providers,
     # so only forward it on the ollama path.
-    extra = {"num_ctx": num_ctx} if (num_ctx is not None and provider is Provider.ollama) else {}
+    extra: dict[str, object] = (
+        {"num_ctx": num_ctx} if (num_ctx is not None and provider is Provider.ollama) else {}
+    )
+    # Sampling params reach the model via the provider's default_opts → litellm.
+    # Only forward the ones explicitly given so an unset flag keeps the model's own
+    # default rather than pinning it to something. litellm.drop_params handles a
+    # param a given provider can't take (e.g. top_k on an OpenAI-compat endpoint).
+    if temperature is not None:
+        extra["temperature"] = temperature
+    if top_p is not None:
+        extra["top_p"] = top_p
+    if top_k is not None:
+        extra["top_k"] = top_k
     engine = LLMReviewEngine(
         build_provider(provider, model, api_base=api_base, timeout=timeout, **extra)
     )
@@ -163,6 +202,30 @@ def main(argv: list[str] | None = None) -> int:
         help="skip the self-reflection pass (weak local models over-prune their own findings)",
     )
     ap.add_argument(
+        "--temperature",
+        type=float,
+        default=None,
+        help="sampling temperature forwarded to the model (default: the model's own)",
+    )
+    ap.add_argument(
+        "--top-p",
+        type=float,
+        default=None,
+        help="nucleus-sampling top_p forwarded to the model",
+    )
+    ap.add_argument(
+        "--top-k",
+        type=int,
+        default=None,
+        help="top_k forwarded to the model (ollama/qwen3.x recommend 20 with thinking off)",
+    )
+    ap.add_argument(
+        "--categories",
+        default=None,
+        help="comma-separated review lenses to run (default: all). Cuts the per-category "
+        "fan-out for a fast CI smoke, e.g. 'security,correctness'.",
+    )
+    ap.add_argument(
         "--fixture",
         action="append",
         dest="fixtures",
@@ -173,6 +236,7 @@ def main(argv: list[str] | None = None) -> int:
     args = ap.parse_args(argv)
 
     provider = Provider(args.provider)
+    categories = _parse_categories(args.categories)
     fixtures = _select_fixtures(_load_fixtures(), args.fixtures)
     scores = [
         _review(
@@ -185,6 +249,10 @@ def main(argv: list[str] | None = None) -> int:
             num_ctx=args.num_ctx,
             max_input_tokens=args.max_input_tokens,
             reflect=args.reflect,
+            temperature=args.temperature,
+            top_p=args.top_p,
+            top_k=args.top_k,
+            categories=categories,
         )
         for diff, m in fixtures
     ]
