@@ -68,8 +68,7 @@ def _parse_categories(value: str | None) -> list[ReviewCategory] | None:
     unknown = [n for n in names if n not in valid]
     if unknown:
         raise SystemExit(
-            f"unknown categor(y/ies): {', '.join(unknown)}. "
-            f"Available: {', '.join(sorted(valid))}"
+            f"unknown categor(y/ies): {', '.join(unknown)}. Available: {', '.join(sorted(valid))}"
         )
     return [ReviewCategory(n) for n in names]
 
