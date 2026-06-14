@@ -48,7 +48,7 @@ jobs:
     if: ${{ github.event_name == 'pull_request_target' || github.event.issue.pull_request }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: MattJColes/lgtmaybe@v0
         with:
           provider: vertex
@@ -77,9 +77,12 @@ jobs:
 ## Running locally with ADC
 
 If your local shell has application default credentials (`gcloud auth
-application-default login`):
+application-default login`). Vertex token minting needs `google-auth`, so install
+the extra (the Action image already bundles it):
 
 ```bash
+pip install 'lgtmaybe[vertex]'
+
 export VERTEXAI_PROJECT=my-project
 export VERTEXAI_LOCATION=us-central1
 

@@ -62,7 +62,7 @@ jobs:
     if: ${{ github.event_name == 'pull_request_target' || github.event.issue.pull_request }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: MattJColes/lgtmaybe@v0
         with:
           provider: bedrock
@@ -86,9 +86,12 @@ account.
 ## Running locally with ambient AWS credentials
 
 If your local shell has AWS credentials (via `~/.aws`, SSO, or an assumed role),
-you can review your current branch's changes with Bedrock:
+you can review your current branch's changes with Bedrock. Bedrock signing needs
+`boto3`, so install the extra (the Action image already bundles it):
 
 ```bash
+pip install 'lgtmaybe[bedrock]'
+
 lgtmaybe review \
   --provider bedrock \
   --model anthropic.claude-haiku-4-5

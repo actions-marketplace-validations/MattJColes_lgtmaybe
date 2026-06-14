@@ -77,7 +77,7 @@ jobs:
        contains(fromJson('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association))
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4 # base repo only — for .lgtmaybe.yml config
+      - uses: actions/checkout@v6 # base repo only — for .lgtmaybe.yml config
       - uses: MattJColes/lgtmaybe@v0
         with:
           provider: openai
