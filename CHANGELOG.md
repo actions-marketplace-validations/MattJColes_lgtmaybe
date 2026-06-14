@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.1.4](https://github.com/MattJColes/lgtmaybe/compare/lgtmaybe-v0.1.3...lgtmaybe-v0.1.4) (2026-06-14)
+
+
+### Bug Fixes
+
+* bundle boto3 + google-auth so keyless Bedrock and Vertex work ([7da1070](https://github.com/MattJColes/lgtmaybe/commit/7da1070f38ee67b1f85986ec952529e8267ecb6c))
+
+
+### Documentation
+
+* bump actions/checkout to v6 in docs and README ([0d195e0](https://github.com/MattJColes/lgtmaybe/commit/0d195e062d05529a8910d11a03eca1f165b0980c))
+
 ## [0.1.3](https://github.com/MattJColes/lgtmaybe/compare/lgtmaybe-v0.1.2...lgtmaybe-v0.1.3) (2026-06-14)
 
 
