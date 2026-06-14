@@ -10,6 +10,8 @@ from types import SimpleNamespace
 from typing import Any
 from unittest.mock import patch
 
+import litellm
+
 from lgtmaybe.core.models import ProviderResult
 from lgtmaybe.providers.litellm_provider import LiteLLMProvider
 
@@ -91,3 +93,10 @@ class TestLiteLLMProvider:
             result = provider.complete([{"role": "user", "content": "hi"}], "openai/gpt-4o")
 
         assert isinstance(result, ProviderResult)
+
+    def test_drop_params_is_enabled_for_unsupported_provider_params(self) -> None:
+        """Importing the provider enables litellm.drop_params so a model that
+        rejects ``temperature``/``response_format`` (e.g. bedrock
+        ``openai.gpt-5.5``) drops them instead of failing the whole review,
+        while models that support them keep them."""
+        assert litellm.drop_params is True

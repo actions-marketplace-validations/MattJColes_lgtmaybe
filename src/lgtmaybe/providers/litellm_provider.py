@@ -17,6 +17,16 @@ from lgtmaybe.core.ports import Message, ProviderClient
 _DEFAULT_TIMEOUT = 60  # seconds
 _MAX_ATTEMPTS = 4
 
+# We always send ``temperature`` (for determinism) and ``response_format`` (for
+# structured JSON output), but not every model accepts them: some bedrock-hosted
+# models (e.g. ``openai.gpt-5.5``) reject both and litellm raises
+# ``UnsupportedParamsError``, which would fail the entire review. Enabling
+# drop_params makes litellm consult its per-model capability map and silently
+# drop only the params a given model can't take — keeping them for the local
+# (ollama) and cloud models that do support them. The prompt also asks for JSON,
+# and the parser is lenient, so a dropped ``response_format`` still parses.
+litellm.drop_params = True
+
 
 class LiteLLMProvider(ProviderClient):
     """ProviderClient backed by litellm with retry and optional fallback."""
