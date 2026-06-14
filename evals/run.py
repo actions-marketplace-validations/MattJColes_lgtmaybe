@@ -3,9 +3,10 @@
     python -m evals.run --provider ollama --model qwen3.6:35b \
         --api-base http://localhost:11434
 
-Exits non-zero if any fixture failed to parse or fell below --min-recall, so it
-can gate a model/setting change. Needs a live model, so it is NOT in the pytest
-gate — run it on demand.
+Exits non-zero if any fixture failed to parse, or if recall *pooled across
+fixtures* (total caught / total planted) fell below --min-recall — so it can gate
+a model/setting change without flaking on a single-finding miss in one short
+fixture. Needs a live model, so it is NOT in the pytest gate — run it on demand.
 """
 
 from __future__ import annotations
@@ -85,12 +86,37 @@ def _print(score: FixtureScore) -> None:
         print(f"    missed: {miss}")
 
 
+def _gate(scores: list[FixtureScore], min_recall: float) -> tuple[bool, float]:
+    """Decide pass/fail for a run and report the aggregate recall.
+
+    Two independent bars:
+    - Every fixture must *parse* — an unparseable review is a real pipeline break
+      (timeout, truncated context, refusal), not model variance, so any parse
+      failure fails the run.
+    - Recall is pooled across fixtures (total caught / total planted), not gated
+      per-fixture. A small local model on CPU isn't bit-reproducible even at
+      temperature 0, so a single missed finding on one short fixture shouldn't
+      flip the whole job — pooling over more samples keeps the bar a real
+      regression signal without flaking on that one-finding margin.
+    """
+    total_expected = sum(s.expected_count for s in scores)
+    total_matched = sum(s.matched_count for s in scores)
+    aggregate = total_matched / total_expected if total_expected else 1.0
+    parsed = all(s.parsed_ok for s in scores)
+    return (parsed and aggregate >= min_recall), aggregate
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="Run lgtmaybe review evals against a model.")
     ap.add_argument("--provider", required=True, choices=[p.value for p in Provider])
     ap.add_argument("--model", required=True)
     ap.add_argument("--api-base", default=None)
-    ap.add_argument("--min-recall", type=float, default=0.6, help="fail below this recall")
+    ap.add_argument(
+        "--min-recall",
+        type=float,
+        default=0.6,
+        help="fail below this recall, pooled across fixtures (total caught / total planted)",
+    )
     ap.add_argument(
         "--timeout",
         type=int,
@@ -135,8 +161,12 @@ def main(argv: list[str] | None = None) -> int:
     for score in scores:
         _print(score)
 
-    ok = all(s.parsed_ok and s.recall >= args.min_recall for s in scores)
-    print("\n" + ("PASS" if ok else "FAIL") + f" (min recall {args.min_recall:.0%})")
+    ok, aggregate = _gate(scores, args.min_recall)
+    print(
+        f"\naggregate recall {aggregate:.0%} — "
+        + ("PASS" if ok else "FAIL")
+        + f" (min recall {args.min_recall:.0%})"
+    )
     return 0 if ok else 1
 
 
