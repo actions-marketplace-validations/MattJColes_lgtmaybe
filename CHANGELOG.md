@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.1.6](https://github.com/MattJColes/lgtmaybe/compare/lgtmaybe-v0.1.5...lgtmaybe-v0.1.6) (2026-06-14)
+
+
+### Dependencies
+
+* bump the python-dependencies group with 3 updates ([5c376bf](https://github.com/MattJColes/lgtmaybe/commit/5c376bf52a8ba45d8cd61ae8aff8b4beea08bd4e))
+
+
+### Documentation
+
+* **bedrock:** require both inference-profile and foundation-model ARNs in IAM policy ([4b34f97](https://github.com/MattJColes/lgtmaybe/commit/4b34f975b76443bcad25e6381de6f1a0357b269e))
+
 ## [0.1.5](https://github.com/MattJColes/lgtmaybe/compare/lgtmaybe-v0.1.4...lgtmaybe-v0.1.5) (2026-06-14)
 
 
