@@ -33,6 +33,27 @@ def _load_fixtures() -> list[tuple[str, Fixture]]:
     return out
 
 
+def _select_fixtures(
+    fixtures: list[tuple[str, Fixture]], names: list[str] | None
+) -> list[tuple[str, Fixture]]:
+    """Keep only the fixtures whose name is in *names* (all when *names* is empty).
+
+    An unknown name is a hard error, not a silent skip: running zero fixtures would
+    pool to 100% recall and pass vacuously, hiding a typo'd CI invocation.
+    """
+    if not names:
+        return fixtures
+    wanted = set(names)
+    available = {m.name for _, m in fixtures}
+    missing = wanted - available
+    if missing:
+        raise SystemExit(
+            f"unknown fixture(s): {', '.join(sorted(missing))}. "
+            f"Available: {', '.join(sorted(available))}"
+        )
+    return [(diff, m) for diff, m in fixtures if m.name in wanted]
+
+
 def _review(
     diff: str,
     manifest: Fixture,
@@ -141,9 +162,18 @@ def main(argv: list[str] | None = None) -> int:
         action="store_false",
         help="skip the self-reflection pass (weak local models over-prune their own findings)",
     )
+    ap.add_argument(
+        "--fixture",
+        action="append",
+        dest="fixtures",
+        metavar="NAME",
+        help="only run the named fixture(s); repeatable. Default: all. Lets CI run a fast "
+        "single-fixture subset while the full set stays available on demand.",
+    )
     args = ap.parse_args(argv)
 
     provider = Provider(args.provider)
+    fixtures = _select_fixtures(_load_fixtures(), args.fixtures)
     scores = [
         _review(
             diff,
@@ -156,7 +186,7 @@ def main(argv: list[str] | None = None) -> int:
             max_input_tokens=args.max_input_tokens,
             reflect=args.reflect,
         )
-        for diff, m in _load_fixtures()
+        for diff, m in fixtures
     ]
     for score in scores:
         _print(score)

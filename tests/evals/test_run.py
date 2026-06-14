@@ -162,6 +162,50 @@ def test_max_input_tokens_threads_to_review_config(monkeypatch: pytest.MonkeyPat
     assert seen and all(v == 250000 for v in seen)
 
 
+def test_fixture_flag_selects_only_the_named_fixtures(monkeypatch: pytest.MonkeyPatch) -> None:
+    """--fixture scopes the run to the named fixture(s) so CI can run a fast subset."""
+    seen: list[str] = []
+
+    def fake_review(_diff, manifest, *_a, **_k):  # type: ignore[no-untyped-def]
+        seen.append(manifest.name)
+        return _score(manifest.name, 1, 1)
+
+    monkeypatch.setattr(run_mod, "_review", fake_review)
+
+    run_mod.main(
+        ["--provider", "ollama", "--model", "x", "--min-recall", "0.0", "--fixture", "badcode"]
+    )
+    assert seen == ["badcode"]
+
+
+def test_no_fixture_flag_runs_every_fixture(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Without --fixture the runner reviews all fixtures, as before."""
+    seen: list[str] = []
+
+    def fake_review(_diff, manifest, *_a, **_k):  # type: ignore[no-untyped-def]
+        seen.append(manifest.name)
+        return _score(manifest.name, 1, 1)
+
+    monkeypatch.setattr(run_mod, "_review", fake_review)
+
+    run_mod.main(["--provider", "ollama", "--model", "x", "--min-recall", "0.0"])
+    assert set(seen) == {"badcode", "vibe-multifile"}
+
+
+def test_unknown_fixture_name_fails_loudly(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A typo'd --fixture must error, never vacuously pass by running zero fixtures."""
+
+    def fake_review(_diff, manifest, *_a, **_k):  # type: ignore[no-untyped-def]
+        return _score(manifest.name, 1, 1)
+
+    monkeypatch.setattr(run_mod, "_review", fake_review)
+
+    with pytest.raises(SystemExit):
+        run_mod.main(
+            ["--provider", "ollama", "--model", "x", "--min-recall", "0.0", "--fixture", "nope"]
+        )
+
+
 def test_reflect_defaults_on_and_no_reflect_disables_it(monkeypatch: pytest.MonkeyPatch) -> None:
     """--no-reflect turns off the reflection pass (weak CI models over-prune otherwise)."""
     seen: list[bool] = []
