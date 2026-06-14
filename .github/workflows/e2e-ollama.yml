@@ -66,7 +66,7 @@ jobs:
       # multi-GB download — the biggest fixed cost of a 9B model in CI. `ollama
       # pull` verifies the digest and no-ops when the blobs are already present.
       - name: Cache ollama model
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ${{ env.OLLAMA_MODELS }}
           key: ollama-${{ runner.os }}-${{ env.OLLAMA_MODEL }}
