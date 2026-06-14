@@ -5,7 +5,11 @@ from __future__ import annotations
 import pytest
 
 from lgtmaybe.core.models import Provider
-from lgtmaybe.providers.credentials import resolve_credentials
+from lgtmaybe.providers.credentials import (
+    _default_aws_probe,
+    _default_gcp_probe,
+    resolve_credentials,
+)
 
 # ---- probe stubs ----
 
@@ -186,3 +190,89 @@ class TestOllama:
     def test_ollama_default_api_base_is_localhost(self) -> None:
         config = resolve_credentials(Provider.ollama)
         assert "localhost" in (config.api_base or "")
+
+
+_GCP_ENV_VARS = (
+    "GOOGLE_APPLICATION_CREDENTIALS",
+    "GOOGLE_CLOUD_PROJECT",
+    "GCLOUD_PROJECT",
+    "VERTEXAI_PROJECT",
+    "CLOUDSDK_CORE_PROJECT",
+    "CLOUDSDK_CONFIG",
+)
+
+_AWS_ENV_VARS = (
+    "AWS_ACCESS_KEY_ID",
+    "AWS_PROFILE",
+    "AWS_ROLE_ARN",
+    "AWS_WEB_IDENTITY_TOKEN_FILE",
+    "AWS_SHARED_CREDENTIALS_FILE",
+    "AWS_CONFIG_FILE",
+)
+
+
+def _clear(monkeypatch: pytest.MonkeyPatch, names: tuple[str, ...], home: str) -> None:
+    for name in names:
+        monkeypatch.delenv(name, raising=False)
+    # Redirect HOME so a real ~/.config/gcloud or ~/.aws on the dev box can't leak in.
+    monkeypatch.setenv("HOME", home)
+
+
+class TestDefaultGcpProbe:
+    """The real ambient-GCP probe must recognise the documented local Vertex setup."""
+
+    def test_vertexai_project_alone_is_detected(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path
+    ) -> None:
+        _clear(monkeypatch, _GCP_ENV_VARS, str(tmp_path))
+        monkeypatch.setenv("VERTEXAI_PROJECT", "my-project")
+        assert _default_gcp_probe() is True
+
+    def test_cloudsdk_core_project_is_detected(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path
+    ) -> None:
+        _clear(monkeypatch, _GCP_ENV_VARS, str(tmp_path))
+        monkeypatch.setenv("CLOUDSDK_CORE_PROJECT", "my-project")
+        assert _default_gcp_probe() is True
+
+    def test_adc_well_known_file_is_detected(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path
+    ) -> None:
+        """`gcloud auth application-default login` writes this file and sets no env var."""
+        _clear(monkeypatch, _GCP_ENV_VARS, str(tmp_path))
+        gcloud_dir = tmp_path / "gcloud"
+        gcloud_dir.mkdir()
+        (gcloud_dir / "application_default_credentials.json").write_text("{}")
+        monkeypatch.setenv("CLOUDSDK_CONFIG", str(gcloud_dir))
+        assert _default_gcp_probe() is True
+
+    def test_no_creds_anywhere_is_absent(self, monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+        _clear(monkeypatch, _GCP_ENV_VARS, str(tmp_path))
+        monkeypatch.setenv("CLOUDSDK_CONFIG", str(tmp_path / "empty"))
+        assert _default_gcp_probe() is False
+
+    def test_vertex_resolves_keyless_with_only_vertexai_project(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path
+    ) -> None:
+        """End-to-end: the documented local flow no longer raises."""
+        _clear(monkeypatch, _GCP_ENV_VARS, str(tmp_path))
+        monkeypatch.setenv("VERTEXAI_PROJECT", "my-project")
+        config = resolve_credentials(Provider.vertex)
+        assert config.api_key is None
+
+
+class TestDefaultAwsProbe:
+    """The real ambient-AWS probe must recognise a shared-credentials file (`~/.aws`)."""
+
+    def test_shared_credentials_file_is_detected(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path
+    ) -> None:
+        _clear(monkeypatch, _AWS_ENV_VARS, str(tmp_path))
+        creds = tmp_path / "credentials"
+        creds.write_text("[default]\naws_access_key_id = AKIA\n")
+        monkeypatch.setenv("AWS_SHARED_CREDENTIALS_FILE", str(creds))
+        assert _default_aws_probe() is True
+
+    def test_no_creds_anywhere_is_absent(self, monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+        _clear(monkeypatch, _AWS_ENV_VARS, str(tmp_path))
+        assert _default_aws_probe() is False

@@ -49,6 +49,7 @@ The model identifier for the chosen provider. Format varies by provider:
 | openrouter | `anthropic/claude-sonnet-4-6` |
 | bedrock | `anthropic.claude-sonnet-4-6`, `anthropic.claude-haiku-4-5` |
 | vertex | `gemini-3-pro`, `gemini-3.5-flash` |
+| azure | your deployment name, e.g. `my-gpt-4o-deployment` (not the upstream model id — see [Review with Azure](review-with-azure.md)) |
 | ollama | `qwen3.6:27b`, `gemma4:e4b` |
 
 ### min_severity

@@ -111,27 +111,34 @@ then reference it as `api_key` above.
 
 ## Keyless cloud workflows
 
-Bedrock (AWS OIDC) and Vertex (GCP WIF) need **no API keys in secrets** — the
-action performs the keyless token exchange for you when you pass `aws_role_arn`
-or `gcp_wif_provider`. Both require `id-token: write` permission. See:
+Bedrock (AWS OIDC), Vertex (GCP WIF), and Azure (Entra OIDC) need **no API keys
+in secrets** — the action performs the keyless token exchange for you when you
+pass `aws_role_arn`, `gcp_wif_provider`, or `azure_client_id`. All require
+`id-token: write` permission. See:
 
 - [Review with Bedrock OIDC](./review-with-bedrock-oidc.md)
 - [Review with Vertex WIF](./review-with-vertex-wif.md)
+- [Review with Azure OpenAI](./review-with-azure.md)
 
 ## Action inputs
 
 | Input | Default | Description |
 |---|---|---|
-| `provider` | — | One of: `openai`, `openrouter`, `anthropic`, `bedrock`, `vertex`, `ollama` |
+| `provider` | — | One of: `openai`, `openrouter`, `anthropic`, `bedrock`, `vertex`, `azure`, `ollama` |
 | `model` | — | Model identifier for the chosen provider |
 | `fallback_model` | — | Model to retry with if the primary model fails |
-| `api_key` | — | API key for key-based providers (leave empty for bedrock/vertex) |
+| `api_key` | — | API key for key-based providers (leave empty for bedrock/vertex/ollama and keyless azure) |
+| `api_base` | — | Resource endpoint for azure (`https://<resource>.openai.azure.com`), or a custom base URL for other providers |
 | `timeout` | provider default (ollama 300s, cloud 60s) | Per-request timeout in seconds for each model call |
 | `temperature` | `0.0` | Sampling temperature (0.0 = deterministic) |
+| `num_ctx` | `16384` | Ollama context window (ollama only; ignored for hosted providers) |
+| `max_input_tokens` | `100000` | Token budget per model call before the diff is split into batches (any provider) |
 | `aws_role_arn` | — | IAM role ARN to assume via OIDC for bedrock (keyless) |
 | `aws_region` | `us-east-1` | AWS region for bedrock |
 | `gcp_wif_provider` | — | Workload Identity Federation provider resource name for vertex |
 | `gcp_service_account` | — | GCP service account email to impersonate via WIF |
+| `azure_client_id` | — | Entra (Azure AD) client ID with a federated credential — keyless azure via OIDC |
+| `azure_tenant_id` | — | Entra (Azure AD) tenant ID for keyless azure |
 | `config_path` | `.lgtmaybe.yml` | Path to the config file, relative to repo root |
 | `github_token` | `${{ github.token }}` | Token for reading the PR and posting the review |
 | `image` | `ghcr.io/lgtmaybe/lgtmaybe:v1` | Override the container image (advanced) |
