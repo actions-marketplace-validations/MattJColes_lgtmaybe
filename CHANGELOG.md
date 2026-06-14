@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.3](https://github.com/MattJColes/lgtmaybe/compare/lgtmaybe-v0.1.2...lgtmaybe-v0.1.3) (2026-06-14)
+
+
+### Bug Fixes
+
+* **provider:** drop model-unsupported params instead of failing the review ([ff1bf3b](https://github.com/MattJColes/lgtmaybe/commit/ff1bf3b6b8af670b5729dbb4d225d96e6aec5c91))
+
 ## [0.1.2](https://github.com/MattJColes/lgtmaybe/compare/lgtmaybe-v0.1.1...lgtmaybe-v0.1.2) (2026-06-14)
 
 
