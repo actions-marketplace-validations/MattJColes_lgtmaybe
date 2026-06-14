@@ -45,7 +45,11 @@ _SEVERITY_ORDER: list[Severity] = [
 
 
 class ReviewCategory(StrEnum):
-    """A single review lens. The engine asks for each one in its own LLM call."""
+    """A single review lens. The engine asks for each one in its own LLM call.
+
+    ``intent`` checks the diff against the PR's stated intent (title, description,
+    commit messages); it only runs when the context carries some stated intent.
+    """
 
     security = "security"
     correctness = "correctness"
@@ -54,6 +58,7 @@ class ReviewCategory(StrEnum):
     documentation = "documentation"
     performance = "performance"
     complexity = "complexity"
+    intent = "intent"
 
 
 class Provider(StrEnum):
@@ -133,6 +138,13 @@ class PRContext(_Strict):
     # the gateway so the engine can pad hunks with surrounding lines; empty when
     # unavailable (the engine then reviews the bare diff).
     file_contents: dict[str, str] = Field(default_factory=dict)
+    # The PR's stated intent: title + description on GitHub, commit names (the
+    # first line of each commit message) everywhere. Attacker-controlled text —
+    # the engine redacts it and wraps it as untrusted data before it reaches the
+    # model, and only the intent lens carries it. Empty intent skips that lens.
+    title: str = ""
+    description: str = ""
+    commit_messages: list[str] = Field(default_factory=list)
 
 
 class ReviewConfig(_Strict):
@@ -148,7 +160,7 @@ class ReviewConfig(_Strict):
     max_input_tokens: int = 100_000
     # Ollama's context window (num_ctx). Ollama only — hosted providers manage
     # their own context window server-side and litellm won't forward this, so it
-    # is ignored for them. None keeps the factory default (16384); raise it so a
+    # is ignored for them. None keeps the factory default (32768); raise it so a
     # large multi-file diff plus the emitted findings isn't truncated.
     num_ctx: int | None = None
     # Ceiling on surrounding context lines added around each hunk. The engine
@@ -167,7 +179,9 @@ class ReviewConfig(_Strict):
     reflect: bool = True
     # Review lenses to run. Each is asked in its own concurrent LLM call and the
     # findings are merged + deduped. Defaults to all of them; narrow it to trade
-    # thoroughness for fewer calls.
+    # thoroughness for fewer calls. `default=` (not default_factory) on purpose:
+    # pydantic copies it per instance, and only a plain default reaches the JSON
+    # schema that docs/generate_reference.py renders.
     categories: list[ReviewCategory] = Field(default=list(ReviewCategory))
     # Constrain model output to the findings JSON schema via litellm
     # response_format (provider-native JSON mode). Keeps models from returning

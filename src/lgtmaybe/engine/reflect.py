@@ -25,6 +25,11 @@ one per finding.
 Keep a finding only if you are confident it is a real issue in the actual changed code.
 Drop it if it is speculative, out of scope, or referring to unchanged lines.
 
+Gap findings are valid types, not false positives: a missing test, a missing or stale \
+docstring, a performance or complexity concern, or a mismatch with the PR's stated intent. \
+For those, judge whether the gap or mismatch is real — not whether the changed line \
+itself is buggy.
+
 Return ONLY the JSON object, nothing else. Example:
 {"verdicts": [{"index": 0, "keep": true}, {"index": 1, "keep": false}]}
 """

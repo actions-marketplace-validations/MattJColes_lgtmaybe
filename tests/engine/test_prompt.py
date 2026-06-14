@@ -17,7 +17,17 @@ _SIGNATURE = {
     ReviewCategory.documentation: "docstring",
     ReviewCategory.performance: "n+1",
     ReviewCategory.complexity: "cyclomatic",
+    ReviewCategory.intent: "stated intent",
 }
+
+
+def test_build_system_prompt_is_cached() -> None:
+    """The per-category prompts are deterministic, so building one twice must
+    return the identical cached object (the engine rebuilds them every batch)."""
+    assert build_system_prompt(ReviewCategory.security) is build_system_prompt(
+        ReviewCategory.security
+    )
+    assert build_system_prompt() is build_system_prompt()
 
 
 def test_prompt_contains_all_severity_levels() -> None:
@@ -176,3 +186,114 @@ def test_full_prompt_still_contains_every_category() -> None:
     prompt = build_system_prompt().lower()
     for marker in _SIGNATURE.values():
         assert marker in prompt
+
+
+# ---------------------------------------------------------------------------
+# Topic coverage: concurrency, numeric/time bugs, CI/IaC, weak tests, stale docs
+# ---------------------------------------------------------------------------
+
+
+def test_prompt_asks_for_concurrency_and_race_review() -> None:
+    """Races, TOCTOU, and async mistakes are first-class correctness targets."""
+    prompt = build_system_prompt(ReviewCategory.correctness).lower()
+    assert "race" in prompt
+    assert "toctou" in prompt
+    assert "await" in prompt  # coroutine called without await / blocking in async
+
+
+def test_prompt_asks_for_numeric_and_datetime_review() -> None:
+    """Numeric and date/time bug classes are cued explicitly."""
+    prompt = build_system_prompt(ReviewCategory.correctness).lower()
+    assert "timezone" in prompt
+    assert "division by zero" in prompt
+    assert "float" in prompt
+    assert "mutable default" in prompt
+
+
+def test_prompt_names_csrf_redirect_xxe_and_mass_assignment() -> None:
+    prompt = build_system_prompt(ReviewCategory.security).lower()
+    assert "csrf" in prompt
+    assert "redirect" in prompt
+    assert "xxe" in prompt
+    assert "mass assignment" in prompt
+    assert "redos" in prompt or "backtracking" in prompt
+
+
+def test_prompt_covers_ci_and_iac_misconfiguration() -> None:
+    """Workflow/IaC files are a review surface, not just application code."""
+    prompt = build_system_prompt(ReviewCategory.security).lower()
+    assert "workflow" in prompt
+    assert "iam" in prompt
+    assert "container" in prompt
+    assert "pinned" in prompt or "sha" in prompt  # unpinned third-party actions
+
+
+def test_prompt_flags_weak_tests_not_just_missing_ones() -> None:
+    prompt = build_system_prompt(ReviewCategory.tests).lower()
+    assert "assertion-free" in prompt or "no assertions" in prompt
+    assert "mock" in prompt
+    assert "sleep" in prompt
+
+
+def test_prompt_flags_stale_documentation() -> None:
+    """A docstring/comment the diff just made wrong is worse than no docs."""
+    prompt = build_system_prompt(ReviewCategory.documentation).lower()
+    assert "stale" in prompt
+    assert "contradict" in prompt
+
+
+def test_prompt_flags_unbounded_growth_and_leaks() -> None:
+    prompt = build_system_prompt(ReviewCategory.performance).lower()
+    assert "cache" in prompt
+    assert "eviction" in prompt
+
+
+def test_prompt_flags_typosquats_and_license_conflicts() -> None:
+    prompt = build_system_prompt(ReviewCategory.deprecation).lower()
+    assert "typosquat" in prompt
+    assert "license" in prompt
+
+
+# ---------------------------------------------------------------------------
+# Intent lens: does the change do what the PR says it does?
+# ---------------------------------------------------------------------------
+
+
+def test_prompt_asks_for_intent_review() -> None:
+    prompt = build_system_prompt(ReviewCategory.intent).lower()
+    assert "stated intent" in prompt
+    assert "out-of-scope" in prompt or "out of scope" in prompt
+    assert "commit" in prompt  # commit messages carry the intent on the CLI
+
+
+def test_intent_prompt_treats_intent_text_as_data() -> None:
+    """Intent text is attacker-controlled; the lens must not obey it."""
+    prompt = build_system_prompt(ReviewCategory.intent).lower()
+    assert "untrusted" in prompt or "not" in prompt and "instructions" in prompt
+
+
+# ---------------------------------------------------------------------------
+# Prompt mechanics: worked example per lens, line-number mapping
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("category", list(ReviewCategory), ids=lambda c: c.value)
+def test_each_focused_prompt_carries_a_worked_example(category: ReviewCategory) -> None:
+    """Every lens gets a category-appropriate few-shot example (a security-flavoured
+    example on a docs/tests lens anchors the model to the wrong finding type)."""
+    prompt = build_system_prompt(category)
+    assert prompt.count("## Example") == 1
+    assert "@@ -" in prompt  # the example diff shows a real hunk header
+
+
+def test_prompt_explains_line_number_mapping() -> None:
+    """`line` is a file line number computed from the hunk header — a wrong line
+    means the finding silently maps to nothing and is dropped."""
+    prompt = build_system_prompt()
+    assert "hunk header" in prompt.lower()
+    assert "LEFT" in prompt and "RIGHT" in prompt
+
+
+def test_prompt_asks_for_one_finding_per_distinct_issue() -> None:
+    prompt = build_system_prompt().lower()
+    assert "each distinct issue" in prompt

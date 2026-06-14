@@ -124,9 +124,10 @@ class TestBuildProvider:
         assert "think" not in provider.default_opts
 
     def test_ollama_sets_a_large_num_ctx(self) -> None:
-        # The default ollama context (~4k) truncates real review prompts.
+        # The default ollama context (~4k) truncates real review prompts; the
+        # default matches what the e2e-ollama workflow needs for a multi-file diff.
         provider = build_provider(Provider.ollama, "qwen3.6:35b", api_base="http://localhost:11434")
-        assert provider.default_opts.get("num_ctx", 0) >= 16384
+        assert provider.default_opts.get("num_ctx", 0) >= 32768
 
     def test_ollama_num_ctx_is_overridable(self) -> None:
         provider = build_provider(

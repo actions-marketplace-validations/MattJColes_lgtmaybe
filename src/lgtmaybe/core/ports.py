@@ -35,8 +35,15 @@ class GitHubGateway(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def post_review(self, findings: list[ReviewFinding], summary: str) -> None:
-        """Post batched inline comments + one summary, idempotently."""
+    def post_review(
+        self, findings: list[ReviewFinding], summary: str, diff: str | None = None
+    ) -> None:
+        """Post batched inline comments + one summary, idempotently.
+
+        ``diff`` is the already-fetched PR diff used to map findings to inline
+        positions; when omitted the adapter re-fetches it. Callers that already
+        hold the context should pass it to avoid a redundant round-trip.
+        """
         raise NotImplementedError
 
 

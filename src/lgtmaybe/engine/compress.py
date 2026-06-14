@@ -6,7 +6,16 @@ Provides a dynamic context-line calculator for the remaining budget.
 
 from __future__ import annotations
 
+from functools import lru_cache
+from typing import TYPE_CHECKING, Protocol
+
 from lgtmaybe.core.diffparse import parse_hunk_header
+
+if TYPE_CHECKING:
+
+    class _Encoder(Protocol):
+        def encode(self, text: str) -> list[int]: ...
+
 
 _MAX_CONTEXT_LINES = 20
 _MIN_CONTEXT_LINES = 0
@@ -16,15 +25,28 @@ _MIN_CONTEXT_LINES = 0
 _SCALE = 5_000
 
 
-def count_tokens(text: str) -> int:
-    """Return the token count for *text* using tiktoken, with a len/4 fallback."""
+@lru_cache(maxsize=1)
+def _token_encoder() -> _Encoder | None:
+    """Return a cached tiktoken encoder, or None if tiktoken is unavailable.
+
+    Building the encoder is slow, and ``count_tokens`` runs once per file during
+    batching — so resolve it once and reuse it rather than re-importing and
+    re-loading the encoding on every call.
+    """
     try:
         import tiktoken
 
-        enc = tiktoken.get_encoding("cl100k_base")
-        return len(enc.encode(text))
+        return tiktoken.get_encoding("cl100k_base")
     except Exception:
-        return max(1, len(text) // 4)
+        return None
+
+
+def count_tokens(text: str) -> int:
+    """Return the token count for *text* using tiktoken, with a len/4 fallback."""
+    enc = _token_encoder()
+    if enc is not None:
+        return len(enc.encode(text))
+    return max(1, len(text) // 4)
 
 
 def batch_files(

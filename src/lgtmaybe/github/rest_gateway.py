@@ -11,6 +11,7 @@ All network calls carry an explicit timeout.
 from __future__ import annotations
 
 import re
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 import httpx
@@ -23,8 +24,28 @@ from .diff import PositionMap, build_position_map, is_reviewable
 _TIMEOUT = httpx.Timeout(30.0)
 _MARKER = "<!-- lgtmaybe -->"
 
+# Concurrency for the per-file head-content fetch. The contents are independent
+# GETs, so fetching them serially is pure round-trip latency on a many-file PR.
+_CONTENT_FETCH_WORKERS = 8
+
 # Link header rel="next" parser
 _LINK_NEXT = re.compile(r'<([^>]+)>;\s*rel="next"')
+
+# Zero-width space, inserted to break up a triple-backtick run so it can't be
+# parsed as a Markdown fence delimiter.
+_ZWSP = "​"
+
+
+def _defang_fences(text: str) -> str:
+    """Neutralise embedded triple-backticks so a model suggestion can't break out
+    of the ```suggestion fence and inject Markdown (e.g. a phishing link) below it.
+
+    The diff is attacker-controlled on a fork PR, so a prompt injection that
+    survives the guard could steer the model into fence-breaking output. We insert
+    zero-width spaces between the backticks: the run no longer reads as a fence,
+    while the text stays visually intact.
+    """
+    return text.replace("```", f"`{_ZWSP}`{_ZWSP}`")
 
 
 class RestGitHubGateway(GitHubGateway):
@@ -84,14 +105,15 @@ class RestGitHubGateway(GitHubGateway):
 
         # Fetch head-revision text of reviewable files so the engine can pad hunks
         # with surrounding context. Read-only API fetch — never a checkout — and
-        # the engine redacts it before it leaves the process.
+        # the engine redacts it before it leaves the process. The fetches are
+        # independent, so run them concurrently to cut round-trip latency.
+        reviewable = [path for path in changed_files if is_reviewable(path)]
         file_contents: dict[str, str] = {}
-        for path in changed_files:
-            if not is_reviewable(path):
-                continue
-            content = self._get_file_content(path, head_sha)
-            if content is not None:
-                file_contents[path] = content
+        if reviewable:
+            workers = min(_CONTENT_FETCH_WORKERS, len(reviewable))
+            with ThreadPoolExecutor(max_workers=workers) as pool:
+                results = pool.map(lambda p: (p, self._get_file_content(p, head_sha)), reviewable)
+                file_contents = {path: content for path, content in results if content is not None}
 
         return PRContext(
             diff=diff,
@@ -101,6 +123,9 @@ class RestGitHubGateway(GitHubGateway):
             repo=self._repo,
             pr_number=self._pr_number,
             file_contents=file_contents,
+            title=meta.get("title") or "",
+            description=meta.get("body") or "",
+            commit_messages=self._fetch_commit_subjects(),
         )
 
     def post_review(
@@ -200,6 +225,36 @@ class RestGitHubGateway(GitHubGateway):
             return None
         return resp.text
 
+    def _fetch_commit_subjects(self) -> list[str]:
+        """First line of each commit message on the PR (the commit "name").
+
+        Stated-intent context for the engine's intent lens. Auxiliary, so it
+        degrades like file contents: any fetch error returns [] (the intent lens
+        still has the PR title/description) rather than failing the review.
+        """
+        url: str | None = (
+            f"https://api.github.com/repos/{self._repo}/pulls/{self._pr_number}"
+            "/commits?per_page=100"
+        )
+        subjects: list[str] = []
+        try:
+            while url is not None:
+                resp = self._client.get(
+                    url,
+                    headers={**self._headers, "Accept": "application/vnd.github+json"},
+                    timeout=_TIMEOUT,
+                )
+                resp.raise_for_status()
+                for item in resp.json():
+                    message: str = (item.get("commit") or {}).get("message") or ""
+                    first_line = message.splitlines()[0].strip() if message else ""
+                    if first_line:
+                        subjects.append(first_line)
+                url = self._next_link(resp)
+        except httpx.HTTPError:
+            return []
+        return subjects
+
     def _fetch_all_files(self, first_url: str) -> list[str]:
         """Follow Link rel=next pagination and collect all filenames."""
         files: list[str] = []
@@ -223,14 +278,28 @@ class RestGitHubGateway(GitHubGateway):
         return m.group(1) if m else None
 
     def _find_existing_review(self) -> int | None:
-        """Return the ID of the first review whose body contains the marker, or None."""
-        reviews_url = f"https://api.github.com/repos/{self._repo}/pulls/{self._pr_number}/reviews"
-        reviews = self._get_json(reviews_url)
-        for review in reviews:
-            body: str = review.get("body", "") or ""
-            if self._marker in body:
-                review_id: int = review["id"]
-                return review_id
+        """Return the ID of the first review whose body contains the marker, or None.
+
+        Follows Link rel=next pagination — a busy PR can hold more than one page
+        of reviews, and missing the marker there would duplicate the review
+        instead of updating it.
+        """
+        url: str | None = (
+            f"https://api.github.com/repos/{self._repo}/pulls/{self._pr_number}/reviews"
+        )
+        while url is not None:
+            resp = self._client.get(
+                url,
+                headers={**self._headers, "Accept": "application/vnd.github+json"},
+                timeout=_TIMEOUT,
+            )
+            resp.raise_for_status()
+            for review in resp.json():
+                body: str = review.get("body", "") or ""
+                if self._marker in body:
+                    review_id: int = review["id"]
+                    return review_id
+            url = self._next_link(resp)
         return None
 
     @staticmethod
@@ -250,6 +319,6 @@ class RestGitHubGateway(GitHubGateway):
                 "body": f"**[{f.severity.upper()}] {f.title}**\n\n{f.body}",
             }
             if f.suggestion is not None:
-                comment["body"] += f"\n\n```suggestion\n{f.suggestion}\n```"
+                comment["body"] += f"\n\n```suggestion\n{_defang_fences(f.suggestion)}\n```"
             comments.append(comment)
         return comments

@@ -56,12 +56,16 @@ fetch → redact → split + skip generated → file cap → expand hunks → ba
 
 The fan-out is the key non-obvious bit: the system prompt is composed per
 `ReviewCategory` (security, correctness, deprecation, tests, documentation,
-performance, complexity), and
+performance, complexity, intent), and
 the engine issues **one concurrent model call per category per batch** (a
 `ThreadPoolExecutor` over the synchronous provider port), then merges and
 de-duplicates the findings before the reflection pass. `ReviewConfig.categories`
-selects which lenses run (default: all seven) — it's a `.lgtmaybe.yml` knob, not a
-CLI flag. Narrowing it means fewer model calls.
+selects which lenses run (default: all eight) — it's a `.lgtmaybe.yml` knob, not a
+CLI flag. Narrowing it means fewer model calls. The `intent` lens reads the PR's
+stated intent (title/description/commit names on GitHub; local `git log` commit
+names on the CLI, in both branch and `--working` mode) and is skipped
+automatically when nothing states an intent — e.g. no commits beyond the base
+branch yet.
 
 ## Running locally
 
@@ -86,29 +90,29 @@ pushed or have an open PR. It runs `git diff <base>...HEAD`, where the three-dot
 form means "everything this branch added since it forked off `<base>`" (it uses
 the merge-base, so changes that landed on mainline meanwhile are ignored).
 
-`--base` chooses what mainline is. It defaults to `origin/HEAD`, falling back to
-the literal `main`:
+`--base` chooses what mainline is. It defaults to the **remote primary branch**,
+resolved as `origin/HEAD` → `origin/main` → `origin/master` → local `main` →
+local `master` (→ `HEAD`, an empty comparison, when none exist):
 
 ```bash
 uv run lgtmaybe review --base main      # diff against your LOCAL main
 uv run lgtmaybe review --base develop   # forked off a different branch
 uv run lgtmaybe review --base 1a2b3c4   # or an exact commit
-uv run lgtmaybe review --working        # uncommitted changes, not yet committed
+uv run lgtmaybe review --working        # whole worktree (commits + uncommitted) vs base
+uv run lgtmaybe review --uncommitted    # only uncommitted edits, vs HEAD
 ```
 
-Two cases need an explicit `--base`:
-
-- You have an `origin` remote but haven't fetched — the default `origin/HEAD` can
-  be **stale**; pass `--base main` to use your local mainline.
-- There's no `origin` **and** no local branch named `main` — the default can't
-  resolve and you'll get a clear `git` error; pass your actual base branch.
+One case needs an explicit `--base`: you have an `origin` remote but haven't
+fetched — the remote-tracking refs can be **stale**; pass `--base main` to use
+your local mainline (or just `git fetch` first).
 
 Useful flags for local iteration (full list: `uv run lgtmaybe review --help`):
 
 | Flag | What it does |
 |---|---|
-| `--base <ref>` | Diff the branch against `<ref>` (default: remote default branch, else `main`) |
-| `--working` | Review uncommitted working-tree changes instead of branch-vs-base |
+| `--base <ref>` | Diff against `<ref>` (default: remote primary branch — `origin/HEAD` → `origin/main` → `origin/master` → `main` → `master`) |
+| `--working` | Review the whole worktree (branch commits + uncommitted edits) against the base |
+| `--uncommitted` | Review only uncommitted working-tree edits, vs HEAD (mutually exclusive with `--working`) |
 | `--json` / `--format agent` | Machine-readable output (JSON array, or correction instructions for an AI agent) |
 | `--min-severity medium` | Only surface findings at/above a severity |
 | `--max-files 10` | Cap how many changed files are reviewed |
@@ -160,7 +164,8 @@ A few things worth knowing when a local run misbehaves:
   can therefore "succeed" with zero findings even though every call struggled —
   check the debug log, and prefer a model that follows the structured-output
   instruction. `parse.py` tolerates fenced JSON but not arbitrary prose.
-- **Fan-out makes N calls** (one per category, five by default). They run
+- **Fan-out makes N calls** (one per category — all eight by default, seven when
+  nothing states an intent). They run
   **concurrently for cloud** providers but **serially for ollama** (a single
   ollama instance serves one request at a time, so concurrency would only cause
   timeouts). A slow local model therefore takes ≈ `categories × per-call time` —

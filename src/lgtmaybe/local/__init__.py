@@ -20,23 +20,48 @@ def local_pr_context(
     *,
     base: str | None = None,
     working: bool = False,
+    uncommitted: bool = False,
     cwd: Path | None = None,
 ) -> PRContext:
-    """Return a PRContext for the local repo.
+    """Return a PRContext for the local repo, compared against the remote primary branch.
 
-    ``working`` reviews uncommitted changes (``git diff HEAD``). Otherwise the
-    current branch is diffed against ``base`` (``git diff <base>...HEAD``);
-    ``base`` defaults to the remote's default branch, falling back to ``main``.
-    Raises ValueError when git is missing or this is not a git repository.
+    Branch and ``working`` mode resolve the same base — the remote's default
+    branch (``origin/HEAD``, else the first of ``origin/main``/``origin/master``/
+    ``main``/``master`` that exists), overridable with ``base``:
+
+    - default: the branch's committed changes (``git diff <base>...HEAD``).
+    - ``working``: the whole worktree — branch commits **plus** uncommitted
+      edits — diffed against the merge-base with ``base``, so commits that only
+      exist on the remote don't show up as reversed changes.
+    - ``uncommitted``: the narrow view — only working-tree edits, vs HEAD
+      (no base involved). Mutually exclusive with ``working``.
+
+    Commit subjects between the base and HEAD are collected in branch and
+    working mode (the stated intent for the intent lens); uncommitted edits are
+    not described by any commit, so ``uncommitted`` mode collects none. Raises
+    ValueError when git is missing or this is not a git repository.
     """
+    if working and uncommitted:
+        raise ValueError("--working and --uncommitted are mutually exclusive")
+
     _ensure_repo(cwd)
 
-    if working:
-        base_ref = "HEAD"
+    if uncommitted:
         spec = "HEAD"
+        base_sha = _git(cwd, "rev-parse", "HEAD").strip()
+        commit_messages: list[str] = []
     else:
         base_ref = base or _default_base(cwd)
-        spec = f"{base_ref}...HEAD"
+        if working:
+            merge_base = _git(cwd, "merge-base", base_ref, "HEAD").strip()
+            spec = merge_base
+            base_sha = merge_base
+        else:
+            spec = f"{base_ref}...HEAD"
+            base_sha = _git(cwd, "rev-parse", base_ref).strip()
+        # Commit names are the local stated intent — the CLI counterpart to a PR
+        # title — feeding the intent lens. Empty when HEAD sits on the base.
+        commit_messages = _commit_subjects(cwd, base_ref)
 
     diff = _git(cwd, "diff", spec)
     name_output = _git(cwd, "diff", "--name-only", spec)
@@ -45,10 +70,11 @@ def local_pr_context(
     return PRContext(
         diff=diff,
         changed_files=changed_files,
-        base_sha=_git(cwd, "rev-parse", base_ref).strip(),
+        base_sha=base_sha,
         head_sha=_git(cwd, "rev-parse", "HEAD").strip(),
         repo=_repo_name(cwd),
         pr_number=0,
+        commit_messages=commit_messages,
     )
 
 
@@ -80,12 +106,37 @@ def _ensure_repo(cwd: Path | None) -> None:
         raise ValueError("not a git repository (run lgtmaybe from inside one)")
 
 
+def _commit_subjects(cwd: Path | None, base_ref: str) -> list[str]:
+    """Subject lines of the branch's commits (newest first), excluding *base_ref*."""
+    log = _git(cwd, "log", "--format=%s", f"{base_ref}..HEAD")
+    return [line for line in log.splitlines() if line.strip()]
+
+
 def _default_base(cwd: Path | None) -> str:
-    """The remote's default branch (e.g. origin/main), or 'main' if unknown."""
+    """The remote primary branch, falling back through local names.
+
+    ``origin/HEAD`` is only set by a normal clone of a non-empty repo; after
+    ``git remote add`` (or cloning an empty repo) it is missing, and a bare
+    ``main`` fallback would silently compare against a possibly stale LOCAL
+    main. So prefer the remote-tracking refs before any local branch, and end
+    at HEAD (an empty comparison) rather than failing.
+    """
     try:
         return _git(cwd, "rev-parse", "--abbrev-ref", "origin/HEAD").strip()
     except ValueError:
-        return "main"
+        pass
+    for candidate in ("origin/main", "origin/master", "main", "master"):
+        if _ref_exists(cwd, candidate):
+            return candidate
+    return "HEAD"
+
+
+def _ref_exists(cwd: Path | None, ref: str) -> bool:
+    try:
+        _git(cwd, "rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}")
+    except ValueError:
+        return False
+    return True
 
 
 def _repo_name(cwd: Path | None) -> str:

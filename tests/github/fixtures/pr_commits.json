@@ -1,0 +1,14 @@
+[
+  {
+    "sha": "c1",
+    "commit": {
+      "message": "feat: add rate limiting\n\nA longer body that is not part of the commit name."
+    }
+  },
+  {
+    "sha": "c2",
+    "commit": {
+      "message": "fix: handle empty bucket"
+    }
+  }
+]

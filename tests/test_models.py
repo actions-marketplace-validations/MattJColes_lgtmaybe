@@ -115,6 +115,32 @@ def test_review_config_accepts_reflect_false() -> None:
     assert cfg.reflect is False
 
 
+def test_pr_context_intent_fields_default_empty() -> None:
+    """Stated-intent fields (title/description/commit messages) are optional so
+    existing gateways and fixtures keep working; empty intent skips the lens."""
+    ctx = PRContext(diff="", changed_files=[], base_sha="a", head_sha="b", repo="r", pr_number=1)
+    assert ctx.title == ""
+    assert ctx.description == ""
+    assert ctx.commit_messages == []
+
+
+def test_pr_context_carries_stated_intent() -> None:
+    ctx = PRContext(
+        diff="",
+        changed_files=[],
+        base_sha="a",
+        head_sha="b",
+        repo="r",
+        pr_number=1,
+        title="Add rate limiting",
+        description="Limits login attempts.",
+        commit_messages=["feat: add rate limiting"],
+    )
+    restored = PRContext.model_validate_json(ctx.model_dump_json())
+    assert restored.title == "Add rate limiting"
+    assert restored.commit_messages == ["feat: add rate limiting"]
+
+
 def test_extra_fields_forbidden() -> None:
     with pytest.raises(ValueError):
         ProviderResult.model_validate(

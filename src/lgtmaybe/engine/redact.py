@@ -28,6 +28,13 @@ _SIMPLE_PATTERNS: list[re.Pattern[str]] = [
     re.compile(r"AIza[0-9A-Za-z\-_]{35}"),
     # Stripe live/test secret keys
     re.compile(r"sk_(?:live|test)_[A-Za-z0-9]{16,}"),
+    # JSON Web Tokens: header.payload.signature, each base64url. The payload
+    # carries claims/PII, so the whole token must go — not just up to a dot.
+    re.compile(r"eyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}"),
+    # npm automation/auth tokens: npm_ followed by 36 base62 chars.
+    re.compile(r"npm_[A-Za-z0-9]{36,}"),
+    # PyPI API tokens: pypi- followed by a long base64 macaroon.
+    re.compile(r"pypi-[A-Za-z0-9_-]{16,}"),
     # PEM private-key blocks (RSA/EC/OPENSSH/generic) — match the whole block.
     re.compile(
         r"-----BEGIN (?:RSA |EC |OPENSSH |DSA |PGP )?PRIVATE KEY-----"
@@ -57,7 +64,10 @@ _VALUE_PATTERNS: list[re.Pattern[str]] = [
         r"(?P<secret>[A-Za-z0-9\-._~+/=]{16,})"
     ),
     # Credentials embedded in connection-string URLs: scheme://user:secret@host
-    re.compile(r"[a-z][a-z0-9+.\-]*://[^:/?#\s]+:(?P<secret>[^@/?#\s]{4,})@"),
+    re.compile(r"(?i)[a-z][a-z0-9+.\-]*://[^:/?#\s]+:(?P<secret>[^@/?#\s]{4,})@"),
+    # Azure storage / Cosmos connection strings: ...;AccountKey=<base64>;...
+    # Only the key value is scrubbed; AccountName/EndpointSuffix stay readable.
+    re.compile(r"(?i)(?:Account|Shared(?:Access)?)Key\s*=\s*(?P<secret>[A-Za-z0-9/+]{32,}={0,2})"),
 ]
 
 

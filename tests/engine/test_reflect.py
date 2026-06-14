@@ -134,6 +134,19 @@ def test_verdict_with_think_block_and_fence_parses() -> None:
     assert survivors == []  # the verdict (keep=false) was parsed through the noise
 
 
+def test_reflect_prompt_names_gap_findings_as_valid_types() -> None:
+    """The keep-criterion must not read as "only bugs in the changed line count":
+    a literal-minded judge would otherwise systematically prune missing-test,
+    missing-doc, performance, and intent-mismatch findings."""
+    provider = _fake_with_verdict({0: True})
+
+    reflect_findings([_HIGH], _CTX, _CFG, provider)
+
+    system = provider.calls[0]["messages"][0]["content"].lower()
+    assert "missing test" in system or "missing-test" in system
+    assert "intent" in system
+
+
 def test_unparseable_verdict_keeps_all() -> None:
     provider = _fake_with_text("I'm not really sure about these.")
 

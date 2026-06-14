@@ -20,23 +20,31 @@ lgtmaybe sends one request per review containing:
   GitHub API — your code is never checked out or executed.
 - **PR metadata** — the repository name, PR number, base and head SHAs, and
   the list of changed file paths.
+- **The PR's stated intent** — the PR title, description, and the first line of
+  each commit message (on the CLI: the commit names from your local `git log`).
+  This feeds the **intent lens** ("does the PR do what it says?"). It is
+  redacted exactly like the diff, wrapped as untrusted data, and sent **only on
+  the intent lens's model call** — drop `intent` from `categories` in
+  `.lgtmaybe.yml` and it is never sent at all.
 - A **system prompt** — the fixed instructions that tell the model to return
   structured JSON findings.
 
 Nothing else is sent. lgtmaybe does not send:
 
-- PR title, description, or comments
+- PR comments or review threads
+- Commit message bodies (only the first line of each message)
 - Repository contents beyond the changed files (only their hunks plus the
   surrounding context lines described above)
 - Committer identity or email addresses
-- Any data from the repository's git history
+- Any other data from the repository's git history
 
 ## Secret redaction before egress
 
 Before the diff is sent to any external provider, lgtmaybe scans it for
 patterns that resemble secrets and replaces the matched values with
 `[REDACTED]`. The same scrub is applied to the surrounding context lines read
-from changed files. Recognised formats include:
+from changed files and to the stated-intent text (PR title, description, commit
+names). Recognised formats include:
 
 - **Cloud / provider keys** — AWS access key IDs (`AKIA…`), OpenAI keys
   (`sk-…`), Stripe secret keys (`sk_live_…`), and Google API keys (`AIza…`).
@@ -63,12 +71,14 @@ PR diff content is treated as untrusted input throughout the pipeline. lgtmaybe
 defends in depth (OWASP LLM01):
 
 1. The diff is wrapped in explicit `DIFF_START`/`DIFF_END` delimiters and labelled
-   as untrusted data.
-2. Any forged delimiter markers smuggled inside the diff are **neutralised**
-   before wrapping, so a malicious PR cannot close the data block early and
-   append its own instructions.
+   as untrusted data; the stated-intent text gets its own
+   `INTENT_START`/`INTENT_END` block with the same labelling.
+2. Any forged delimiter markers smuggled inside the diff or the intent text are
+   **neutralised** before wrapping — both marker families in both blocks — so a
+   malicious PR cannot close a data block early, append its own instructions, or
+   fake an intent block from inside the diff.
 3. The system prompt instructs the model to ignore any instructions embedded in
-   the diff that attempt to alter reviewer behaviour.
+   the diff or the intent text that attempt to alter reviewer behaviour.
 4. The model's response must validate against a strict JSON schema
    (`extra="forbid"`); drifted or injected fields are rejected rather than acted
    on.

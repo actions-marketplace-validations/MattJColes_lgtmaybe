@@ -24,7 +24,7 @@ from lgtmaybe.core.ports import Message, ProviderClient, ReviewEngine
 from lgtmaybe.github import is_reviewable
 
 from .compress import batch_files, context_lines_for_budget, count_tokens, expand_hunks
-from .injection import wrap_diff
+from .injection import wrap_diff, wrap_intent
 from .parse import ParseError, parse_findings
 from .prompt import build_system_prompt
 from .redact import redact
@@ -62,6 +62,17 @@ class LLMReviewEngine(ReviewEngine):
         """Run the review pipeline and return (findings, summary)."""
         # 1. Redact secrets from the diff before it leaves this process.
         clean_diff = redact(ctx.diff)
+
+        # 1b. Stated intent (PR title/description/commit names) for the intent
+        #     lens: redacted like the diff, wrapped as untrusted data, and only
+        #     ever sent on the intent call. No stated intent → skip that lens
+        #     rather than burn a model call judging the diff against nothing.
+        intent_text = _intent_text(ctx)
+        intent_block = wrap_intent(redact(intent_text)) if intent_text else None
+        categories = list(cfg.categories)
+        if ReviewCategory.intent in categories and intent_block is None:
+            categories.remove(ReviewCategory.intent)
+            _log.info("intent lens skipped — no stated intent (title/description/commits)")
 
         # 2. Split into per-file patches and drop generated/binary/vendored noise.
         file_patches = split_by_file(clean_diff, ctx.changed_files)
@@ -104,9 +115,11 @@ class LLMReviewEngine(ReviewEngine):
         for batch in batches:
             batch_diff = "\n".join(patch for _, patch in batch)
             wrapped = wrap_diff(batch_diff)
-            review_one = partial(self._review_category, wrapped, cfg.model, response_format)
+            review_one = partial(
+                self._review_category, wrapped, intent_block, cfg.model, response_format
+            )
             with ThreadPoolExecutor(max_workers=workers) as pool:
-                for findings, error in pool.map(review_one, cfg.categories):
+                for findings, error in pool.map(review_one, categories):
                     total_calls += 1
                     if error is not None:
                         failed_calls += 1
@@ -170,6 +183,7 @@ class LLMReviewEngine(ReviewEngine):
     def _review_category(
         self,
         wrapped: str,
+        intent_block: str | None,
         model: str,
         response_format: type[ReviewResult] | None,
         category: ReviewCategory,
@@ -181,9 +195,14 @@ class LLMReviewEngine(ReviewEngine):
         output — that the engine surfaces so a failure names its real cause instead
         of a generic "timeout". A failing category never aborts the others.
         """
+        user_content = wrapped
+        if category is ReviewCategory.intent and intent_block is not None:
+            # Only the intent lens pays the intent-block tokens (and its
+            # injection surface); the other lenses never see PR-authored prose.
+            user_content = f"{intent_block}\n\n{wrapped}"
         messages: list[Message] = [
             {"role": "system", "content": build_system_prompt(category)},
-            {"role": "user", "content": wrapped},
+            {"role": "user", "content": user_content},
         ]
         opts = {"response_format": response_format} if response_format is not None else {}
         try:
@@ -201,6 +220,24 @@ class LLMReviewEngine(ReviewEngine):
         except ParseError:
             _log.warning("unparseable model output", extra={"category": category.value})
             return [], "unparseable model output"
+
+
+def _intent_text(ctx: PRContext) -> str:
+    """The PR's stated intent as one labelled text block, or "" when none is stated.
+
+    Title + description come from a GitHub PR; commit names (first lines) come
+    from either the PR's commit list or local ``git log`` — so the intent lens
+    works the same on the CLI as on a PR.
+    """
+    parts: list[str] = []
+    if ctx.title.strip():
+        parts.append(f"Title: {ctx.title.strip()}")
+    if ctx.description.strip():
+        parts.append(f"Description:\n{ctx.description.strip()}")
+    subjects = [s.strip() for s in ctx.commit_messages if s.strip()]
+    if subjects:
+        parts.append("Commit messages:\n" + "\n".join(f"- {s}" for s in subjects))
+    return "\n\n".join(parts)
 
 
 def _error_reason(exc: BaseException) -> str:

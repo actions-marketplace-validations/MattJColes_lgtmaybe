@@ -88,6 +88,9 @@ def _mock_github(captured: list[dict[object, object]]) -> None:
     respx.route(method="GET", url__startswith=FILES_URL).mock(
         return_value=httpx.Response(200, json=files)
     )
+    respx.route(method="GET", url__startswith=f"{PR_URL}/commits").mock(
+        return_value=httpx.Response(200, json=[])
+    )
     # Head content for surrounding-context expansion (fetched per reviewable file).
     respx.route(method="GET", url__startswith=f"{BASE_URL}/repos/{REPO}/contents/").mock(
         return_value=httpx.Response(

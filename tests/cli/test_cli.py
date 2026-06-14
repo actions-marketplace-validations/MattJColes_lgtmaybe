@@ -78,6 +78,17 @@ class TestRunReview:
 
         assert len(github.posted) == 1
 
+    def test_non_dry_run_passes_fetched_diff_to_post_review(self):
+        """post_review must receive the already-fetched diff so it doesn't
+        re-fetch the entire PR context just to rebuild the position map."""
+        github = FakeGitHub()
+        engine = FakeEngine(FakeProvider())
+        cfg = _default_cfg()
+
+        run_review(github=github, engine=engine, cfg=cfg, dry_run=False)
+
+        assert github.posted_diffs == [github.get_pr_context().diff]
+
     def test_non_dry_run_posts_correct_findings(self):
         """Posted findings match what the engine returned."""
         github = FakeGitHub()
@@ -137,6 +148,40 @@ class TestReviewCommandLocal:
         result = CliRunner().invoke(main, ["review", "--provider", "ollama", "--model", "llama3"])
 
         assert result.exit_code == 0, result.output
+
+    def test_working_and_uncommitted_flags_conflict(self, monkeypatch):
+        """--working (worktree vs base) and --uncommitted (edits vs HEAD) are
+        mutually exclusive — fail fast with a usage error, before any provider work."""
+        _patch_local(monkeypatch)
+
+        result = CliRunner().invoke(
+            main,
+            ["review", "--provider", "ollama", "--model", "llama3", "--working", "--uncommitted"],
+        )
+
+        assert result.exit_code != 0
+        assert "mutually exclusive" in result.output
+
+    def test_uncommitted_flag_is_threaded_through(self, monkeypatch):
+        """`review --uncommitted` reaches local_pr_context as uncommitted=True."""
+        import lgtmaybe.cli as cli_module
+
+        seen: dict[str, object] = {}
+
+        def _capture(**kwargs):
+            seen.update(kwargs)
+            return _LOCAL_CTX
+
+        _patch_local(monkeypatch)
+        monkeypatch.setattr(cli_module, "local_pr_context", _capture)
+
+        result = CliRunner().invoke(
+            main, ["review", "--provider", "ollama", "--model", "llama3", "--uncommitted"]
+        )
+
+        assert result.exit_code == 0, result.output
+        assert seen.get("uncommitted") is True
+        assert seen.get("working") is False
 
 
 class TestModuleEntrypoint:

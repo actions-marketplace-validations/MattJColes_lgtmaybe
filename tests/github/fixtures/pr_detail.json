@@ -1,5 +1,7 @@
 {
   "number": 42,
+  "title": "Add rate limiting",
+  "body": "Limits login attempts per IP.",
   "base": {
     "sha": "abc1234base"
   },

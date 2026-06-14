@@ -36,7 +36,9 @@ _CLOUD_TIMEOUT = 60
 
 # Ollama context window. Big enough to hold a real review prompt + diff + the
 # emitted findings; ollama's own default (~4k) truncates the output to a stub.
-_OLLAMA_NUM_CTX = 16384
+# Sized to match what the e2e-ollama workflow needs for a multi-file diff — 16k
+# was tight enough that a real review could overrun it and get truncated.
+_OLLAMA_NUM_CTX = 32768
 
 
 def default_timeout_for(provider: Provider) -> int:

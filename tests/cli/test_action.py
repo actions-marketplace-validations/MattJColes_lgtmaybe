@@ -183,6 +183,46 @@ class TestActionRouting:
         assert result.exit_code == 0, result.output
         assert captured == {"num_ctx": 32768, "max_input_tokens": 250000}
 
+    def test_config_path_input_selects_the_repo_config(self, tmp_path, monkeypatch):
+        """INPUT_CONFIG_PATH points the run at a custom repo config file."""
+        cfg_file = tmp_path / "custom.yml"
+        cfg_file.write_text("min_severity: high\n")
+        captured: dict[str, object] = {}
+
+        import lgtmaybe.cli as cli_module
+
+        def fake_build(cfg, runtime):
+            captured["min_severity"] = cfg.min_severity.value
+            return FakeGitHub(), FakeEngine(FakeProvider())
+
+        monkeypatch.setattr(cli_module, "build_adapters", fake_build)
+
+        event = _write_event(
+            tmp_path,
+            {"repository": {"full_name": "org/repo"}, "pull_request": {"number": 1}},
+        )
+        monkeypatch.setenv("GITHUB_EVENT_NAME", "pull_request")
+        monkeypatch.setenv("GITHUB_EVENT_PATH", str(event))
+        monkeypatch.setenv("INPUT_PROVIDER", "ollama")
+        monkeypatch.setenv("INPUT_MODEL", "llama3")
+        monkeypatch.setenv("INPUT_CONFIG_PATH", str(cfg_file))
+
+        result = CliRunner().invoke(main, ["action"])
+
+        assert result.exit_code == 0, result.output
+        assert captured == {"min_severity": "high"}
+
+    def test_config_path_input_defaults_when_empty(self, monkeypatch):
+        """An unset or empty INPUT_CONFIG_PATH normalises to None like every
+        other input; the action falls back to .lgtmaybe.yml."""
+        from lgtmaybe.cli import action_inputs
+
+        monkeypatch.delenv("INPUT_CONFIG_PATH", raising=False)
+        assert action_inputs()["config_path"] is None
+
+        monkeypatch.setenv("INPUT_CONFIG_PATH", "")
+        assert action_inputs()["config_path"] is None
+
     def test_azure_api_base_input_reaches_runtime(self, tmp_path, monkeypatch):
         """INPUT_API_BASE carries the azure resource endpoint into the run."""
         captured: dict[str, object] = {}

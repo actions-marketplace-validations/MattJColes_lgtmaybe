@@ -19,6 +19,7 @@ TOKEN = "ghp_test"
 BASE_URL = "https://api.github.com"
 PR_URL = f"{BASE_URL}/repos/{REPO}/pulls/{PR_NUMBER}"
 FILES_URL = f"{BASE_URL}/repos/{REPO}/pulls/{PR_NUMBER}/files"
+COMMITS_URL = f"{BASE_URL}/repos/{REPO}/pulls/{PR_NUMBER}/commits"
 
 
 def _load(name: str) -> str:
@@ -46,6 +47,10 @@ def test_get_pr_context_returns_expected_shas_and_diff() -> None:
         method="GET",
         url__startswith=FILES_URL,
     ).mock(return_value=httpx.Response(200, json=_load_json("pr_files_page1.json")))
+    respx.route(
+        method="GET",
+        url__startswith=COMMITS_URL,
+    ).mock(return_value=httpx.Response(200, json=_load_json("pr_commits.json")))
     respx.route(
         method="GET",
         url__startswith=f"{BASE_URL}/repos/{REPO}/contents/",
@@ -91,6 +96,10 @@ def test_get_pr_context_paginates_files_list() -> None:
     )
     respx.route(
         method="GET",
+        url__startswith=COMMITS_URL,
+    ).mock(return_value=httpx.Response(200, json=_load_json("pr_commits.json")))
+    respx.route(
+        method="GET",
         url__startswith=f"{BASE_URL}/repos/{REPO}/contents/",
     ).mock(return_value=httpx.Response(200, text="raw file content"))
 
@@ -106,8 +115,8 @@ def test_get_pr_context_paginates_files_list() -> None:
     assert "yarn.lock" in ctx.changed_files
 
 
-def _base_routes() -> None:
-    """Register the meta/diff/files routes shared by the file-content tests."""
+def _base_routes(*, commits_status: int = 200) -> None:
+    """Register the meta/diff/files/commits routes shared by the remaining tests."""
     respx.route(
         method="GET", url=PR_URL, headers={"Accept": "application/vnd.github.v3.diff"}
     ).mock(return_value=httpx.Response(200, content=_load("pr_diff.patch").encode()))
@@ -116,6 +125,9 @@ def _base_routes() -> None:
     )
     respx.route(method="GET", url__startswith=FILES_URL).mock(
         return_value=httpx.Response(200, json=_load_json("pr_files_page1.json"))
+    )
+    respx.route(method="GET", url__startswith=COMMITS_URL).mock(
+        return_value=httpx.Response(commits_status, json=_load_json("pr_commits.json"))
     )
 
 
@@ -160,3 +172,44 @@ def test_get_pr_context_skips_unfetchable_file() -> None:
 
     assert "src/app.py" not in ctx.file_contents
     assert ctx.file_contents["src/utils.py"] == "ok"
+
+
+# ---------------------------------------------------------------------------
+# Stated intent: PR title / description / commit names for the intent lens
+# ---------------------------------------------------------------------------
+
+
+def _all_contents_ok() -> None:
+    respx.route(method="GET", url__startswith=f"{BASE_URL}/repos/{REPO}/contents/").mock(
+        return_value=httpx.Response(200, text="raw file content")
+    )
+
+
+@respx.mock
+def test_get_pr_context_includes_stated_intent() -> None:
+    """Title, description, and commit names (first lines only) ride along so the
+    engine's intent lens can judge whether the diff does what the PR claims."""
+    _base_routes()
+    _all_contents_ok()
+
+    gw = RestGitHubGateway(repo=REPO, pr_number=PR_NUMBER, token=TOKEN, client=httpx.Client())
+    ctx = gw.get_pr_context()
+
+    assert ctx.title == "Add rate limiting"
+    assert ctx.description == "Limits login attempts per IP."
+    # First line of each commit message only — the commit "name".
+    assert ctx.commit_messages == ["feat: add rate limiting", "fix: handle empty bucket"]
+
+
+@respx.mock
+def test_get_pr_context_degrades_when_commits_fetch_fails() -> None:
+    """Commit names are auxiliary intent context: a failed fetch degrades to an
+    empty list (like file contents) instead of failing the whole review."""
+    _base_routes(commits_status=500)
+    _all_contents_ok()
+
+    gw = RestGitHubGateway(repo=REPO, pr_number=PR_NUMBER, token=TOKEN, client=httpx.Client())
+    ctx = gw.get_pr_context()
+
+    assert ctx.commit_messages == []
+    assert ctx.title == "Add rate limiting"  # the rest of the context is intact

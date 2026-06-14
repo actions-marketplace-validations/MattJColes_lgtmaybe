@@ -206,7 +206,9 @@ def test_reflect_true_runs_the_reflection_pass() -> None:
     engine.review(_CTX, cfg)
 
     assert len(_reflection_calls(provider)) == 1  # exactly one reflection pass
-    assert len(_review_calls(provider)) == len(cfg.categories)  # one review call per category
+    # One review call per category — minus intent, which is skipped because _CTX
+    # carries no stated intent (no title/description/commit messages).
+    assert len(_review_calls(provider)) == len(cfg.categories) - 1
 
 
 # ---------------------------------------------------------------------------
@@ -392,7 +394,8 @@ def test_fans_out_one_call_per_category_and_merges_findings() -> None:
     findings, _ = engine.review(_CTX, cfg)
 
     assert {f.title for f in findings} == {title for title, _ in _CATEGORY_BY_MARKER.values()}
-    assert len(_review_calls(provider)) == len(cfg.categories)
+    # intent is skipped: _CTX has no stated intent to review against.
+    assert len(_review_calls(provider)) == len(cfg.categories) - 1
 
 
 def test_duplicate_findings_across_categories_are_deduped() -> None:
@@ -432,6 +435,85 @@ def test_categories_config_narrows_the_fan_out() -> None:
     engine.review(_CTX, cfg)
 
     assert len(_review_calls(provider)) == 1
+
+
+# ---------------------------------------------------------------------------
+# intent lens: stated intent (title / description / commit messages)
+# ---------------------------------------------------------------------------
+
+_CTX_WITH_INTENT = _CTX.model_copy(
+    update={
+        "title": "Fix typo in README",
+        "description": "Corrects a spelling mistake, nothing else.",
+        "commit_messages": ["fix: typo in README"],
+    }
+)
+
+
+def test_intent_category_receives_the_wrapped_intent_block() -> None:
+    provider = _provider_for([_HIGH], reflection_keeps_all=True)
+    engine = LLMReviewEngine(provider)
+    cfg = ReviewConfig(provider=Provider.ollama, model="llama3", categories=[ReviewCategory.intent])
+
+    engine.review(_CTX_WITH_INTENT, cfg)
+
+    [call] = _review_calls(provider)
+    user = call["messages"][1]["content"]
+    assert "Fix typo in README" in user
+    assert "fix: typo in README" in user
+    assert "INTENT_START" in user  # wrapped as untrusted data, not raw text
+    assert "stated intent" in call["messages"][0]["content"].lower()
+
+
+def test_intent_category_skipped_when_nothing_is_stated() -> None:
+    """No title, description, or commits → nothing to judge the diff against, so
+    the intent call is skipped instead of burning a model call on an empty block."""
+    provider = _provider_for([_HIGH], reflection_keeps_all=True)
+    engine = LLMReviewEngine(provider)
+    cfg = ReviewConfig(
+        provider=Provider.ollama,
+        model="llama3",
+        categories=[ReviewCategory.intent, ReviewCategory.security],
+    )
+
+    engine.review(_CTX, cfg)
+
+    calls = _review_calls(provider)
+    assert len(calls) == 1  # only security ran
+    assert "stated intent" not in calls[0]["messages"][0]["content"].lower()
+
+
+def test_non_intent_categories_do_not_carry_the_intent_block() -> None:
+    """Only the intent lens pays the intent-block tokens (and injection surface)."""
+    provider = _provider_for([_HIGH], reflection_keeps_all=True)
+    engine = LLMReviewEngine(provider)
+    cfg = ReviewConfig(
+        provider=Provider.ollama, model="llama3", categories=[ReviewCategory.security]
+    )
+
+    engine.review(_CTX_WITH_INTENT, cfg)
+
+    [call] = _review_calls(provider)
+    assert "INTENT_START" not in call["messages"][1]["content"]
+
+
+def test_intent_block_is_redacted_before_egress() -> None:
+    """A secret pasted into the PR description must never reach the provider."""
+    secret = "AKIAIOSFODNN7EXAMPLE"
+    ctx = _CTX.model_copy(
+        update={"title": "Add deploy key", "description": f"Use AWS_KEY={secret} for deploys."}
+    )
+    provider = _provider_for([_HIGH], reflection_keeps_all=True)
+    engine = LLMReviewEngine(provider)
+    cfg = ReviewConfig(provider=Provider.ollama, model="llama3", categories=[ReviewCategory.intent])
+
+    engine.review(ctx, cfg)
+
+    all_content = " ".join(
+        msg.get("content", "") for call in provider.calls for msg in call["messages"]
+    )
+    assert secret not in all_content
+    assert REDACTED_PLACEHOLDER in all_content
 
 
 # ---------------------------------------------------------------------------

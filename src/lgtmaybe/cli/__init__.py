@@ -136,7 +136,10 @@ def run_review(
     findings, summary = engine.review(ctx, cfg)
 
     if not dry_run:
-        github.post_review(findings, summary)
+        # Pass the diff we already fetched so post_review doesn't re-fetch the
+        # whole PR context (diff + file list + every file's contents) just to
+        # rebuild the position map.
+        github.post_review(findings, summary, diff=ctx.diff)
 
     return findings, summary
 
@@ -147,6 +150,7 @@ def execute_local_review(
     *,
     base: str | None,
     working: bool,
+    uncommitted: bool = False,
     fmt: str,
 ) -> None:
     """Review the local git diff and print findings — no GitHub involvement.
@@ -157,7 +161,7 @@ def execute_local_review(
     """
     try:
         engine, _provider = build_provider_engine(cfg, runtime)
-        ctx = local_pr_context(base=base, working=working)
+        ctx = local_pr_context(base=base, working=working, uncommitted=uncommitted)
         findings, summary = engine.review(ctx, cfg)
     except Exception as exc:
         raise click.ClickException(str(exc)) from exc
@@ -239,7 +243,9 @@ def _post_failure(github: GitHubGateway, exc: Exception) -> None:
 def pr_url_from_event(event: dict[str, Any]) -> str:
     """Build the PR URL from a pull_request(_target) event payload.
 
-    Uses ``GITHUB_SERVER_URL`` so it works on GitHub Enterprise too.
+    Honours ``GITHUB_SERVER_URL`` for the link, though only github.com is
+    supported end to end — the URL parser and the REST gateway both speak to
+    api.github.com.
     """
     server = os.environ.get("GITHUB_SERVER_URL", "https://github.com").rstrip("/")
     repo = event["repository"]["full_name"]
@@ -268,7 +274,7 @@ def action_inputs() -> dict[str, str | None]:
         "temperature": get("TEMPERATURE"),
         "num_ctx": get("NUM_CTX"),
         "max_input_tokens": get("MAX_INPUT_TOKENS"),
-        "config_path": os.environ.get("INPUT_CONFIG_PATH") or ".lgtmaybe.yml",
+        "config_path": get("CONFIG_PATH"),
     }
 
 

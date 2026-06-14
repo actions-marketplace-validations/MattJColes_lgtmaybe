@@ -35,9 +35,11 @@ lgtmaybe review \
   --api-base http://localhost:11434
 ```
 
-This diffs your current branch against the default branch and prints the
-findings. Add `--working` to review only your uncommitted edits, or `--base <ref>`
-to diff against a different base.
+This diffs your current branch against the remote primary branch and prints the
+findings. Add `--working` to review the whole worktree (branch commits plus
+uncommitted edits) against that same base, `--uncommitted` to review only your
+uncommitted edits against HEAD, or `--base <ref>` to diff against a different
+base.
 
 ## Use a remote ollama instance
 
@@ -132,7 +134,7 @@ pretending the PR is clean.
 
 For a **large diff** this can mean the prompt plus the findings don't fit in
 ollama's context window and the output gets truncated. lgtmaybe runs ollama with
-a generous context (`num_ctx` of 16384) and **structured JSON output** (it also
+a generous context (`num_ctx` of 32768) and **structured JSON output** (it also
 disables "thinking" so reasoning models like qwen3.x emit the findings directly),
 which covers most reviews.
 
@@ -162,6 +164,14 @@ which applies to **any** provider — raise it to send a large diff in fewer cal
 lower it for a small-context model. If a very large diff still truncates, narrow
 it with `include_paths` / `exclude_paths` or a lower `max_files` in `.lgtmaybe.yml`,
 or run a model with a bigger context window.
+
+> **Keep `--max-input-tokens` under `--num-ctx`.** The two are independent:
+> `--max-input-tokens` caps each batch lgtmaybe *sends*, while `--num-ctx` is the
+> window ollama actually *allocates*. lgtmaybe estimates tokens with a generic
+> tokenizer, and local models tokenize differently, so leave headroom — a batch
+> budget comfortably below your context window (e.g. `--max-input-tokens 24000`
+> with `--num-ctx 32768`) avoids ollama silently truncating the findings JSON,
+> which otherwise surfaces only as an unhelpful "review failed".
 
 **Review is empty or truncated** — the diff may exceed the model's context
 window. Add a path filter in `.lgtmaybe.yml` to reduce diff size, or set

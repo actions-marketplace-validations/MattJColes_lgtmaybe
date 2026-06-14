@@ -1,6 +1,6 @@
 # Auth Model
 
-lgtmaybe supports six providers. The design principle is **no static cloud
+lgtmaybe supports six hosted providers plus local ollama. The design principle is **no static cloud
 credentials**: cloud providers use ambient, short-lived tokens; key-based SaaS
 providers (openai, anthropic, openrouter) require an API key that stays in
 secrets rather than being committed to config. Azure straddles both — it prefers
