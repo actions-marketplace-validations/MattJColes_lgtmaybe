@@ -1,7 +1,8 @@
 name: release
 
-# Reusable publish workflow for the GHCR image and the floating major tag.
-# Called by release-please.yml after a release is cut. PyPI publishing is NOT
+# Reusable publish workflow for the GHCR image and the clean v-tags (exact +
+# floating major). Called by release-please.yml after a release is cut, or run
+# manually via workflow_dispatch to backfill an existing tag. PyPI publishing is NOT
 # here: it lives inline in release-please.yml because PyPI Trusted Publishing
 # does not support reusable workflows (the OIDC job_workflow_ref must equal the
 # top-level workflow_ref).
@@ -10,6 +11,14 @@ on:
     inputs:
       tag:
         description: "The released tag to build and publish (e.g. lgtmaybe-v0.1.0)."
+        required: true
+        type: string
+  # Manual path: (re)publish the image + (re)move the clean v-tags for an
+  # existing release tag — e.g. to backfill a release that never published.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing release tag to build and publish (e.g. lgtmaybe-v0.1.0)."
         required: true
         type: string
 
@@ -29,14 +38,25 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+      # release-please cuts component-prefixed tags (lgtmaybe-v0.1.0); strip the
+      # prefix to a clean semver so the metadata/git tags are v0 / 0.1.0, not the
+      # prefixed form (which semver can't parse).
+      - name: Clean version from tag
+        id: ver
+        run: |
+          set -euo pipefail
+          tag="${{ inputs.tag }}"   # e.g. lgtmaybe-v0.1.0
+          v="${tag##*-}"            # v0.1.0  (everything after the last '-')
+          v="${v#v}"                # 0.1.0
+          echo "version=$v" >> "$GITHUB_OUTPUT"
       - name: Image metadata
         id: meta
         uses: docker/metadata-action@v6
         with:
           images: ghcr.io/${{ github.repository }}
           tags: |
-            type=semver,pattern={{version}},value=${{ inputs.tag }}
-            type=semver,pattern=v{{major}},value=${{ inputs.tag }}
+            type=semver,pattern={{version}},value=${{ steps.ver.outputs.version }}
+            type=semver,pattern=v{{major}},value=${{ steps.ver.outputs.version }}
             type=raw,value=latest
       - name: Build and push
         uses: docker/build-push-action@v7
@@ -46,24 +66,29 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
 
-  # Move the floating major tag (e.g. v0) onto the released commit. The GitHub
-  # release itself is created by release-please, so we don't create one here.
+  # Publish clean v-prefixed git tags consumers can use in `uses:` — the exact
+  # alias (v0.1.0) and the floating major (v0) — pointing at the released commit.
+  # release-please owns the canonical lgtmaybe-v0.1.0 tag + GitHub release; these
+  # are the Action-friendly aliases (the image uses the same v0 / 0.1.0 scheme).
   floating-tag:
     needs: [ghcr]
     runs-on: ubuntu-latest
     permissions:
-      contents: write # move the floating major tag
+      contents: write # push the clean v-tags
     steps:
       - uses: actions/checkout@v6
         with:
           ref: ${{ inputs.tag }}
-      - name: Move floating major tag (e.g. v0)
+      - name: Tag clean exact + floating-major v-tags
         run: |
           set -euo pipefail
-          major="${{ inputs.tag }}"
-          major="${major%%.*}"
+          tag="${{ inputs.tag }}"   # e.g. lgtmaybe-v0.1.0
+          ver="${tag##*-}"          # v0.1.0  (everything after the last '-')
+          major="${ver%%.*}"        # v0
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git tag -f "$major" "${{ inputs.tag }}"
+          git tag -f "$ver" "$tag"
+          git push -f origin "refs/tags/$ver"
+          git tag -f "$major" "$tag"
           git push -f origin "refs/tags/$major"
-          echo "moved $major -> ${{ inputs.tag }}"
+          echo "tagged $ver and moved $major -> $tag"
