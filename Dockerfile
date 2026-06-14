@@ -12,8 +12,10 @@ WORKDIR /app
 COPY pyproject.toml README.md uv.lock ./
 COPY src ./src
 
-# Bundle the azure extra so keyless Azure (Azure AD via OIDC) works out of the box.
-RUN uv sync --no-dev --frozen --extra azure
+# Bundle every keyless-cloud extra so Bedrock (boto3), Vertex (google-auth) and
+# Azure (azure-identity via OIDC) all work out of the box — litellm doesn't pull
+# these itself, so without them a cloud review dies with a ModuleNotFoundError.
+RUN uv sync --no-dev --frozen --extra azure --extra bedrock --extra vertex
 
 ENV PATH="/app/.venv/bin:$PATH"
 

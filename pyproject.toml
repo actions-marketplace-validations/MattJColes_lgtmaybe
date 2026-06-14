@@ -15,11 +15,23 @@ dependencies = [
     "tenacity>=9.1.4",
 ]
 
+# Per-provider auth deps for the keyless cloud paths. litellm normalises the
+# call but does NOT bundle the cloud SDKs needed to sign/authenticate, so each
+# keyless provider needs its package here or a review dies at call time with a
+# ModuleNotFoundError. The Action image bundles all three (see Dockerfile);
+# local `pip install` users pull only what they need, e.g. `lgtmaybe[bedrock]`.
 [project.optional-dependencies]
 # Keyless Azure OpenAI (Azure AD / Entra token via GitHub OIDC or local creds).
-# Only needed for `--provider azure` without an API key; the Action image bundles it.
 azure = [
     "azure-identity>=1.19",
+]
+# Bedrock — boto3/botocore for SigV4 signing of InvokeModel calls.
+bedrock = [
+    "boto3>=1.34",
+]
+# Vertex — google-auth mints the access token from ambient ADC/WIF creds.
+vertex = [
+    "google-auth>=2.0",
 ]
 
 [project.scripts]

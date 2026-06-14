@@ -77,9 +77,12 @@ jobs:
 ## Running locally with ADC
 
 If your local shell has application default credentials (`gcloud auth
-application-default login`):
+application-default login`). Vertex token minting needs `google-auth`, so install
+the extra (the Action image already bundles it):
 
 ```bash
+pip install 'lgtmaybe[vertex]'
+
 export VERTEXAI_PROJECT=my-project
 export VERTEXAI_LOCATION=us-central1
 
