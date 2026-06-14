@@ -37,6 +37,10 @@ jobs:
       - uses: MattJColes/lgtmaybe@v0
         with:
           provider: bedrock
-          model: anthropic.claude-sonnet-4-6
+          # Bedrock needs a Bedrock model id (Claude/Nova/Llama/…), not an
+          # OpenAI/GPT id. Prefer the cross-region inference profile (us./eu./
+          # apac.) — most current Claude models aren't available on-demand on the
+          # bare id. See docs/how-to/review-with-bedrock-oidc.md.
+          model: us.anthropic.claude-sonnet-4-6
           aws_role_arn: ${{ secrets.AWS_ROLE_ARN }}
           aws_region: us-east-1

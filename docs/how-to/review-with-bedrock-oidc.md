@@ -37,7 +37,12 @@ The role needs only:
 }
 ```
 
-Scope `Resource` to specific model ARNs for tighter least-privilege.
+Scope `Resource` to specific model ARNs for tighter least-privilege. If you use a
+cross-region inference profile (the `us.`/`eu.`/`apac.`-prefixed ids below — the
+recommended form), the role also needs `bedrock:InvokeModel*` on the
+inference-profile ARN, e.g.
+`arn:aws:bedrock:*:<account-id>:inference-profile/*`, otherwise the call fails
+with `AccessDeniedException`.
 
 ## Workflow example
 
@@ -66,22 +71,32 @@ jobs:
       - uses: MattJColes/lgtmaybe@v0
         with:
           provider: bedrock
-          model: anthropic.claude-sonnet-4-6
+          model: us.anthropic.claude-sonnet-4-6
           aws_role_arn: ${{ secrets.AWS_ROLE_ARN }}
           aws_region: us-east-1
 ```
 
 ## Choosing a Bedrock model ID
 
-| Model | Bedrock model ID |
-|---|---|
-| Claude Opus 4.8 | `anthropic.claude-opus-4-8` |
-| Claude Sonnet 4.6 | `anthropic.claude-sonnet-4-6` |
-| Claude Haiku 4.5 | `anthropic.claude-haiku-4-5` |
+The `model` must be a **Bedrock** model identifier. Bedrock hosts Anthropic
+Claude, Amazon Nova/Titan, Meta Llama, Mistral, Cohere and others — it does
+**not** host OpenAI's GPT models, so an id like `openai.gpt-5.5` is rejected with
+`The provided model identifier is invalid`. Use one of the Claude ids below
+(prefixed with a cross-region inference profile — see the note):
 
-For tighter availability across regions, prefix with a cross-region inference
-profile (e.g. `us.anthropic.claude-sonnet-4-6`) where one is enabled for your
-account.
+| Model | Inference-profile ID (recommended) | Base model ID |
+|---|---|---|
+| Claude Opus 4.8 | `us.anthropic.claude-opus-4-8` | `anthropic.claude-opus-4-8` |
+| Claude Sonnet 4.6 | `us.anthropic.claude-sonnet-4-6` | `anthropic.claude-sonnet-4-6` |
+| Claude Haiku 4.5 | `us.anthropic.claude-haiku-4-5` | `anthropic.claude-haiku-4-5` |
+
+**Prefer the inference-profile form.** Most current Claude models on Bedrock are
+invocable only through a cross-region inference profile, not via on-demand
+throughput on the bare model id — so a bare id often fails with the same
+`invalid model identifier` (or `on-demand throughput isn't supported`) error.
+Prefix with your geography: `us.` (US), `eu.` (Europe) or `apac.` (Asia
+Pacific), matching `aws_region`. Use the bare `anthropic.…` id only where
+on-demand access to that model is enabled in your region.
 
 ## Running locally with ambient AWS credentials
 
@@ -94,7 +109,7 @@ pip install 'lgtmaybe[bedrock]'
 
 lgtmaybe review \
   --provider bedrock \
-  --model anthropic.claude-haiku-4-5
+  --model us.anthropic.claude-haiku-4-5
 ```
 
 lgtmaybe does not require or accept a static API key for Bedrock.
@@ -107,4 +122,13 @@ that the IAM trust policy references the correct GitHub repository.
 
 **`AccessDeniedException`** — the role lacks `bedrock:InvokeModel` for the
 selected model, or the model is not enabled in the Bedrock console for your
-account and region.
+account and region. For an inference-profile id (`us.`/`eu.`/`apac.`-prefixed),
+the policy must also allow the `inference-profile/*` ARN, not just
+`foundation-model/*`.
+
+**`The provided model identifier is invalid`** — the `model` is not a Bedrock
+model id. Two common causes: (1) it's a non-Bedrock id such as `openai.gpt-5.5`
+or another provider's name — Bedrock hosts Claude / Nova / Llama / Mistral /
+Cohere, not OpenAI GPT, so pick a Claude id from the table above; (2) the model
+needs a cross-region inference profile — prefix with `us.`/`eu.`/`apac.` (e.g.
+`us.anthropic.claude-sonnet-4-6`) rather than the bare `anthropic.…` id.
