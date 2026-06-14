@@ -49,7 +49,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: lgtmaybe/lgtmaybe@v1
+      - uses: MattJColes/lgtmaybe@v0
         with:
           provider: vertex
           model: gemini-3-pro
