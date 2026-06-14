@@ -1,6 +1,6 @@
 [project]
 name = "lgtmaybe"
-version = "0.1.1"
+version = "0.1.2"
 description = "Provider-agnostic PR reviewer — six providers, one flag, no keys in secrets for cloud."
 readme = "README.md"
 license = { text = "MIT" }

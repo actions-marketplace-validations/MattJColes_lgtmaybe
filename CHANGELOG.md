@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.2](https://github.com/MattJColes/lgtmaybe/compare/lgtmaybe-v0.1.1...lgtmaybe-v0.1.2) (2026-06-14)
+
+
+### Bug Fixes
+
+* **e2e:** pool eval recall across fixtures so a one-finding miss can'… ([f39eb66](https://github.com/MattJColes/lgtmaybe/commit/f39eb6657297dcb64febefb45ecd4c0c03c15f37))
+
 ## [0.1.1](https://github.com/MattJColes/lgtmaybe/compare/lgtmaybe-v0.1.0...lgtmaybe-v0.1.1) (2026-06-14)
 
 
