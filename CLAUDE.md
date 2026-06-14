@@ -296,7 +296,9 @@ Split by whether it can be deterministic, because that decides where it lives:
   PR with a long timeout + big `num_ctx` and `--no-reflect` (the reflection pass
   over-prunes on a small model), proving the pipeline survives a real local model
   on a large "vibe-coded" diff and still catches the planted bugs (`--min-recall
-  0.2`). The fixtures plant security + correctness bugs **and** blatant performance
+  0.3`, pooled across fixtures — every fixture must parse, and total caught /
+  total planted must clear the floor, so a single missed finding on one short
+  fixture can't flake the job). The fixtures plant security + correctness bugs **and** blatant performance
   (N+1 / quadratic) + complexity (deep nesting / duplication) issues, so the live
   run exercises all seven code lenses, not just security/correctness — the
   per-lens coverage is guarded in `tests/evals/test_fixtures.py`. (The eighth
