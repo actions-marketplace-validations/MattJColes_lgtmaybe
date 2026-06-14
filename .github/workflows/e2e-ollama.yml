@@ -7,18 +7,22 @@
 #
 # Speed: a single ollama instance serves one model serially, and a GitHub runner
 # is CPU-only, so wall-clock scales with the number of model calls (fixtures ×
-# review lenses). To keep this fast enough to run on every PR with a real 9B-class
-# model we:
-#   - run ONE fixture (badcode) — small diff, but its manifest plants a bug for
-#     every one of the seven code lenses, so a single fixture still exercises the
-#     whole fan-out live (the larger multi-file fixture stays in-repo for on-demand
-#     `python -m evals.run` runs);
+# review lenses). A 9B model running all seven lenses took ~25 min and timed out,
+# so this is a deliberately CUT-DOWN smoke — it proves the live ollama path picks
+# up critical issues, not that a small model is thorough. To keep it fast we:
+#   - use a small (qwen3.5:2b) model with THINKING OFF (the factory forces
+#     think=False for ollama) — no reasoning tokens to grind through on CPU;
+#   - run ONE fixture (badcode, small diff) through only the two CRITICAL lenses
+#     (security + correctness) instead of the full seven-lens fan-out — fewer
+#     serial model calls. The larger multi-file fixture and the full lens set stay
+#     in-repo for on-demand `python -m evals.run` / nightly runs;
 #   - cache the pulled model so a multi-GB download doesn't repeat every run;
 #   - size num_ctx to the small diff instead of the big-multifile default.
 #
 # The eval runner exits non-zero if the fixture fails to parse or falls below
 # --min-recall, so a broken pipeline (timeout, truncated context, unparseable
-# output) fails the job.
+# output) fails the job. The recall floor is low (0.2) on purpose: a small model
+# need only catch a fraction of the planted critical bugs to prove the path works.
 #
 # Kept out of the ci.yml pytest gate on purpose (it needs a live model), but it
 # IS a per-PR check here.
@@ -39,11 +43,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
-      # One local model for the e2e. A 9B-class model is far more capable than the
-      # old 1.7B (so the recall bar is a real signal), and still CPU-runnable on a
-      # standard runner once the call matrix is trimmed to a single fixture. It's a
-      # qwen3 thinking model, so the factory's tested think=False handling applies.
-      OLLAMA_MODEL: qwen3.5:9b
+      # One small local model for the smoke. qwen3.5:2b is CPU-friendly and, with
+      # thinking off + the fan-out cut to two lenses, finishes in minutes instead
+      # of the ~25 min a 9B all-lens run took. It's a qwen3.x thinking model, so the
+      # factory's tested think=False handling applies (no reasoning tokens on CPU).
+      OLLAMA_MODEL: qwen3.5:2b
       # Pin the model store to a known path so the pull, the cache, and `ollama
       # serve` all agree on where blobs live.
       OLLAMA_MODELS: /home/runner/.ollama/models
@@ -87,12 +91,13 @@ jobs:
       - name: Pull the model
         run: ollama pull "$OLLAMA_MODEL"
 
-      # Review the single small fixture. min-recall 0.3: it must PARSE and the
-      # model must catch at least ~a third of the planted bugs. A 9B model on CPU
-      # isn't bit-reproducible even at temperature 0, so the floor is kept modest
-      # to stay a regression signal without flaking on a one-finding margin.
-      # num_ctx is sized to the small diff (the big-multifile default isn't needed
-      # here), which keeps prompt eval and memory light on the larger model.
+      # Review the single small fixture through only the security + correctness
+      # lenses. min-recall 0.2: it must PARSE and the model must catch at least ~a
+      # fifth of the planted critical bugs — a low bar on purpose, since a 2B model
+      # on CPU isn't bit-reproducible and the point is "the path works", not depth.
+      # Sampling: qwen3.x's recommended non-thinking settings (temp 0.6, top_p 0.8,
+      # top_k 20); thinking itself is forced off by the factory. num_ctx is sized to
+      # the small diff, keeping prompt eval and memory light.
       - name: End-to-end review via ollama
         run: |
           uv run python -m evals.run \
@@ -100,7 +105,11 @@ jobs:
             --model "$OLLAMA_MODEL" \
             --api-base http://localhost:11434 \
             --fixture badcode \
-            --min-recall 0.3 \
+            --categories security,correctness \
+            --min-recall 0.2 \
             --timeout 900 \
             --num-ctx 16384 \
+            --temperature 0.6 \
+            --top-p 0.8 \
+            --top-k 20 \
             --no-reflect

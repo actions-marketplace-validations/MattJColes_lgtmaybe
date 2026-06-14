@@ -288,22 +288,26 @@ Split by whether it can be deterministic, because that decides where it lives:
   with a real provider and reports **parse-rate + recall**, exiting non-zero below
   `--min-recall` so it can gate a model/prompt change when run deliberately
   (`python -m evals.run --provider … --model …`; `--timeout` / `--num-ctx` /
-  `--max-input-tokens` tune it for a big diff on a slow local model). Its plumbing
+  `--max-input-tokens` tune it for a big diff on a slow local model;
+  `--temperature` / `--top-p` / `--top-k` set the model's sampling; `--categories`
+  cuts the per-category fan-out to a subset). Its plumbing
   is unit-tested in `tests/evals/`. The **hosted** providers stay out of the pytest
   gate, but a real **local ollama** run *is* wired into CI as its own workflow —
-  `.github/workflows/e2e-ollama.yml` pulls a small model (`qwen3:1.7b`) and runs the
-  eval over the fixtures (incl. the large multi-file `vibe-multifile` one) on every
-  PR with a long timeout + big `num_ctx` and `--no-reflect` (the reflection pass
-  over-prunes on a small model), proving the pipeline survives a real local model
-  on a large "vibe-coded" diff and still catches the planted bugs (`--min-recall
-  0.3`, pooled across fixtures — every fixture must parse, and total caught /
-  total planted must clear the floor, so a single missed finding on one short
-  fixture can't flake the job). The fixtures plant security + correctness bugs **and** blatant performance
-  (N+1 / quadratic) + complexity (deep nesting / duplication) issues, so the live
-  run exercises all seven code lenses, not just security/correctness — the
-  per-lens coverage is guarded in `tests/evals/test_fixtures.py`. (The eighth
-  lens, intent, needs a stated intent the fixtures don't carry, so the engine
-  skips it there by design.) Real-spend hosted-provider e2e remains label-gated
-  in `action-e2e.yml`.
+  `.github/workflows/e2e-ollama.yml` is a deliberately **cut-down smoke**: it pulls
+  a small model (`qwen3.5:2b`, thinking forced off) and reviews the single small
+  `badcode` fixture through only the two **critical** lenses (`--categories
+  security,correctness`) on every PR with `--no-reflect` (the reflection pass
+  over-prunes on a small model) and qwen3.x's recommended non-thinking sampling
+  (`--temperature 0.6 --top-p 0.8 --top-k 20`). It proves the live ollama path
+  parses and picks up critical issues — not that a small model is thorough — so the
+  floor is low (`--min-recall 0.2`, pooled across fixtures — every fixture must
+  parse, and total caught / total planted must clear the floor). The full lens set
+  and the large multi-file `vibe-multifile` fixture stay in-repo for on-demand
+  `python -m evals.run` runs: the fixtures plant security + correctness bugs **and**
+  blatant performance (N+1 / quadratic) + complexity (deep nesting / duplication)
+  issues so a full run exercises all seven code lenses, with the per-lens coverage
+  guarded in `tests/evals/test_fixtures.py`. (The eighth lens, intent, needs a
+  stated intent the fixtures don't carry, so the engine skips it there by design.)
+  Real-spend hosted-provider e2e remains label-gated in `action-e2e.yml`.
 
 [litellm]: https://github.com/BerriAI/litellm

@@ -8,7 +8,7 @@ import pytest
 
 from evals import run as run_mod
 from evals.scorer import FixtureScore
-from lgtmaybe.core.models import ProviderResult, ReviewFinding, Severity
+from lgtmaybe.core.models import ProviderResult, ReviewCategory, ReviewFinding, Severity
 from tests.fakes import FakeProvider
 
 
@@ -203,6 +203,89 @@ def test_unknown_fixture_name_fails_loudly(monkeypatch: pytest.MonkeyPatch) -> N
     with pytest.raises(SystemExit):
         run_mod.main(
             ["--provider", "ollama", "--model", "x", "--min-recall", "0.0", "--fixture", "nope"]
+        )
+
+
+def test_sampling_params_thread_to_build_provider(monkeypatch: pytest.MonkeyPatch) -> None:
+    """--temperature/--top-p/--top-k reach build_provider so they steer the model.
+
+    They land in the provider's default_opts and litellm forwards them to ollama —
+    the recommended non-thinking sampling for qwen3.x (temp 0.6, top_p 0.8, top_k 20).
+    """
+    calls = _capture_build_provider(monkeypatch)
+
+    run_mod.main(
+        [
+            "--provider",
+            "ollama",
+            "--model",
+            "x",
+            "--min-recall",
+            "0.0",
+            "--temperature",
+            "0.6",
+            "--top-p",
+            "0.8",
+            "--top-k",
+            "20",
+        ]
+    )
+
+    assert calls, "build_provider was never called"
+    assert calls[0]["temperature"] == pytest.approx(0.6)
+    assert calls[0]["top_p"] == pytest.approx(0.8)
+    assert calls[0]["top_k"] == 20
+
+
+def test_sampling_params_omitted_when_not_given(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Without the flags, no sampling kwargs are forced — the model keeps its defaults."""
+    calls = _capture_build_provider(monkeypatch)
+
+    run_mod.main(["--provider", "ollama", "--model", "x", "--min-recall", "0.0"])
+
+    assert calls
+    assert "temperature" not in calls[0]
+    assert "top_p" not in calls[0]
+    assert "top_k" not in calls[0]
+
+
+def test_categories_flag_scopes_review_lenses(monkeypatch: pytest.MonkeyPatch) -> None:
+    """--categories cuts the fan-out to a subset so a CI smoke runs fewer model calls."""
+    seen: list[list[ReviewCategory]] = []
+
+    real_review = run_mod.LLMReviewEngine.review
+
+    def spy_review(self, ctx, cfg):  # type: ignore[no-untyped-def]
+        seen.append(list(cfg.categories))
+        return real_review(self, ctx, cfg)
+
+    monkeypatch.setattr(run_mod, "build_provider", lambda *a, **k: _ShellInjectionProvider())
+    monkeypatch.setattr(run_mod.LLMReviewEngine, "review", spy_review)
+
+    run_mod.main(
+        [
+            "--provider",
+            "ollama",
+            "--model",
+            "x",
+            "--min-recall",
+            "0.0",
+            "--categories",
+            "security,correctness",
+        ]
+    )
+
+    assert seen
+    assert all(c == [ReviewCategory.security, ReviewCategory.correctness] for c in seen)
+
+
+def test_unknown_category_fails_loudly(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A typo'd --categories must error, not silently run a different/empty lens set."""
+    monkeypatch.setattr(run_mod, "build_provider", lambda *a, **k: _ShellInjectionProvider())
+
+    with pytest.raises(SystemExit):
+        run_mod.main(
+            ["--provider", "ollama", "--model", "x", "--min-recall", "0.0", "--categories", "bogus"]
         )
 
 
