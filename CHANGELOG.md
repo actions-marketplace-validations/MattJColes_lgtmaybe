@@ -1,5 +1,57 @@
 # Changelog
 
+## [0.1.1](https://github.com/MattJColes/lgtmaybe/compare/lgtmaybe-v0.1.0...lgtmaybe-v0.1.1) (2026-06-14)
+
+
+### Features
+
+* add performance and complexity review lenses ([73d99ee](https://github.com/MattJColes/lgtmaybe/commit/73d99ee2f72210717c96da951db0445b2e14f32a))
+* **cli:** add --uncommitted flag for reviewing only working-tree edits ([8ce1cc0](https://github.com/MattJColes/lgtmaybe/commit/8ce1cc0ac98dc26559e0538a433e21faa456682d))
+* **e2e:** real ollama CI run on a large multi-file diff + tunable context/timeout knobs ([62733a2](https://github.com/MattJColes/lgtmaybe/commit/62733a2f78bc178ac2e746646f3e9b6ea224adc3))
+* **engine:** add intent lens and broaden review-prompt coverage ([dc4b20b](https://github.com/MattJColes/lgtmaybe/commit/dc4b20b6a4353180b99e11b124f98e0ab70f6347))
+* gate example review workflows to trusted authors ([ac61548](https://github.com/MattJColes/lgtmaybe/commit/ac61548196423a0212afb8c00bac8feceaf35e83))
+* gate example review workflows to trusted authors ([75a3dca](https://github.com/MattJColes/lgtmaybe/commit/75a3dcaf403e50142c52d9e78ca95609132013c1))
+* intent lens, broader scan prompts, and remote-primary-branch CLI comparison ([321abbc](https://github.com/MattJColes/lgtmaybe/commit/321abbc936225bf57d61bfb60501ceab794ad4c9))
+* name provider+model and scope review marker per provider ([ae2dc92](https://github.com/MattJColes/lgtmaybe/commit/ae2dc92c83a7bc4140e4a32e9d981f8133e261ba))
+* name provider+model and scope review marker per provider ([568d863](https://github.com/MattJColes/lgtmaybe/commit/568d863c201092901673c4349fecfce5171807d8))
+
+
+### Bug Fixes
+
+* align provider connector docs with the code (+ fix local Vertex/Bedrock cred detection) ([c480f1a](https://github.com/MattJColes/lgtmaybe/commit/c480f1a42bcbbed136251970fcedf8a7f874f2d8))
+* **cli:** compare local reviews to the remote primary branch ([5b06c7b](https://github.com/MattJColes/lgtmaybe/commit/5b06c7b35588938131838a8d4a889e217b7aa66a))
+* **credentials:** recognize ADC, VERTEXAI_PROJECT, and ~/.aws as ambient creds ([5f30117](https://github.com/MattJColes/lgtmaybe/commit/5f301175e3c0a43aed7ed9d5798ab62a52927c0f))
+* drop PyPI job from reusable release.yml (moved inline) ([35bdf26](https://github.com/MattJColes/lgtmaybe/commit/35bdf26f9ffdc54e4f0424c7270e562c4aea27a4))
+* **e2e:** use qwen3:1.7b + --no-reflect so the ollama recall bar is reachable ([28593f4](https://github.com/MattJColes/lgtmaybe/commit/28593f4bac1d638e861e1506340f33b656665722))
+* **github:** follow pagination when locating the existing review ([e61b2ea](https://github.com/MattJColes/lgtmaybe/commit/e61b2ea18729f7f7c86c7ccc3a7e0b098878956b))
+* **github:** paginate the existing-review lookup, plus code-quality pass fixes ([39f632f](https://github.com/MattJColes/lgtmaybe/commit/39f632f8aecce2e728ad28c6dfc5767cb731c763))
+* inline PyPI publish for trusted publishing ([95cc3af](https://github.com/MattJColes/lgtmaybe/commit/95cc3af7e28aa5c0c627f7ff20b94889e7b32123))
+* inline PyPI publish so trusted publishing matches release-please.yml ([da31c0f](https://github.com/MattJColes/lgtmaybe/commit/da31c0f35efb2ac1e6546c0acf02668ac1577398))
+* **ollama:** raise default num_ctx to 32768 and tighten e2e recall floor ([1095d78](https://github.com/MattJColes/lgtmaybe/commit/1095d78b4dd7a00168a654b4db61c6bb62d33d18))
+* **security:** broaden redaction, case-fold injection markers, escape suggestion fences ([02a0cfa](https://github.com/MattJColes/lgtmaybe/commit/02a0cfae963c1445ed962feef0365a99fcd42155))
+* **security:** broaden redaction, case-fold injection markers, escape suggestion fences ([b00e2b4](https://github.com/MattJColes/lgtmaybe/commit/b00e2b4dda7ce7ad2ff5b1afdb7a2303b15ae7b0))
+* surface the real provider error on a failed review ([c264111](https://github.com/MattJColes/lgtmaybe/commit/c264111e5a9c6578df2e986227f94e9c78ef75e2))
+* surface the real provider error on a failed review ([6d166aa](https://github.com/MattJColes/lgtmaybe/commit/6d166aa8cda4918baae0fd2fd7077615c46a90b2))
+
+
+### Performance Improvements
+
+* avoid redundant PR re-fetch and cache prompt/tokenizer builds ([89842a7](https://github.com/MattJColes/lgtmaybe/commit/89842a7580bec4f6edf54f352de7209daaa6c827))
+
+
+### Documentation
+
+* add ARCHITECTURE.md and fix stale code comments ([2b2713e](https://github.com/MattJColes/lgtmaybe/commit/2b2713ecaa7f067744f3194d7f17d17dacf72df9))
+* add Ayu-dark CLI cards and PR-comment mockups for every scan type ([72ea4be](https://github.com/MattJColes/lgtmaybe/commit/72ea4be291c6e143b1898c324ca4f1e43d29301b))
+* add PR review screenshots to README and what-gets-reviewed ([af1a3f5](https://github.com/MattJColes/lgtmaybe/commit/af1a3f5c616f773948ba14c8fef904abb4e7f03b))
+* add Trust and Cost explanation and README security/cost callout ([50c83c3](https://github.com/MattJColes/lgtmaybe/commit/50c83c38e356d8e51f2a7ee82877e23bf6d64742))
+* add Trust and Cost explanation and README security/cost callout ([87c6a77](https://github.com/MattJColes/lgtmaybe/commit/87c6a77796d6af80f9180d98ff33640ce6fa4057))
+* align provider connector docs with the code ([90e0578](https://github.com/MattJColes/lgtmaybe/commit/90e0578509374aa47349eabdd15ae78b0c6b5751))
+* correct provider count to six hosted plus local ollama ([d80c6b4](https://github.com/MattJColes/lgtmaybe/commit/d80c6b41530fbebc9bfdb31d3ffac73bcaf79855))
+* correct the stale num_ctx default from 16384 to 32768 ([65fa85f](https://github.com/MattJColes/lgtmaybe/commit/65fa85ffd225e52a45c52cf0d519b84b79c85164))
+* reframe trust/cost docs around choosing who can trigger reviews ([cfe5fa4](https://github.com/MattJColes/lgtmaybe/commit/cfe5fa4d7d6d95e35a26daef01c94d55aca1771e))
+* refresh CLAUDE.md and releasing guide for current state ([e0d8eb5](https://github.com/MattJColes/lgtmaybe/commit/e0d8eb5a39c0e66d3c2d9eff0093f6eb38a5023a))
+
 ## [0.1.0](https://github.com/MattJColes/lgtmaybe/compare/lgtmaybe-v0.0.2...lgtmaybe-v0.1.0) (2026-06-07)
 
 
