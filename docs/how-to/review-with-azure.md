@@ -60,7 +60,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: lgtmaybe/lgtmaybe@v1
+      - uses: MattJColes/lgtmaybe@v0
         with:
           provider: azure
           model: my-gpt-4o-deployment            # your deployment name
@@ -102,7 +102,7 @@ If you would rather use a resource key, set `AZURE_API_KEY` and `AZURE_API_BASE`
 extra is not required in this mode.
 
 ```yaml
-      - uses: lgtmaybe/lgtmaybe@v1
+      - uses: MattJColes/lgtmaybe@v0
         with:
           provider: azure
           model: my-gpt-4o-deployment

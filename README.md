@@ -162,7 +162,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: lgtmaybe/lgtmaybe@v1
+      - uses: MattJColes/lgtmaybe@v0
         with:
           provider: openai
           model: gpt-5.5
@@ -188,7 +188,7 @@ only — run it through the [CLI](docs/how-to/run-locally-with-ollama.md) instea
 ## Distribution
 
 - **CLI** — `pip install lgtmaybe`
-- **GitHub Action** — `uses: lgtmaybe/lgtmaybe@v1`
+- **GitHub Action** — `uses: MattJColes/lgtmaybe@v0`
 
 ## Contributing
 

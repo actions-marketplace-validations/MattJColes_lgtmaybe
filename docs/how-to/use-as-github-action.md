@@ -78,7 +78,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4 # base repo only — for .lgtmaybe.yml config
-      - uses: lgtmaybe/lgtmaybe@v1
+      - uses: MattJColes/lgtmaybe@v0
         with:
           provider: openai
           model: gpt-5.5
@@ -91,14 +91,14 @@ Swap the `provider`, `model`, and `api_key` inputs:
 
 ```yaml
 # anthropic
-- uses: lgtmaybe/lgtmaybe@v1
+- uses: MattJColes/lgtmaybe@v0
   with:
     provider: anthropic
     model: claude-sonnet-4-6
     api_key: ${{ secrets.ANTHROPIC_API_KEY }}
 
 # openrouter
-- uses: lgtmaybe/lgtmaybe@v1
+- uses: MattJColes/lgtmaybe@v0
   with:
     provider: openrouter
     model: anthropic/claude-sonnet-4-6
@@ -141,7 +141,7 @@ pass `aws_role_arn`, `gcp_wif_provider`, or `azure_client_id`. All require
 | `azure_tenant_id` | — | Entra (Azure AD) tenant ID for keyless azure |
 | `config_path` | `.lgtmaybe.yml` | Path to the config file, relative to repo root |
 | `github_token` | `${{ github.token }}` | Token for reading the PR and posting the review |
-| `image` | `ghcr.io/lgtmaybe/lgtmaybe:v1` | Override the container image (advanced) |
+| `image` | `ghcr.io/mattjcoles/lgtmaybe:v0` | Override the container image (advanced) |
 
 The action sets the `GITHUB_TOKEN` and provider credentials for the container
 itself — you do not pass them as `env`.
@@ -154,9 +154,9 @@ filters, and cost caps. See
 
 ## Pin to a specific version
 
-`@v1` is a floating tag that tracks the latest `v1.x.x` release. To pin exactly,
+`@v0` is a floating tag that tracks the latest `v0.x.x` release. To pin exactly,
 use a full version tag:
 
 ```yaml
-uses: lgtmaybe/lgtmaybe@v1.0.0
+uses: MattJColes/lgtmaybe@v0.1.0
 ```
