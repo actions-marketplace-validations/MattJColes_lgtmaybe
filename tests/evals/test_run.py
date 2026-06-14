@@ -7,8 +7,46 @@ import json
 import pytest
 
 from evals import run as run_mod
+from evals.scorer import FixtureScore
 from lgtmaybe.core.models import ProviderResult, ReviewFinding, Severity
 from tests.fakes import FakeProvider
+
+
+def _score(name: str, matched: int, expected: int, *, parsed_ok: bool = True) -> FixtureScore:
+    return FixtureScore(
+        name=name,
+        parsed_ok=parsed_ok,
+        expected_count=expected,
+        matched_count=matched,
+        findings_count=matched,
+        missed=[],
+    )
+
+
+def test_gate_pools_recall_across_fixtures() -> None:
+    """A fixture dipping below the floor still passes if the pooled recall clears it.
+
+    badcode at 2/7 (29%) is under a 0.3 floor on its own, but pooled with
+    vibe-multifile at 5/11 the run is 7/18 = 39% — so one missed finding on a
+    short fixture doesn't flip the job. Per-fixture gating would have failed here.
+    """
+    scores = [_score("badcode", 2, 7), _score("vibe-multifile", 5, 11)]
+    ok, aggregate = run_mod._gate(scores, 0.3)
+    assert ok
+    assert aggregate == pytest.approx(7 / 18)
+
+
+def test_gate_fails_when_pooled_recall_below_floor() -> None:
+    scores = [_score("badcode", 1, 7), _score("vibe-multifile", 1, 11)]
+    ok, _ = run_mod._gate(scores, 0.3)
+    assert not ok
+
+
+def test_gate_fails_on_any_parse_failure_regardless_of_recall() -> None:
+    """A parse failure is a pipeline break, not model variance — it fails the run."""
+    scores = [_score("badcode", 7, 7), _score("vibe-multifile", 0, 11, parsed_ok=False)]
+    ok, _ = run_mod._gate(scores, 0.0)
+    assert not ok
 
 
 class _ShellInjectionProvider(FakeProvider):
