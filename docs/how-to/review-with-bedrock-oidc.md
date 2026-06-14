@@ -33,16 +33,26 @@ The role needs only:
     "bedrock:InvokeModel",
     "bedrock:InvokeModelWithResponseStream"
   ],
-  "Resource": "arn:aws:bedrock:*::foundation-model/*"
+  "Resource": [
+    "arn:aws:bedrock:*:<account-id>:inference-profile/*",
+    "arn:aws:bedrock:*::foundation-model/*"
+  ]
 }
 ```
 
-Scope `Resource` to specific model ARNs for tighter least-privilege. If you use a
-cross-region inference profile (the `us.`/`eu.`/`apac.`-prefixed ids below — the
-recommended form), the role also needs `bedrock:InvokeModel*` on the
-inference-profile ARN, e.g.
-`arn:aws:bedrock:*:<account-id>:inference-profile/*`, otherwise the call fails
-with `AccessDeniedException`.
+**Both ARNs are required for the recommended inference-profile model ids**
+(the `us.`/`eu.`/`apac.`-prefixed ids below). A cross-region inference profile
+fans the call out to the foundation model in several regions, so the role needs
+`bedrock:InvokeModel*` on **both** the `inference-profile/*` ARN **and** the
+underlying `foundation-model/*` ARN — granting only one of them still fails with
+`AccessDeniedException`. (A bare `anthropic.…` model id needs only the
+`foundation-model/*` ARN, but most current Claude models are invocable only
+through an inference profile — see the model table below.)
+
+Scope each `Resource` to specific model / inference-profile ARNs for tighter
+least-privilege once it works, e.g.
+`arn:aws:bedrock:*:<account-id>:inference-profile/us.anthropic.claude-opus-4-8*`
+and `arn:aws:bedrock:*::foundation-model/anthropic.claude-opus-4-8*`.
 
 ## Workflow example
 
