@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.1.5](https://github.com/MattJColes/lgtmaybe/compare/lgtmaybe-v0.1.4...lgtmaybe-v0.1.5) (2026-06-14)
+
+
+### Performance Improvements
+
+* **e2e:** single 9B local model + cached, single-fixture ollama run ([64e49f9](https://github.com/MattJColes/lgtmaybe/commit/64e49f9a0b06549c80b220afaeb7630a66873fb3))
+
+
+### Documentation
+
+* **bedrock:** clarify valid model ids and inference profiles ([4ca94fd](https://github.com/MattJColes/lgtmaybe/commit/4ca94fd0f623710b5ff45304ed0e9994318499e0))
+* **bedrock:** clarify valid model ids and inference profiles ([417e64c](https://github.com/MattJColes/lgtmaybe/commit/417e64caf65650be9a80bb5f0f0e33eb910b5477))
+
 ## [0.1.4](https://github.com/MattJColes/lgtmaybe/compare/lgtmaybe-v0.1.3...lgtmaybe-v0.1.4) (2026-06-14)
 
 
