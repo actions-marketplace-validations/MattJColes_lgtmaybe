@@ -35,7 +35,7 @@ PR_URL = f"{BASE_URL}/repos/{REPO}/pulls/{PR_NUMBER}"
 FILES_URL = f"{BASE_URL}/repos/{REPO}/pulls/{PR_NUMBER}/files"
 REVIEWS_URL = f"{PR_URL}/reviews"
 
-# src/app.py line 2 ("+import sys") sits at diff position 2.
+# src/app.py new-file line 2 ("+import sys") is an added line (RIGHT side).
 SAMPLE_DIFF = """\
 diff --git a/src/app.py b/src/app.py
 index 0000001..0000002 100644
@@ -57,24 +57,32 @@ _FINDING = ReviewFinding(
     severity=Severity.medium,
     title="Import order",
     body="sys should be sorted before os",
+    failure_scenario=(
+        "When the module is linted, the changed import order fails the configured check."
+    ),
 )
 
 
 class _ReviewThenReflectProvider(FakeProvider):
-    """Returns findings on the first call, a keep-all reflection verdict after."""
+    """Answers every lens with the same finding, then a keep-all reflection verdict.
 
-    def __init__(self) -> None:
-        super().__init__()
-        self._n = 0
+    Which call it is comes from the prompt, not a counter: a counter answered
+    lens 1 and fed the reflection verdict to lenses 2..N, so those calls parsed
+    as failures and the "review" under test was a partially-failed one carrying
+    an incomplete-results notice. Every lens answering makes this a complete
+    review — dedupe collapses the identical findings to the one comment asserted
+    below — and leaves the partial-failure path to
+    tests/test_incomplete_visibility.py.
+    """
 
     def complete(self, messages: list[Message], model: str, **opts: object) -> ProviderResult:
         self.calls.append({"messages": messages, "model": model, "opts": opts})
-        self._n += 1
-        if self._n == 1:
-            text = json.dumps([_FINDING.model_dump(mode="json")])
-            return ProviderResult(text=text, input_tokens=10, output_tokens=20)
-        verdict = json.dumps({0: True})
-        return ProviderResult(text=verdict, input_tokens=5, output_tokens=5)
+        prompt = "\n".join(str(m.get("content", "")) for m in messages)
+        if "auditing another reviewer" in prompt:
+            verdict = json.dumps({0: True})
+            return ProviderResult(text=verdict, input_tokens=5, output_tokens=5)
+        text = json.dumps([_FINDING.model_dump(mode="json")])
+        return ProviderResult(text=text, input_tokens=10, output_tokens=20)
 
 
 def _mock_github(captured: list[dict[object, object]]) -> None:
@@ -123,7 +131,8 @@ def test_e2e_posts_inline_comment_at_correct_position_and_summary() -> None:
     comments = body["comments"]
     assert len(comments) == 1
     assert comments[0]["path"] == "src/app.py"
-    assert comments[0]["position"] == 2  # correct diff position
+    assert comments[0]["line"] == 2  # anchored by new-file line + side
+    assert comments[0]["side"] == "RIGHT"
 
     # The review body carries the summary + the idempotency marker.
     assert "<!-- lgtmaybe -->" in str(body["body"])

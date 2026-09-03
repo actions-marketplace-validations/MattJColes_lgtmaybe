@@ -1,12 +1,13 @@
 """github — GitHub REST adapter for lgtmaybe.
 
 Public surface:
-- RestGitHubGateway: implements GitHubGateway against the GitHub REST API.
-- build_position_map: parse a unified diff into a (file, line) → position map.
-- is_reviewable: predicate that rejects lockfiles, minified, vendored, binary paths.
+- RestGitHubGateway: implements ReviewGateway against the GitHub REST API.
+
+The diff helpers this adapter is built on (``build_commentable_lines``,
+``is_reviewable``, ``is_scannable_manifest``) are host-neutral and live in
+``lgtmaybe.core.diff``; import them from there.
 """
 
-from .diff import build_position_map, is_reviewable
 from .rest_gateway import RestGitHubGateway
 
-__all__ = ["RestGitHubGateway", "build_position_map", "is_reviewable"]
+__all__ = ["RestGitHubGateway"]

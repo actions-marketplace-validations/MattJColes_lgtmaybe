@@ -9,11 +9,18 @@ never touch real AWS/GCP.
 
 from __future__ import annotations
 
+import os
 from collections.abc import Callable
 from dataclasses import dataclass
+from pathlib import Path
 
 from lgtmaybe.core.models import Provider
-from lgtmaybe.providers.constants import DEFAULT_OLLAMA_BASE
+from lgtmaybe.providers.factory import (
+    DEFAULT_OLLAMA_BASE,
+    OPENAI_COMPATIBLE_PLACEHOLDER_KEY,
+)
+
+_WINDOWS = os.name == "nt"
 
 
 @dataclass(frozen=True)
@@ -28,33 +35,14 @@ class AuthConfig:
 # Data-plane scope for Azure OpenAI / Cognitive Services AD tokens.
 _AZURE_OPENAI_SCOPE = "https://cognitiveservices.azure.com/.default"
 
-
-def _default_aws_probe() -> bool:
-    """Detect ambient AWS credentials.
-
-    Covers the CI/OIDC env vars and exported keys, plus a local shared-config
-    file (`~/.aws/credentials` / `~/.aws/config`, or the path given by
-    ``AWS_SHARED_CREDENTIALS_FILE`` / ``AWS_CONFIG_FILE``) so the documented
-    "credentials via ~/.aws" local flow is recognised even without
-    ``AWS_PROFILE`` exported.
-    """
-    import os
-    from pathlib import Path
-
-    if (
-        os.environ.get("AWS_ACCESS_KEY_ID")
-        or os.environ.get("AWS_PROFILE")
-        or os.environ.get("AWS_ROLE_ARN")
-        or os.environ.get("AWS_WEB_IDENTITY_TOKEN_FILE")
-    ):
-        return True
-
-    aws_home = Path.home() / ".aws"
-    candidates = (
-        os.environ.get("AWS_SHARED_CREDENTIALS_FILE") or str(aws_home / "credentials"),
-        os.environ.get("AWS_CONFIG_FILE") or str(aws_home / "config"),
-    )
-    return any(Path(path).is_file() for path in candidates)
+# Env var carrying the key, for the plain API-key providers. Looked up (not
+# .get) on purpose: a provider missing here is a bug, and a KeyError names it
+# rather than resolving to a keyless AuthConfig that fails at the API.
+_ENV_VAR: dict[Provider, str] = {
+    Provider.openai: "OPENAI_API_KEY",
+    Provider.anthropic: "ANTHROPIC_API_KEY",
+    Provider.openrouter: "OPENROUTER_API_KEY",
+}
 
 
 def _default_gcp_probe() -> bool:
@@ -67,8 +55,6 @@ def _default_gcp_probe() -> bool:
     ``gcloud auth application-default login`` — which sets no env var — so the
     documented local Vertex flow is recognised.
     """
-    import os
-    from pathlib import Path
 
     if (
         os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
@@ -79,8 +65,15 @@ def _default_gcp_probe() -> bool:
     ):
         return True
 
-    config_dir = os.environ.get("CLOUDSDK_CONFIG") or str(Path.home() / ".config" / "gcloud")
-    return (Path(config_dir) / "application_default_credentials.json").is_file()
+    configured = os.environ.get("CLOUDSDK_CONFIG")
+    if configured:
+        config_dir = Path(configured)
+    elif _WINDOWS:
+        appdata = os.environ.get("APPDATA")
+        config_dir = (Path(appdata) if appdata else Path.home() / "AppData" / "Roaming") / "gcloud"
+    else:
+        config_dir = Path.home() / ".config" / "gcloud"
+    return (config_dir / "application_default_credentials.json").is_file()
 
 
 def _default_azure_token() -> str | None:
@@ -94,7 +87,7 @@ def _default_azure_token() -> str | None:
     clear error.
     """
     try:
-        from azure.identity import DefaultAzureCredential
+        from azure.identity import CredentialUnavailableError, DefaultAzureCredential
     except ImportError as exc:
         raise ValueError(
             "keyless azure needs the azure-identity package. "
@@ -106,7 +99,7 @@ def _default_azure_token() -> str | None:
         credential = DefaultAzureCredential()
         token: str = credential.get_token(_AZURE_OPENAI_SCOPE).token
         return token
-    except Exception:
+    except CredentialUnavailableError:
         return None
 
 
@@ -124,15 +117,9 @@ def resolve_credentials(
     can be found.
     """
     if provider is Provider.bedrock:
-        probe = ambient_probe if ambient_probe is not None else _default_aws_probe
-        if not probe():
-            raise ValueError(
-                "bedrock requires ambient AWS credentials. "
-                "Configure an OIDC role (AWS_ROLE_ARN + AWS_WEB_IDENTITY_TOKEN_FILE), "
-                "a named profile (AWS_PROFILE), or set AWS_ACCESS_KEY_ID / "
-                "AWS_SECRET_ACCESS_KEY in the environment."
-            )
-        return AuthConfig()
+        # The AWS SDK owns this chain: unlike a local probe it can resolve ECS,
+        # EKS Pod Identity and EC2 instance-profile credentials as well as env/files.
+        return AuthConfig(api_base=api_base)
 
     if provider is Provider.vertex:
         probe = ambient_probe if ambient_probe is not None else _default_gcp_probe
@@ -142,11 +129,9 @@ def resolve_credentials(
                 "Configure Workload Identity Federation, set GOOGLE_APPLICATION_CREDENTIALS "
                 "to a service-account key file, or run 'gcloud auth application-default login'."
             )
-        return AuthConfig()
+        return AuthConfig(api_base=api_base)
 
     if provider is Provider.azure:
-        import os
-
         base = api_base or os.environ.get("AZURE_API_BASE")
         if not base:
             raise ValueError(
@@ -180,22 +165,47 @@ def resolve_credentials(
     if provider is Provider.ollama:
         return AuthConfig(api_base=api_base or DEFAULT_OLLAMA_BASE)
 
+    if provider is Provider.zai:
+        key = api_key or os.environ.get("ZAI_API_KEY")
+        if not key:
+            raise ValueError(
+                "zai (GLM / Zhipu AI) requires an API key. Set the ZAI_API_KEY "
+                "environment variable or pass --api-key."
+            )
+        # Key-only by default (litellm's native zai/ route targets the international
+        # endpoint). An explicit base overrides it for the China / coding-plan
+        # endpoints (e.g. https://open.bigmodel.cn/api/paas/v4).
+        return AuthConfig(api_key=key, api_base=api_base or os.environ.get("ZAI_API_BASE"))
+
+    if provider is Provider.openai_compatible:
+        base = api_base or os.environ.get("OPENAI_COMPATIBLE_API_BASE")
+        if not base:
+            raise ValueError(
+                "openai-compatible requires a base URL. Pass --api-base "
+                "(e.g. http://localhost:8000/v1 for llama.cpp / LM Studio / vLLM, "
+                "or https://api.deepseek.com/v1) or set OPENAI_COMPATIBLE_API_BASE."
+            )
+        # Key is optional: hosted endpoints (DeepSeek) need one, local servers
+        # don't. When absent we still send a placeholder — the OpenAI client
+        # litellm uses rejects an empty key.
+        key = (
+            api_key
+            or os.environ.get("OPENAI_COMPATIBLE_API_KEY")
+            or OPENAI_COMPATIBLE_PLACEHOLDER_KEY
+        )
+        return AuthConfig(api_key=key, api_base=base)
+
     # API-key providers: openai, anthropic, openrouter
-    _ENV_VAR: dict[Provider, str] = {
-        Provider.openai: "OPENAI_API_KEY",
-        Provider.anthropic: "ANTHROPIC_API_KEY",
-        Provider.openrouter: "OPENROUTER_API_KEY",
-    }
     env_var = _ENV_VAR[provider]
 
+    # An explicit --api-base (e.g. an OpenAI-format proxy) rides along with the
+    # key — dropping it here would silently ignore the user's endpoint.
     if api_key:
-        return AuthConfig(api_key=api_key)
-
-    import os
+        return AuthConfig(api_key=api_key, api_base=api_base)
 
     key_from_env = os.environ.get(env_var)
     if key_from_env:
-        return AuthConfig(api_key=key_from_env)
+        return AuthConfig(api_key=key_from_env, api_base=api_base)
 
     raise ValueError(
         f"{provider} requires an API key. Set the {env_var} environment variable or pass --api-key."

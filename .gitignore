@@ -31,6 +31,7 @@ MANIFEST
 #   before PyInstaller builds the exe, so as to inject date/other infos into it.
 *.manifest
 *.spec
+!packaging/pyinstaller/lgtmaybe.spec
 
 # Installer logs
 pip-log.txt
@@ -166,6 +167,7 @@ venv.bak/
 
 # mkdocs documentation
 /site
+**/cdk.out/
 
 # mypy
 .mypy_cache/
@@ -216,3 +218,7 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Claude Code agent worktrees — transient checkouts created under a tracked
+# directory, so without this a `git add .` stages nested copies of the repo.
+.claude/worktrees/

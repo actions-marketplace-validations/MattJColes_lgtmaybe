@@ -1,3 +1,7 @@
+---
+description: Exactly what data lgtmaybe sends where — diffs only, secret redaction before egress, no code checkout, fully local with ollama.
+---
+
 # Data and Privacy
 
 This document states precisely what data lgtmaybe sends to external services,
@@ -6,7 +10,10 @@ credentials are handled. No data flows occur beyond what is described here.
 
 ## What is sent to the LLM provider
 
-lgtmaybe sends one request per review containing:
+lgtmaybe sends four grouped model calls under the default `fast` preset — the
+same four on every provider, overlapping when there is more than one worker.
+`full` sends one per category. The review calls fan out through one bounded pool and
+are followed by a self-reflection call. Each call contains some subset of:
 
 - The **compressed PR diff** — the unified diff of changed files, after
   generated files, lockfiles, minified assets, and vendored code have been
@@ -24,7 +31,8 @@ lgtmaybe sends one request per review containing:
   each commit message (on the CLI: the commit names from your local `git log`).
   This feeds the **intent lens** ("does the PR do what it says?"). It is
   redacted exactly like the diff, wrapped as untrusted data, and sent **only on
-  the intent lens's model call** — drop `intent` from `categories` in
+  the single lens call that carries the intent** (the correctness call under
+  the default `fast` preset, or the dedicated intent lens under `full`) — drop `intent` from `categories` in
   `.lgtmaybe.yml` and it is never sent at all.
 - A **system prompt** — the fixed instructions that tell the model to return
   structured JSON findings.
@@ -38,6 +46,19 @@ Nothing else is sent. lgtmaybe does not send:
 - Committer identity or email addresses
 - Any other data from the repository's git history
 
+The **change overview** (`/diagram`, `auto_diagram`) makes up to three calls —
+description, High Impact Areas, diagrams — and each sends exactly the same
+inputs as a review call: the redacted diff and, when present, the redacted
+stated intent. The High Impact Areas call additionally sends the **paths** of
+changed files matching its risk patterns, which are already part of the diff it
+sends. No new data flows; the calls only ask the model for a different output.
+The standalone `/describe` comment sends the same inputs again. The diagram comment
+does include an "Open full screen" [mermaid.live](https://mermaid.live) link per
+diagram, whose URL fragment embeds that diagram's source — but that source is the
+already-public, post-redaction comment body, the fragment is decoded
+client-side (browsers never send fragments to a server), and nothing is fetched
+unless a reader clicks the link.
+
 ## Secret redaction before egress
 
 Before the diff is sent to any external provider, lgtmaybe scans it for
@@ -48,22 +69,72 @@ names). Recognised formats include:
 
 - **Cloud / provider keys** — AWS access key IDs (`AKIA…`), OpenAI keys
   (`sk-…`), Stripe secret keys (`sk_live_…`), and Google API keys (`AIza…`).
-- **Source-control / chat tokens** — GitHub classic tokens (`ghp_`, `gho_`, …),
-  GitHub fine-grained PATs (`github_pat_…`), and Slack tokens (`xoxb-…`).
+- **Source-control / chat / registry tokens** — GitHub classic tokens
+  (`ghp_`, `gho_`, …), GitHub fine-grained PATs (`github_pat_…`), Slack tokens
+  (`xoxb-…`), npm tokens (`npm_…`), and PyPI tokens (`pypi-…`).
+- **JSON Web Tokens** — `eyJ….eyJ….…` (the whole token, since the payload
+  carries claims/PII).
 - **Private keys** — PEM `-----BEGIN … PRIVATE KEY-----` blocks.
 - **Generic credentials** — `api_key`/`token`/`secret = "…"` assignments,
   quoted `password`/`passphrase` literals, `Authorization: Bearer/Basic …`
-  headers, and passwords embedded in connection-string URLs
-  (`scheme://user:secret@host`).
+  headers, passwords embedded in connection-string URLs
+  (`scheme://user:secret@host`), and Azure storage / Cosmos connection-string
+  keys (`AccountKey=…` / `SharedAccessKey=…`).
 
 For credential assignments only the value is replaced — the key name or URL host
 stays readable so the reviewer can still reason about the change.
 
-This happens inside the **compress** stage, before the prompt is built, so
-redacted values never reach the LLM or appear in logs.
+This happens as the **first** pipeline stage, before the diff is compressed or
+the prompt is built, so redacted values never reach the LLM or appear in logs.
 
 Redaction is a best-effort defence. Do not commit real secrets to your
 repository and rely on this alone.
+
+## Model replies in the log
+
+When a model's reply cannot be parsed into findings, lgtmaybe logs why. At the
+default log level it records only **which** parse failure it was (`prose`,
+`malformed_json`, `not_findings`, `schema`, `truncated`, `empty`) and **how many
+characters** the reply was — never its content.
+
+Set `LGTMAYBE_LOG_LEVEL=DEBUG` and the log line additionally carries a capped
+excerpt of the reply itself (the first 2,000 and last 500 characters, with the
+gap marked). This exists so a model that stops honouring the output schema can
+be diagnosed without re-running the review. The excerpt:
+
+- is passed through the same secret redaction described above before it is
+  logged, and is redacted **before** it is cut, so a truncated match cannot slip
+  past the redactor;
+- is written to **stderr**, alongside the other structured JSON log lines —
+  never to stdout (the machine-readable channel) and never to the PR;
+- is model output, which can quote the diff back. That is why it is off unless
+  you ask for it.
+
+## The repair re-ask
+
+When a review call's reply cannot be parsed into findings, lgtmaybe sends that
+reply back to the **same provider** once, with the output schema and a request
+to re-express it in the required shape (`repair_unparseable`, on by default).
+
+This adds no new data: the reply is the model's own output about a diff it has
+already been sent, and the repair call carries **no diff, no context lines, and
+no PR metadata** — only the reply itself, capped and wrapped as untrusted data.
+It happens at most once per failed call and never recursively.
+
+## The schema-less re-run
+
+When that reformat fails too *and* the original call carried the provider's JSON
+schema, lgtmaybe re-runs that one lens once with the schema omitted
+(`retry_without_schema`, on by default) — the prompt asks for JSON regardless,
+so a model whose constrained decoding produced something unreadable often
+answers fine without it.
+
+Unlike the repair, this **does re-send the diff** — it is the same request minus
+one parameter, to the same provider, so nothing new leaves the process and
+nothing new is exposed, but it is a second full send rather than a small one. It
+runs at most once per lens per batch, only after the cheaper repair has failed,
+and only where a schema was actually sent. Set `retry_without_schema: false` to
+turn it off.
 
 ## Prompt-injection defence
 
@@ -125,7 +196,14 @@ The token is not sent to any LLM provider. It requires the minimum scopes:
 
 ## Fork pull requests
 
-lgtmaybe uses the `pull_request_target` trigger, which runs in the context of
-the **base branch**. PR code from the fork is never checked out or executed.
-The diff is fetched exclusively through the GitHub API. This prevents a
-malicious PR from gaining access to repository secrets.
+On GitHub, lgtmaybe uses the `pull_request_target` trigger, which runs in the
+context of the **base branch**. PR code from the fork is never checked out or
+executed. The diff is fetched exclusively through the host's API. This prevents
+a malicious PR from gaining access to repository secrets.
+
+GitLab and Gitea have no `pull_request_target` equivalent — their merge- and
+pull-request pipelines run with the project's own secrets. The protection is
+unchanged and holds for the same reason: lgtmaybe never checks out or executes
+change-request code on any host, so there is nothing for an attacker to run. The
+supplied GitLab job even sets `GIT_STRATEGY: none`, so the repository is never
+cloned at all.

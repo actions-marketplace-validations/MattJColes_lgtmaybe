@@ -1,3 +1,7 @@
+---
+description: Run your first lgtmaybe pull-request review locally with ollama — no API keys, no GitHub token, and no pull request required.
+---
+
 # Getting Started with lgtmaybe
 
 This tutorial walks you through your first review using **ollama** — a fully
@@ -7,7 +11,7 @@ and no pull request required.
 
 ## What you need
 
-- Python 3.12 or later
+- Python 3.11 or later
 - [ollama](https://ollama.com) running locally
 - A local git repository with some changes on a branch to review
 
@@ -17,10 +21,22 @@ and no pull request required.
 pip install lgtmaybe
 ```
 
+On macOS you can install from the Homebrew tap instead:
+
+```bash
+brew tap MattJColes/tap
+brew trust MattJColes/tap   # current Homebrew requires trusting third-party taps
+brew install lgtmaybe
+```
+
+See [Install the CLI](../how-to/install-the-cli.md) for details. It explains
+the `brew trust` step, and which providers the base install covers: API-key and
+local ones. Keyless cloud providers need the `pip` extras.
+
 Verify the install:
 
 ```bash
-lgtmaybe --version
+lgtmaybe --help
 ```
 
 ## Step 2 — Start ollama and pull a model
@@ -44,19 +60,20 @@ lgtmaybe review \
 ```
 
 lgtmaybe diffs your current branch against the remote primary branch
-(`origin/HEAD`, falling back to `origin/main`), sends the changed lines to your
+(`origin/HEAD`, falling back to `origin/main` / `origin/master`, then a local
+`main` / `master`), sends the changed lines to your
 local qwen3.6:27b instance, and prints the findings to your terminal:
 
 ```console
 src/app.py:2  [MEDIUM] Import order
   sys should be sorted before os
 
-1 finding · model qwen3.6:27b
+1 finding · provider ollama · model qwen3.6:27b
 ```
 
 To review the whole worktree — your branch's commits plus uncommitted edits —
-add `--working`; for only the uncommitted edits, add `--uncommitted`; to diff
-against a different base, pass `--base main`.
+add `--working`. To review only the uncommitted edits, add `--uncommitted`. To
+diff against a different base, pass `--base main`.
 
 ## Step 4 — Change the output format
 
@@ -72,11 +89,42 @@ lgtmaybe review --provider ollama --model qwen3.6:27b \
 coding agent can read and apply, for a local review-and-fix loop — see
 [Fix findings with an AI agent](../how-to/fix-findings-with-an-ai-agent.md).
 
-## Step 5 — Post reviews on real pull requests
+## Step 5 — See the whole change
+
+`lgtmaybe diagram` runs the same local diff through three concurrent model calls
+and prints the **change overview**: a description of what you changed, a **High
+Impact Areas** section calling out anything that could bite (infrastructure,
+security posture, outage risk, migrations, backups and more), and a picture of
+the components your change touches — plus, when it alters a run-time flow, a
+sequence diagram of that flow:
+
+```bash
+lgtmaybe diagram \
+  --provider ollama \
+  --model qwen3.6:27b \
+  --api-base http://localhost:11434
+```
+
+It takes the same `--base` / `--working` / `--uncommitted` flags as `review`, so
+`review` then `diagram` is a natural pair before you open a pull request: what's
+wrong with the change, then what the change is and what it could break. The
+diagrams print as Mermaid source plus a text rendering — the text is what reads
+in a terminal; paste the Mermaid into a GitHub comment or
+[mermaid.live](https://mermaid.live) to see it drawn. See
+[Generate a change overview](../how-to/generate-a-change-diagram.md).
+
+## Step 6 — Post reviews on real pull requests
 
 The CLI reviews local changes. To run lgtmaybe on actual pull requests — inline
-comments and a summary posted back to GitHub — add the GitHub Action to your
-repo. See [Use as a GitHub Action](../how-to/use-as-github-action.md).
+comments and a summary posted back to the change — wire it into your code host.
+The review is the same on all three; only the plumbing differs:
+
+- **GitHub** — add the Action to your repo:
+  [Use as a GitHub Action](../how-to/use-as-github-action.md)
+- **GitLab** — add a CI job:
+  [Review on GitLab](../how-to/review-on-gitlab.md)
+- **Gitea** — add a Gitea Actions workflow:
+  [Review on Gitea](../how-to/review-on-gitea.md)
 
 ## What happened under the hood
 
@@ -86,7 +134,8 @@ lgtmaybe ran its pipeline over your local diff:
 2. **compress** — stripped generated files, binaries, and lockfiles
 3. **prompt** — built a structured prompt asking for JSON output
 4. **parse** — validated the model's JSON against the `ReviewFinding` schema
-5. **render** — printed the findings (the Action posts them to the PR instead)
+5. **gate** — dropped defect findings without a concrete `failure_scenario`
+6. **render** — printed the findings (the Action posts them to the PR instead)
 
 ## Next steps
 

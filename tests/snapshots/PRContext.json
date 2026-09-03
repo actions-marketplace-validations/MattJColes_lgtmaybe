@@ -29,6 +29,15 @@
       "title": "Diff",
       "type": "string"
     },
+    "feedback_downvotes": {
+      "default": [],
+      "items": {
+        "type": "string"
+      },
+      "title": "Feedback Downvotes",
+      "type": "array",
+      "uniqueItems": true
+    },
     "file_contents": {
       "additionalProperties": {
         "type": "string"
@@ -36,9 +45,20 @@
       "title": "File Contents",
       "type": "object"
     },
+    "head_branch": {
+      "default": "",
+      "title": "Head Branch",
+      "type": "string"
+    },
     "head_sha": {
       "title": "Head Sha",
       "type": "string"
+    },
+    "open_finding_threads": {
+      "default": 0,
+      "minimum": 0,
+      "title": "Open Finding Threads",
+      "type": "integer"
     },
     "pr_number": {
       "title": "Pr Number",
@@ -47,6 +67,13 @@
     "repo": {
       "title": "Repo",
       "type": "string"
+    },
+    "scan_contents": {
+      "additionalProperties": {
+        "type": "string"
+      },
+      "title": "Scan Contents",
+      "type": "object"
     },
     "title": {
       "default": "",

@@ -1,3 +1,7 @@
+---
+description: Turn lgtmaybe findings into instructions an AI coding agent can apply, for a local review-and-fix loop before you push.
+---
+
 # Fix findings with an AI agent
 
 `lgtmaybe review` runs locally and prints findings; it never posts anywhere. The
@@ -7,6 +11,13 @@ review-and-fix loop on your own machine before you ever open a pull request.
 
 This works with any provider. ollama keeps it local and free; a cloud provider
 gives you a stronger reviewer at a small cost.
+
+## Contents
+
+- [Print the findings as agent instructions](#print-the-findings-as-agent-instructions)
+- [Hand it to the agent](#hand-it-to-the-agent)
+- [Close the loop](#close-the-loop)
+- [See also](#see-also)
 
 ## Print the findings as agent instructions
 
@@ -63,7 +74,8 @@ lgtmaybe review --provider ollama --model qwen3.6:27b \
   --api-base http://localhost:11434 --format agent
 ```
 
-A clean branch prints `No review findings — nothing to correct.` Repeat until
+A clean branch prints `No review findings — nothing to correct.` followed by
+the summary line. Repeat until
 you are happy, then open your PR. To post reviews on the PR itself, wire up the
 [GitHub Action](use-as-github-action.md).
 

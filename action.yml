@@ -1,5 +1,5 @@
 name: lgtmaybe
-description: Provider-agnostic PR reviewer — six providers, one flag, no static keys for cloud.
+description: Provider-agnostic PR reviewer. Choose the provider, model, and authentication in your GitHub Actions workflow.
 author: Matt Coles
 branding:
   icon: check-circle
@@ -7,27 +7,55 @@ branding:
 
 inputs:
   provider:
-    description: "LLM provider: openai, anthropic, openrouter, bedrock, vertex, azure, or ollama."
+    description: "Set this in the workflow `with:` block. LLM provider: openai, anthropic, openrouter, zai, bedrock, vertex, azure, ollama, or openai-compatible (any OpenAI /v1 endpoint via api_base — DeepSeek, llama.cpp, LM Studio, vLLM)."
     required: false
     default: ""
   model:
-    description: "Model name understood by the chosen provider (e.g. gpt-5.5, claude-sonnet-4-6)."
+    description: "Set this beside `provider` in the workflow `with:` block. Model name understood by the chosen provider (e.g. gpt-5.5, claude-sonnet-4-6)."
+    required: false
+    default: ""
+  preset:
+    description: "Review preset. fast (the default) covers all nine categories in four model calls, one per concern: security, correctness (stated intent folds in), code health (performance/complexity/ponytail/deprecation), and artefacts (tests/documentation). The same four run on every provider — worker count changes only how they are scheduled. full runs one call per lens for release branches and deep audits. An explicit categories list in .lgtmaybe.yml overrides the preset."
     required: false
     default: ""
   fallback_model:
     description: "Model to retry with if the primary model fails."
     required: false
     default: ""
+  triage_model:
+    description: "Cheap model that runs first to skip plainly-non-substantive files and rank the rest by risk; the strong `model` then reviews only the survivors. Security-relevant files (auth/crypto/IaC/CI paths, security tokens, static-analysis hits, large hunks) always escalate past triage. Unset = no triage (every file gets the full review)."
+    required: false
+    default: ""
+  reflect_model:
+    description: "Model for the self-reflection (false-positive audit) pass. Defaults to model; point it at a stronger model to audit a weaker reviewer's findings."
+    required: false
+    default: ""
+  language:
+    description: "Human language for the reviewer's prose — finding title/body and the describe/diagram text (e.g. Japanese, Spanish, French). Structural fields (path/line/side/severity/anchor) and suggestion code stay unchanged. Leave empty for English."
+    required: false
+    default: ""
   api_key:
-    description: "API key for key-based providers (openai/anthropic/openrouter/azure). Leave empty for bedrock/vertex/ollama."
+    description: "API key for key-based providers (openai/anthropic/openrouter/azure, and openai-compatible hosted endpoints like DeepSeek). Leave empty for bedrock/vertex/ollama and keyless local openai-compatible servers."
     required: false
     default: ""
   api_base:
-    description: "Resource endpoint for azure (https://<resource>.openai.azure.com), or a custom base URL for other providers."
+    description: "Resource endpoint for azure (https://<resource>.openai.azure.com), the OpenAI /v1 base for openai-compatible (e.g. https://api.deepseek.com/v1), or a custom base URL for other providers."
     required: false
     default: ""
   timeout:
-    description: "Per-request timeout in seconds for each model call. Leave empty for the provider default (ollama 300, cloud 60)."
+    description: "Enforced wall-clock timeout in seconds for each model call. Leave empty for the provider default (ollama, openai-compatible and openrouter 1800, cloud 600). A call that times out is reported by the incomplete-results notice, which posts on the PR as well as in the review body."
+    required: false
+    default: ""
+  max_review_seconds:
+    description: "Soft wall-clock ceiling for the whole review, in seconds (default 3600). Once it passes, no further model calls are dispatched — in-flight calls finish and the review posts partial results with the incomplete-results notice every failed or skipped call raises. A job cancelled or timed out by the runner does the same: the CLI winds the review down on SIGINT/SIGTERM and posts what it already has. Set 0 to disable."
+    required: false
+    default: ""
+  max_review_tokens:
+    description: "Soft billable-token ceiling for the whole review — input plus output summed across every model call (lens fan-out, triage, reflection). Once it passes, no further model calls are dispatched: in-flight calls finish, their findings post, and the review carries a notice naming this input. Empty or 0 (the default) disables it. There is no safe generous default because token spend scales with diff size and lens count — run once with profile: true, read the total, then set this above it."
+    required: false
+    default: ""
+  max_findings_per_lens:
+    description: "Ceiling on the findings one (batch, lens) call may contribute — a backstop against a degenerate response, not a review budget. A model can restate one claim across every line it sees; measured, a single lens returned 319 of a review's 323 findings on a diff with nothing wrong in it. When it fires the highest-severity findings are kept and the review names the lens and how many were dropped. Default 50, far above any real per-lens yield; 0 disables it."
     required: false
     default: ""
   temperature:
@@ -40,6 +68,86 @@ inputs:
     default: ""
   max_input_tokens:
     description: "Token budget per model call before the diff is split into batches (any provider). Leave empty for the default (100000)."
+    required: false
+    default: ""
+  max_tokens:
+    description: "Cap the tokens each model call may generate (any provider). Leave empty to send no cap, so the model's own ceiling applies. Set it on a prepaid route like OpenRouter, which reserves prompt + max_tokens against your balance before generating and assumes the model's full ceiling when the request omits it."
+    required: false
+    default: ""
+  reasoning_effort:
+    description: "Bound what a reasoning model spends thinking per call: none, minimal, low, medium, high, xhigh, or default. Leave empty to send nothing, so the route's own default applies. Use it when lens calls truncate or run long — max_tokens caps thinking and findings together and the model spends the thinking first, so raising the cap grows the reasoning rather than the answer."
+    required: false
+    default: ""
+  max_concurrency:
+    description: "Concurrent review calls across the whole fan-out (all batches and lenses share one pool). Leave empty for the provider-aware default: 8 for cloud providers, 1 for ollama and openai-compatible (a single-slot llama.cpp/LM Studio server wants 1; raise it explicitly for a batching vLLM server)."
+    required: false
+    default: ""
+  resolve_fixed:
+    description: "Auto-resolve a review conversation once its finding is fixed: on a re-run, when a flagged finding is no longer produced and the thread is outdated, lgtmaybe replies and resolves it. Set to false to leave conversations for manual resolution."
+    required: false
+    default: ""
+  recursive:
+    description: "Walk a file whose diff exceeds max_input_tokens hunk-by-hunk (RLM-style) instead of sending it whole and letting the model drop the tail. On by default; set to false to disable."
+    required: false
+    default: ""
+  structured_output:
+    description: "Constrain model output to the findings JSON schema via the provider's response_format (JSON mode). On by default; set to false for an openai-compatible gateway/proxy that rejects response_format (the lenient parser still handles fenced/prose output either way)."
+    required: false
+    default: ""
+  repair_unparseable:
+    description: "When a review call's reply can't be parsed into findings, send the reply back once — with the schema, without the diff — asking for it in the required shape. A model that answered with real review in the wrong wrapper is billed for it either way; without this all of it is discarded. On by default; set to false to disable. Costs nothing on a healthy run: it fires only on a call that already failed."
+    required: false
+    default: ""
+  retry_without_schema:
+    description: "Last resort when a reply won't parse and the reformat above couldn't fix it: re-run that one lens without response_format, on the theory that provider-native schema enforcement is what broke a reply the prompt would otherwise have got right. On by default; set to false to disable. Bounded to one re-run per lens, and only offered to a call that actually sent the schema — so a run with structured_output off pays nothing. A re-run that works marks the model, so later calls skip the schema instead of failing the same way."
+    required: false
+    default: ""
+  mid_review_retrieval:
+    description: "Let a review lens defer ONCE for bounded, read-only codebase context: instead of hedging or dropping a finding that hinges on code outside the diff, the lens names the files (or symbols) it must read, lgtmaybe fetches them read-only, and re-runs that one lens with them. Off by default — it costs at most one extra model call per (batch, lens); set to true to trade tokens for cross-file recall."
+    required: false
+    default: ""
+  symbol_resolution:
+    description: "During reflection, use ast-grep to resolve a deferred finding's referenced symbol to the file that defines it — searched in a read-only shallow clone of the PR's base branch — so the auditor re-judges a cross-file finding against the real definition. On by default; set to false to disable."
+    required: false
+    default: ""
+  incremental:
+    description: "Commit-scoped incremental review: on a synchronize push, review only the diff of the commits added since the last completed review instead of the whole PR. Auto by default (on for synchronize, full review everywhere else); set to true/false to force. Falls back to a full review after a force-push/rebase or when no previous review exists. `/review full` forces a full re-review on demand."
+    required: false
+    default: ""
+  spec_review:
+    description: "Check the diff against a specification the repository commits (OpenSpec `openspec/`, GitHub Spec Kit `specs/NNN-slug/`, Kiro `.kiro/specs/`): requirements the change falls short of, task-list entries it ticks off without doing, and behaviour no requirement covers. On by default, but gated on detection — no spec in the repo, or none matching this PR, and the lens never runs, so a repository without specs pays no extra call. Set false to disable."
+    required: false
+    default: ""
+  static_analysis:
+    description: "Run deterministic tools (ruff, bandit, mypy, gitleaks, zizmor, ast-grep, osv-scanner, and semgrep) over the changed files in a sandboxed, network-less subprocess. Linters ground the model as untrusted hints to confirm or discard; gitleaks (secrets), zizmor (workflow security), ast-grep (your rules) and osv-scanner (dependency advisories) post findings directly with no model call. Off by default; the image bundles these tools and an offline vulnerability database."
+    required: false
+    default: ""
+  auto_describe:
+    description: "Head the change overview comment with a structured description — title, change type, summary, per-file walkthrough, and an intent check. On by default, so it refreshes on every push along with the rest of the overview; set to false to drop the section. The /describe command still posts its own standalone comment."
+    required: false
+    default: ""
+  auto_diagram:
+    description: "On an opened, reopened, or synchronized (push) PR, post or refresh the change overview comment after the review — the description, a High Impact Areas section, a Mermaid flowchart of the components the PR touches and a Mermaid sequence diagram of the run-time flow it alters (both rendered natively by GitHub), with a text fallback. On by default; set to false to opt out of the whole overview."
+    required: false
+    default: ""
+  high_impact:
+    description: "Include the High Impact Areas section in the change overview: the changes a reviewer must not miss — infrastructure, security posture, production-outage risk, data migrations, backups and recovery, compatibility, observability, dependencies, cost, and compliance. Deterministic path signals ground the model and also floor the output, so a sensitive file is named even when the model says nothing about it. On by default; set to false to drop the section and its model call."
+    required: false
+    default: ""
+  pr_labels:
+    description: "Attach labels derived from the review (no extra model calls): a review-effort/1-5 size estimate, possible-security-issue when a high/critical security finding posts, and consider-splitting when the diff spans many unrelated directories. Best-effort; off by default."
+    required: false
+    default: ""
+  learn_feedback:
+    description: "On a re-run, suppress a finding a human reacted 👎 (thumbs-down) to on its inline comment last time. The reactions live on GitHub and are re-read each run — no new persistence. Resolving a thread is NOT a suppress signal (that means fixed). On by default; set to false to disable."
+    required: false
+    default: ""
+  fail_on:
+    description: "Merge-gate threshold (info/low/medium/high/critical). When set, after posting the review a GitHub Check Run named 'lgtmaybe' is created with conclusion failure if any finding is at or above this severity, else success — make it a required check in branch protection to block merges. Enforcement rides the Check Run, never PR approval state. Off by default (no check run)."
+    required: false
+    default: ""
+  profile:
+    description: "Print a timing profile at the end of the run in the Action log: total wall time, per-stage and per-call tables (with token and prompt-cache usage), and cache hit totals. Off by default."
     required: false
     default: ""
   aws_role_arn:
@@ -69,19 +177,61 @@ inputs:
   config_path:
     description: "Path to the .lgtmaybe.yml config file, relative to the repo root."
     required: false
-    default: ".lgtmaybe.yml"
+    default: ""
   image:
     description: "Override the container image (advanced; defaults to the released GHCR image)."
     required: false
-    default: "ghcr.io/mattjcoles/lgtmaybe:v0"
+    default: "ghcr.io/mattjcoles/lgtmaybe:v2"
   github_token:
     description: "Token used to fetch the diff and post the review. Defaults to the workflow token."
     required: false
     default: ${{ github.token }}
+  github_identity:
+    description: "GitHub author for review comments: actions posts as github-actions[bot] (default); lgtmaybe posts as lgtmaybe[bot] after you install the public lgtmaybe App and grant id-token: write."
+    required: false
+    default: "actions"
+  identity_broker_url:
+    description: "Advanced: lgtmaybe identity broker endpoint. Most users should keep the default."
+    required: false
+    default: "https://m8h7wpmdyi.execute-api.ap-southeast-2.amazonaws.com/token"
+  app_id:
+    description: "Advanced: ID of your own GitHub App used with app_private_key. Do not combine this with github_identity: lgtmaybe."
+    required: false
+    default: ""
+  app_private_key:
+    description: "Advanced: private key (PEM) of the existing GitHub App named by app_id. Most users should leave this empty."
+    required: false
+    default: ""
+  app_owner:
+    description: "Owner for a cross-repo App token (defaults to the current repository's owner). Set with app_repositories to review PRs across a monorepo or org."
+    required: false
+    default: ""
+  app_repositories:
+    description: "Newline- or comma-separated list of repositories the minted App token may access (defaults to just the current repository). Used with app_owner for cross-repo reach."
+    required: false
+    default: ""
 
 runs:
   using: composite
   steps:
+    - name: Validate GitHub identity configuration
+      id: validate-identity
+      shell: bash
+      env:
+        GITHUB_IDENTITY: ${{ inputs.github_identity }}
+        APP_ID: ${{ inputs.app_id }}
+        APP_PRIVATE_KEY: ${{ inputs.app_private_key }}
+        FAIL_ON: ${{ inputs.fail_on }}
+      run: python3 "${{ github.action_path }}/scripts/github-app-identity.py" validate
+
+    - name: Exchange workflow identity for lgtmaybe App token
+      id: lgtmaybe-token
+      if: ${{ inputs.github_identity == 'lgtmaybe' }}
+      shell: bash
+      env:
+        IDENTITY_BROKER_URL: ${{ inputs.identity_broker_url }}
+      run: python3 "${{ github.action_path }}/scripts/github-app-identity.py" exchange
+
     - name: Configure AWS credentials (OIDC, keyless)
       if: ${{ inputs.aws_role_arn != '' }}
       uses: aws-actions/configure-aws-credentials@v6
@@ -119,39 +269,91 @@ runs:
           echo "AZURE_TENANT_ID=${AZURE_TENANT_ID}"
         } >> "$GITHUB_ENV"
 
+    - name: Mint a GitHub App token (branded bot identity)
+      id: app-token
+      if: ${{ inputs.app_id != '' && inputs.github_identity != 'lgtmaybe' }}
+      uses: actions/create-github-app-token@v3
+      with:
+        # Empty owner/repositories scope the token to the current repository;
+        # set them to review PRs across a monorepo/org. The token is short-lived
+        # and auto-revoked in this action's post step at the end of the job.
+        client-id: ${{ inputs.app_id }}
+        private-key: ${{ inputs.app_private_key }}
+        owner: ${{ inputs.app_owner }}
+        repositories: ${{ inputs.app_repositories }}
+
     - name: Run lgtmaybe
       shell: bash
       env:
-        GITHUB_TOKEN: ${{ inputs.github_token }}
+        # Prefer the selected branded App identity; a skipped mint/exchange
+        # yields an empty output, so the default remains github-actions[bot].
+        GITHUB_TOKEN: ${{ steps.lgtmaybe-token.outputs.token || steps.app-token.outputs.token || inputs.github_token }}
         INPUT_PROVIDER: ${{ inputs.provider }}
         INPUT_MODEL: ${{ inputs.model }}
+        INPUT_PRESET: ${{ inputs.preset }}
         INPUT_FALLBACK_MODEL: ${{ inputs.fallback_model }}
+        INPUT_REFLECT_MODEL: ${{ inputs.reflect_model }}
+        INPUT_LANGUAGE: ${{ inputs.language }}
+        INPUT_TRIAGE_MODEL: ${{ inputs.triage_model }}
         INPUT_API_KEY: ${{ inputs.api_key }}
         INPUT_API_BASE: ${{ inputs.api_base }}
         INPUT_TIMEOUT: ${{ inputs.timeout }}
+        INPUT_MAX_REVIEW_SECONDS: ${{ inputs.max_review_seconds }}
+        INPUT_MAX_REVIEW_TOKENS: ${{ inputs.max_review_tokens }}
+        INPUT_MAX_FINDINGS_PER_LENS: ${{ inputs.max_findings_per_lens }}
         INPUT_TEMPERATURE: ${{ inputs.temperature }}
         INPUT_NUM_CTX: ${{ inputs.num_ctx }}
         INPUT_MAX_INPUT_TOKENS: ${{ inputs.max_input_tokens }}
+        INPUT_MAX_TOKENS: ${{ inputs.max_tokens }}
+        INPUT_REASONING_EFFORT: ${{ inputs.reasoning_effort }}
+        INPUT_MAX_CONCURRENCY: ${{ inputs.max_concurrency }}
+        INPUT_RESOLVE_FIXED: ${{ inputs.resolve_fixed }}
+        INPUT_RECURSIVE: ${{ inputs.recursive }}
+        INPUT_STRUCTURED_OUTPUT: ${{ inputs.structured_output }}
+        INPUT_REPAIR_UNPARSEABLE: ${{ inputs.repair_unparseable }}
+        INPUT_RETRY_WITHOUT_SCHEMA: ${{ inputs.retry_without_schema }}
+        INPUT_MID_REVIEW_RETRIEVAL: ${{ inputs.mid_review_retrieval }}
+        INPUT_SYMBOL_RESOLUTION: ${{ inputs.symbol_resolution }}
+        INPUT_INCREMENTAL: ${{ inputs.incremental }}
+        INPUT_SPEC_REVIEW: ${{ inputs.spec_review }}
+        INPUT_STATIC_ANALYSIS: ${{ inputs.static_analysis }}
+        INPUT_AUTO_DESCRIBE: ${{ inputs.auto_describe }}
+        INPUT_AUTO_DIAGRAM: ${{ inputs.auto_diagram }}
+        INPUT_HIGH_IMPACT: ${{ inputs.high_impact }}
+        INPUT_PR_LABELS: ${{ inputs.pr_labels }}
+        INPUT_LEARN_FEEDBACK: ${{ inputs.learn_feedback }}
+        INPUT_FAIL_ON: ${{ inputs.fail_on }}
+        INPUT_PROFILE: ${{ inputs.profile }}
         INPUT_CONFIG_PATH: ${{ inputs.config_path }}
         LGTMAYBE_IMAGE: ${{ inputs.image }}
       run: |
         set -euo pipefail
+        # Forward this step's env by *name*: a bare `VAR` line in an --env-file
+        # takes its value from the ambient environment, so the INPUT_* names
+        # only have to be written once (the `env:` block above). Names not set
+        # are skipped; values are passed verbatim — no shell expansion, and
+        # newlines survive because the file holds names, never values.
+        # The cloud-auth steps export the AWS_/GOOGLE_/CLOUDSDK_/AZURE_ vars.
+        compgen -e \
+          | grep -E '^(GITHUB_TOKEN|GITHUB_EVENT_NAME|GITHUB_EVENT_PATH|GITHUB_SERVER_URL|GITHUB_API_URL)$|^(INPUT|AWS|GOOGLE|CLOUDSDK|AZURE)_' \
+          > "${RUNNER_TEMP}/lgtmaybe.env"
+        # host-gateway mapping: lets api_base reach a model server on the
+        # runner host (ollama / openai-compatible) at host.docker.internal,
+        # which Linux Docker does not resolve without it.
         docker run --rm \
-          -e GITHUB_TOKEN \
-          -e GITHUB_EVENT_NAME -e GITHUB_EVENT_PATH \
-          -e GITHUB_REPOSITORY -e GITHUB_SERVER_URL \
-          -e INPUT_PROVIDER -e INPUT_MODEL -e INPUT_FALLBACK_MODEL \
-          -e INPUT_API_KEY -e INPUT_API_BASE -e INPUT_CONFIG_PATH \
-          -e INPUT_TIMEOUT -e INPUT_TEMPERATURE \
-          -e INPUT_NUM_CTX -e INPUT_MAX_INPUT_TOKENS \
-          -e AWS_ACCESS_KEY_ID -e AWS_SECRET_ACCESS_KEY -e AWS_SESSION_TOKEN \
-          -e AWS_REGION -e AWS_DEFAULT_REGION \
-          -e GOOGLE_APPLICATION_CREDENTIALS -e GOOGLE_GHA_CREDS_PATH \
-          -e CLOUDSDK_CORE_PROJECT -e GOOGLE_CLOUD_PROJECT \
-          -e AZURE_FEDERATED_TOKEN_FILE -e AZURE_CLIENT_ID -e AZURE_TENANT_ID \
-          -e AZURE_AUTHORITY_HOST \
+          --add-host=host.docker.internal:host-gateway \
+          --env-file "${RUNNER_TEMP}/lgtmaybe.env" \
           -v "${GITHUB_EVENT_PATH}:${GITHUB_EVENT_PATH}:ro" \
           -v "${GITHUB_WORKSPACE}:${GITHUB_WORKSPACE}" \
           -v "${RUNNER_TEMP}:${RUNNER_TEMP}" \
           -w "${GITHUB_WORKSPACE}" \
           "${LGTMAYBE_IMAGE}" action
+
+    - name: Revoke temporary lgtmaybe App token
+      id: revoke-lgtmaybe-token
+      if: ${{ always() && steps.lgtmaybe-token.outputs.token != '' }}
+      continue-on-error: true
+      shell: bash
+      env:
+        LGTMAYBE_TOKEN: ${{ steps.lgtmaybe-token.outputs.token }}
+      run: python3 "${{ github.action_path }}/scripts/github-app-identity.py" revoke

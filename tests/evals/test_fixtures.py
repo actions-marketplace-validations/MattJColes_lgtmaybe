@@ -8,9 +8,40 @@ ollama e2e run.
 
 from __future__ import annotations
 
+import json
+import re
+import shutil
+
+import pytest
+
 from evals import run as run_mod
-from lgtmaybe.core.diffparse import split_by_file
-from lgtmaybe.github import is_reviewable
+from lgtmaybe.core.diff import is_reviewable
+from lgtmaybe.core.diffparse import changed_line_index, split_by_file
+from lgtmaybe.core.models import (
+    PRContext,
+    Provider,
+    ProviderResult,
+    ReviewConfig,
+    ReviewFinding,
+    Severity,
+)
+from lgtmaybe.engine import LLMReviewEngine
+from lgtmaybe.engine.astgrep import build_symbol_resolver
+from lgtmaybe.engine.compress import split_patch_into_hunks
+from lgtmaybe.engine.redact import redact
+from lgtmaybe.engine.reflect import reflect_findings
+from lgtmaybe.local import local_file_reader
+from tests.fakes import FakeProvider
+
+# The live false-positive fixtures: each plants a genuine catch plus forbidden
+# traps drawn from real over-eager reviewer claims.
+_FP_FIXTURES = [
+    "lazy-imports",
+    "split-hunks",
+    "cloud-semantics",
+    "test-harness",
+    "unshown-code-fp",
+]
 
 _VIBE_FILES = {
     "src/api/handlers.py",
@@ -61,9 +92,246 @@ def test_vibe_multifile_has_high_signal_and_subtle_findings() -> None:
     assert "off-by-one" in labels
 
 
+@pytest.mark.parametrize("name", ["rlm-bigfile", "rlm-pipeline"])
+def test_rlm_fixture_is_one_multi_hunk_file(name: str) -> None:
+    """Each RLM benchmark fixture must be a single file with several hunks — that's
+    the shape that exercises the recursive walk (an over-budget file split into
+    per-hunk calls). Guards against an edit that flattens one to a single hunk and
+    silently makes the benchmark a no-op."""
+    from lgtmaybe.engine.compress import split_patch_into_hunks
+
+    diff, manifest = _fixture(name)
+    parts = split_by_file(diff, [manifest.changed_file])
+    assert len(parts) == 1, f"{name} must be a single file"
+    _path, patch = parts[0]
+    assert len(split_patch_into_hunks(patch)) >= 3, f"{name} needs several hunks"
+
+
+def test_cross_file_fp_fixture_has_expected_and_forbidden() -> None:
+    """The cross-file fixture loads with a genuine in-diff catch plus forbidden traps —
+    the diff alone (no sibling file_contents) so the guard is genuinely unseen, which is
+    the real-world shape that produced the invalid findings."""
+    diff, manifest = _fixture("cross-file-fp")
+    assert diff.strip()
+    assert manifest.expected, "needs a real in-diff finding so recall stays meaningful"
+    assert manifest.forbidden, "needs forbidden (cross-file false-positive) traps"
+
+
+def test_unshown_code_fp_traps_the_same_file_and_test_elsewhere_shapes() -> None:
+    """``cross-file-fp``'s three traps are all CROSS-file. The five false positives
+    that motivated this fixture were not: four asserted what a constant defined
+    200 lines up in the SAME file contained, and one claimed a change was untested
+    when the test lived in a file the diff never touched.
+
+    Neither shape is expressible in cross-file-fp — its changed file is new, so
+    nothing of it is unshown — so they get a fixture whose diff is a small edit to
+    a long existing module. This asserts the shapes hold, because both traps are
+    only traps while the evidence stays OUT of the diff: pull the constant into a
+    hunk, or add a test to the diff, and the fixture quietly starts forbidding
+    findings that would then be correct.
+    """
+    diff, manifest = _fixture("unshown-code-fp")
+    assert manifest.corpus_root is not None, "both traps need their evidence on disk"
+
+    module = manifest.corpus_root / "scheduler" / "dispatch.py"
+    lines = module.read_text(encoding="utf-8").splitlines()
+
+    # Trap A — the constant's VALUE is what the trap asserts, and it must sit far
+    # enough from the edited function that no hunk (or context pad) can reach it.
+    definition = next(
+        i for i, line in enumerate(lines, 1) if line.startswith("SINGLE_STREAM_PROVIDERS")
+    )
+    reader = next(i for i, line in enumerate(lines, 1) if line.startswith("def worker_count"))
+    assert reader - definition > 100, "the constant is close enough to be shown — not a trap"
+    assert "frozenset()" in lines[definition - 1], "an empty set is what makes the claim false"
+    assert "SINGLE_STREAM_PROVIDERS: frozenset[str] = frozenset()" not in diff, (
+        "the diff must not show the constant's value"
+    )
+
+    # Trap B — the test exists, and lives outside the diff.
+    tests = manifest.corpus_root / "tests" / "test_dispatch.py"
+    assert "def test_worker_count" in tests.read_text(encoding="utf-8")
+    assert "test_dispatch" not in diff, "a test in the diff makes the untested claim correct"
+
+
+def test_cross_file_recall_fixture_hides_its_bug_in_an_unshown_file() -> None:
+    """The mirror image of ``cross-file-fp``: there the unshown file REFUTES a claim
+    made from the diff alone, here it CONVICTS. The diff's window check reads fine
+    until you open ``ledger.py`` and find the window is in hours — which is what the
+    one-round lens deferral (``mid_review_retrieval``) exists to reach.
+
+    Structural only (no model): the corpus must be wired, the evidence must live
+    OUTSIDE the diff, and both the catch and the trap must sit on real changed lines.
+    """
+    diff, manifest = _fixture("cross-file-recall")
+
+    assert manifest.corpus_root is not None, "the unshown files must be on disk to fetch"
+    corpus = {p.name for p in manifest.corpus_root.rglob("*.py")}
+    assert {"ledger.py", "gateway.py"} <= corpus
+
+    ledger = (manifest.corpus_root / "payments" / "ledger.py").read_text(encoding="utf-8")
+    assert "hours" in ledger.lower(), "the corpus must carry the evidence for the catch"
+    assert "hour" not in diff.lower(), "…and the diff must NOT — else retrieval buys nothing"
+
+    assert manifest.expected and manifest.forbidden
+    changed = _changed_lines(diff, manifest.changed_file)
+    for entry in [*manifest.expected, *manifest.forbidden]:
+        assert entry.keywords, f"{entry.label}: needs keywords to score against"
+        assert entry.line in changed, f"{entry.label}: line {entry.line} is not a changed line"
+
+
+def _changed_lines(diff: str, path: str, side: str = "RIGHT") -> set[int]:
+    """The set of new-file (RIGHT) line numbers that the diff actually changes."""
+    index = changed_line_index(diff)
+    return {line for line, _text in index.get((path, side), [])}
+
+
+@pytest.mark.parametrize("name", _FP_FIXTURES)
+def test_fp_fixture_loads_with_expected_and_forbidden(name: str) -> None:
+    """Each live FP fixture loads with a genuine catch AND forbidden traps, every
+    entry has keywords, and every expected/forbidden line is a real changed line —
+    mirrors the cross-file-fp coverage so a malformed fixture fails in the gate."""
+    diff, manifest = _fixture(name)
+    assert diff.strip()
+    assert manifest.expected, f"{name}: needs a real in-diff catch so recall stays meaningful"
+    assert manifest.forbidden, f"{name}: needs forbidden (false-positive) traps"
+    assert all(e.keywords for e in manifest.expected), f"{name}: an expected entry has no keywords"
+    assert all(f.keywords for f in manifest.forbidden), f"{name}: a forbidden entry has no keywords"
+
+    changed = _changed_lines(diff, manifest.changed_file)
+    assert changed, f"{name}: diff has no changed RIGHT lines"
+    for entry in manifest.expected + manifest.forbidden:
+        assert entry.line in changed, (
+            f"{name}: line {entry.line} ({entry.label!r}) is not a changed line; "
+            f"changed lines are {sorted(changed)}"
+        )
+
+
+def test_split_hunks_fixture_is_multi_hunk() -> None:
+    """split-hunks must be a single file split into >=2 hunks that both touch the
+    same def (signature in one hunk, body edit in another) — the exact shape that
+    tempts a model into a bogus "duplicate definition" finding."""
+    diff, manifest = _fixture("split-hunks")
+    parts = split_by_file(diff, [manifest.changed_file])
+    assert len(parts) == 1, "split-hunks must be a single file"
+    _path, patch = parts[0]
+    hunks = split_patch_into_hunks(patch)
+    assert len(hunks) >= 2, "split-hunks needs at least two hunks"
+    touching = [h for h in hunks if "process_batch" in h]
+    assert len(touching) >= 2, "both hunks must touch the same def (process_batch)"
+
+
+def test_cross_file_fp_ships_corpus_refuting_its_forbidden_traps() -> None:
+    """The cross-file-fp fixture now carries an on-disk corpus of the *unshown*
+    files its forbidden traps hinge on, so symbol resolution has something real to
+    find. The defining symbols are present in that corpus."""
+    _diff, manifest = _fixture("cross-file-fp")
+
+    assert manifest.corpus_root is not None, "cross-file-fp must ship a repo/ corpus"
+    ledger = manifest.corpus_root / "migrations" / "ledger.py"
+    models = manifest.corpus_root / "migrations" / "models.py"
+    assert ledger.is_file() and models.is_file()
+    ledger_text = ledger.read_text()
+    # The idempotency guard + tenant filter the "no guard"/"tenant_id None" traps deny.
+    assert "def already_applied" in ledger_text
+    assert "def mark_applied" in ledger_text
+    assert "def pending" in ledger_text
+    # The V2 shape the "field absent from V2" trap denies.
+    assert "class SavedSubmittalSetV2" in models.read_text()
+
+
+def test_loader_sets_corpus_root_only_for_fixtures_with_a_repo_dir() -> None:
+    """The loader attaches corpus_root for fixtures that ship a repo/ dir and leaves
+    it None for the rest — so wiring a resolver never touches a corpus-less fixture."""
+    by_name = {m.name: m for _diff, m in run_mod._load_fixtures()}
+    assert by_name["cross-file-fp"].corpus_root is not None
+    # A plain single-file fixture has no corpus.
+    assert by_name["badcode"].corpus_root is None
+
+
+@pytest.mark.skipif(shutil.which("ast-grep") is None, reason="ast-grep binary not installed")
+def test_real_ast_grep_resolves_cross_file_symbols_in_the_corpus() -> None:
+    """Real ast-grep, rooted at the fixture corpus, maps each deferred symbol to the
+    file that defines it — the resolution the auditor relies on."""
+    _diff, manifest = _fixture("cross-file-fp")
+    root = manifest.corpus_root
+    resolve = build_symbol_resolver(lambda: root)
+    assert resolve is not None
+    assert resolve("already_applied") == ["migrations/ledger.py"]
+    assert resolve("SavedSubmittalSetV2") == ["migrations/models.py"]
+
+
+class _ScriptedProvider:
+    """Returns a different canned text per successive call (records each call)."""
+
+    def __init__(self, texts: list[str]) -> None:
+        self._texts = texts
+        self.calls: list[dict[str, object]] = []
+
+    def complete(self, messages, model, **opts):  # type: ignore[no-untyped-def]
+        idx = min(len(self.calls), len(self._texts) - 1)
+        self.calls.append({"messages": messages})
+        return ProviderResult(text=self._texts[idx], input_tokens=5, output_tokens=5)
+
+
+@pytest.mark.skipif(shutil.which("ast-grep") is None, reason="ast-grep binary not installed")
+def test_end_to_end_symbol_deferral_drops_forbidden_finding_with_real_ast_grep() -> None:
+    """The whole chain, no fakes in the resolution path: a finding is deferred on a
+    SYMBOL; real ast-grep finds its file in the corpus; the real read-only reader
+    loads it; the definition reaches the recheck prompt; the cross-file false
+    positive is dropped. This is the proof the feature works integrated, not just
+    unit by unit."""
+    _diff, manifest = _fixture("cross-file-fp")
+    root = manifest.corpus_root
+    assert root is not None
+
+    finding = ReviewFinding(
+        path="migrations/0003_backfill.py",
+        line=12,
+        severity="medium",
+        title="backfill has no idempotency guard",
+        body="Re-running backfill could copy rows twice.",
+    )
+    # Auditor: 1st call defers on the symbol `pending`; 2nd call (with the file in
+    # context) drops the finding — the ledger shows pending() is idempotent.
+    provider = _ScriptedProvider(
+        [
+            json.dumps(
+                {"verdicts": [{"index": 0, "keep": False, "broad": False, "needs": ["pending"]}]}
+            ),
+            json.dumps({"verdicts": [{"index": 0, "keep": False, "broad": False, "needs": []}]}),
+        ]
+    )
+    cfg = ReviewConfig(provider=Provider.ollama, model="llama3")
+    ctx = PRContext(
+        diff="--- a/migrations/0003_backfill.py\n+++ b/migrations/0003_backfill.py\n",
+        changed_files=["migrations/0003_backfill.py"],
+        base_sha="0",
+        head_sha="1",
+        repo="eval/eval",
+        pr_number=0,
+    )
+
+    survivors = reflect_findings(
+        [finding],
+        ctx,
+        cfg,
+        provider,
+        fetch_file=local_file_reader(root),
+        resolve_symbol=build_symbol_resolver(lambda: root),
+    )
+
+    # The real ledger.py reached the recheck prompt via real ast-grep + real reader.
+    recheck_prompt = " ".join(
+        m["content"] for m in provider.calls[1]["messages"] if isinstance(m, dict)
+    )
+    assert "def pending" in recheck_prompt
+    assert survivors == []  # cross-file false positive correctly dropped
+
+
 def test_fixtures_cover_performance_and_complexity_lenses() -> None:
     """Both fixtures plant a performance and a complexity issue so the e2e exercises
-    all seven code lenses, not just security + correctness. (The intent lens needs a
+    the code-health lens, not just security + correctness. (The intent lens needs a
     stated intent the fixtures don't carry, so the engine skips it there.) Guards
     against a future edit silently dropping these lower-severity lenses from the
     live recall check."""
@@ -74,3 +342,311 @@ def test_fixtures_cover_performance_and_complexity_lenses() -> None:
         assert "complexity" in keywords and "cyclomatic" in keywords, (
             f"{name}: no complexity finding"
         )
+
+
+def test_a_fixture_plants_test_and_documentation_gaps() -> None:
+    """The artefacts lens is in the default preset, so the corpus must be able to
+    score it. It was cut from the default once for "yielding no findings" — a claim
+    measured against fixtures that planted no missing test and no stale doc, so it
+    could only ever score zero. This fixture is what makes that claim falsifiable."""
+    _diff, manifest = _fixture("artefact-gaps")
+    keywords = " ".join(k.lower() for e in manifest.expected for k in e.keywords)
+    assert "untested" in keywords or "coverage" in keywords, "no test-gap finding"
+    assert "docstring" in keywords or "stale" in keywords, "no documentation finding"
+
+
+def test_spec_delivery_fixture_can_score_the_spec_lens() -> None:
+    """The spec lens only runs when a committed spec is detected AND matched, so
+    this fixture must ship one in its corpus — otherwise the lens is skipped and
+    the fixture silently measures nothing.
+
+    It plants both halves the lens reports: a task the diff ticks off without
+    delivering, and behaviour (`force`) that no requirement covers."""
+    _diff, manifest = _fixture("spec-delivery")
+
+    assert manifest.corpus_root is not None
+    spec_dir = manifest.corpus_root / ".kiro" / "specs" / "link-expiry"
+    assert (spec_dir / "requirements.md").is_file()
+    assert (spec_dir / "tasks.md").is_file()
+
+    keywords = " ".join(k.lower() for e in manifest.expected for k in e.keywords)
+    assert "expiry" in keywords or "expired" in keywords, "no undelivered-task finding"
+    assert "requirement" in keywords or "specification" in keywords, "no spec-gap finding"
+    assert manifest.forbidden, "no cross-file traps to measure precision against"
+
+
+def test_spec_delivery_diff_ticks_tasks_its_code_does_not_deliver() -> None:
+    """The claim extractor reads the DIFF, so the checkbox flip has to be in it —
+    a fixture whose tasks.md arrives already ticked would plant no claim at all."""
+    from lgtmaybe.engine.specs import ticked_tasks
+
+    diff, _manifest = _fixture("spec-delivery")
+    claims = ticked_tasks(diff)
+
+    assert any(c.startswith("1.3") for c in claims), "task 1.3 is not claimed as done"
+    assert any(c.startswith("1.4") for c in claims), "task 1.4 is not claimed as done"
+    # ...and neither is actually delivered: redeem_link checks redeemed_at only.
+    assert "expires_at" not in diff.split("def redeem_link")[1]
+    assert "audit" not in diff.split("def redeem_link")[1].lower()
+
+
+def test_spec_delivery_fixture_actually_drives_the_spec_lens_end_to_end() -> None:
+    """The structural checks above cannot see a broken chain: rename the fixture's
+    spec directory, change a detection rule, or mis-wire the harness's workspace
+    root, and they all still pass while the fixture silently scores a lens that
+    never ran. This runs the real engine over the real fixture — only the provider
+    is fake — and asserts the spec block reaches exactly one call, carrying both
+    the requirements and the tasks the diff ticks off."""
+    diff, manifest = _fixture("spec-delivery")
+    provider = FakeProvider(findings=[])
+
+    LLMReviewEngine(provider, workspace_root=manifest.corpus_root or manifest.fixture_root).review(
+        run_mod._eval_ctx(diff, manifest),
+        ReviewConfig(provider=Provider.ollama, model="llama3", reflect=False),
+    )
+
+    carrying = [
+        call
+        for call in provider.calls
+        if "===SPEC_START===" in "\n".join(str(m.get("content", "")) for m in call["messages"])
+    ]
+    assert len(carrying) == 1, "the spec block must reach exactly one call"
+
+    prompt = "\n".join(str(m.get("content", "")) for m in carrying[0]["messages"])
+    assert "link-expiry" in prompt
+    assert "SHALL set an expiry" in prompt, "requirements.md did not reach the lens"
+    assert "1.3 Reject redemption" in prompt, "the ticked-task claims did not reach the lens"
+
+
+def test_spec_delivery_corpus_refutes_its_forbidden_traps() -> None:
+    """Each forbidden trap must be refutable from the corpus — otherwise it is not
+    a false positive, it is a finding the fixture is wrong to forbid."""
+    _diff, manifest = _fixture("spec-delivery")
+    assert manifest.corpus_root is not None
+
+    models = (manifest.corpus_root / "src" / "links" / "models.py").read_text(encoding="utf-8")
+    repo = (manifest.corpus_root / "src" / "links" / "repo.py").read_text(encoding="utf-8")
+
+    assert "expires_at" in models, "the column trap needs the field to already exist"
+    assert "redeemed_at IS NULL" in repo, "the idempotency trap needs a conditional update"
+
+
+# ---------------------------------------------------------------------------
+# redaction runs on the fixtures too
+# ---------------------------------------------------------------------------
+
+
+def _redacted_lines(diff: str) -> dict[int, str]:
+    """RIGHT line number → text, for every changed line redaction blanked a value on.
+
+    Keyed by line only, no path — mirroring ``scorer._matches``, which compares
+    ``finding.line`` alone because an ``ExpectedFinding`` names no file. On a
+    multi-file fixture two files can therefore share a line number, and this
+    inherits that ambiguity rather than inventing a stricter rule the scorer
+    does not apply.
+    """
+    index = changed_line_index(redact(diff))
+    return {
+        line: text
+        for (_path, side), entries in index.items()
+        if side == "RIGHT"
+        for line, text in entries
+        if "[REDACTED]" in text
+    }
+
+
+# A NAME, an assignment, then the marker — `API_TOKEN = "[REDACTED]"`,
+# `const apiToken = "[REDACTED]"`, `"api_token": "[REDACTED]"`,
+# `const API_TOKEN: &str = "[REDACTED]"`. What survives redaction is exactly
+# what the finding is left to key on.
+_NAMED_ASSIGNMENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*[\"']?\s*[:=][^\[]*\[REDACTED\]")
+
+
+def test_no_expectation_is_graded_on_a_value_the_model_never_saw() -> None:
+    """Redaction is the FIRST pipeline stage, so it runs on the fixtures too.
+
+    A fixture that plants ``API_TOKEN = "ghp_…"`` shows the model
+    ``API_TOKEN = "[REDACTED]"``: the constant name and the inline assignment
+    survive, the secret does not. "A credential is held in a source constant"
+    is still a fair catch there; "a live token is committed", graded `high`,
+    is not — the input cannot support it, and a model right to decline would
+    lose recall for being right.
+
+    So: an expectation sitting on a redacted line may not demand a severity
+    only a live secret could justify. Mechanical rather than per-fixture,
+    because the bar moves whenever ``engine/redact.py`` does — five fixtures
+    drifted this way unnoticed before anyone looked.
+    """
+    for diff, manifest in run_mod._load_fixtures():
+        redacted = _redacted_lines(diff)
+        for exp in manifest.expected:
+            if exp.line not in redacted or exp.severity_at_least is None:
+                continue
+            assert exp.severity_at_least <= Severity.medium, (
+                f"{manifest.name}: {exp.label!r} demands {exp.severity_at_least} on line "
+                f"{exp.line}, which the model sees as [REDACTED]"
+            )
+
+
+def test_the_secret_fixtures_still_show_the_credential_assignment() -> None:
+    """The other half of the same invariant: redaction must leave enough for the
+    finding to be *possible*. It replaces only the value, so the name and the
+    assignment survive — if that ever changes, these expectations become
+    unreachable rather than merely harder, and the test above cannot see it.
+
+    Derived from the fixtures, never a hand-kept list: a named list would have to
+    be updated by whoever adds the next secret fixture, and the one that shipped
+    with this check already omitted two of the seven it claimed to cover.
+    """
+    covered: list[str] = []
+    for diff, manifest in run_mod._load_fixtures():
+        redacted = _redacted_lines(diff)
+        for exp in manifest.expected:
+            if exp.line not in redacted:
+                continue
+            covered.append(f"{manifest.name}:{exp.line}")
+            assert _NAMED_ASSIGNMENT.search(redacted[exp.line]), (
+                f"{manifest.name}: line {exp.line} is {redacted[exp.line]!r} — redaction took "
+                f"the name or the assignment with the value, so {exp.label!r} is now unreachable"
+            )
+
+    # A guard that silently checked nothing would pass forever. Every fixture
+    # planting a credential is expected to reach here.
+    assert len(covered) >= 8, f"only {covered} reached the check — has the redactor stopped firing?"
+
+
+# ---------------------------------------------------------------------------
+# non-Python fixtures
+#
+# The corpus was fourteen Python cases while the reviewer claims to work on any
+# diff — and the prompt's worked examples are all Python filenames, so a
+# language bias would have been invisible. One fixture per language ast-grep
+# already registers beyond Python gives that claim something to fail against.
+# ---------------------------------------------------------------------------
+
+_LANGUAGE_FIXTURES = {
+    "rust-safety": ".rs",
+    "go-concurrency": ".go",
+    "typescript-web": ".ts",
+}
+
+
+@pytest.mark.parametrize(("name", "suffix"), sorted(_LANGUAGE_FIXTURES.items()))
+def test_language_fixture_is_well_formed(name: str, suffix: str) -> None:
+    """Same structural bar as the FP fixtures: it loads, every entry has keywords
+    to score against, and every expected line is a real changed RIGHT line —
+    ``changed_line_index`` is language-agnostic, so a Rust diff parses unchanged
+    and a wrong line number is a fixture bug, not a language one."""
+    diff, manifest = _fixture(name)
+
+    assert manifest.changed_file.endswith(suffix)
+    assert is_reviewable(manifest.changed_file), f"{name}: skipped as generated/binary"
+    assert manifest.expected, f"{name}: needs expected findings or it scores nothing"
+
+    changed = _changed_lines(diff, manifest.changed_file)
+    assert changed, f"{name}: diff has no changed RIGHT lines"
+    for entry in manifest.expected:
+        assert entry.keywords, f"{name}: {entry.label!r} has no keywords"
+        assert entry.line in changed, (
+            f"{name}: line {entry.line} ({entry.label!r}) is not a changed line; "
+            f"changed lines are {sorted(changed)}"
+        )
+
+
+def test_language_fixtures_plant_bugs_only_that_language_can_have() -> None:
+    """A fixture that just transliterated `badcode.py` would measure nothing about
+    the language. Each one turns on a rule specific to it: Rust's unsigned
+    subtraction, Go's unsynchronised map write, JS's millisecond epoch against a
+    seconds-based JWT claim."""
+    by_name = {m.name: m for _d, m in run_mod._load_fixtures()}
+
+    rust = " ".join(k.lower() for e in by_name["rust-safety"].expected for k in e.keywords)
+    assert "underflow" in rust, "rust: no unsigned-subtraction finding"
+    assert "panic" in rust, "rust: nothing about unwrap/panic"
+
+    go = " ".join(k.lower() for e in by_name["go-concurrency"].expected for k in e.keywords)
+    assert "race" in go, "go: no data-race finding"
+
+    ts = " ".join(k.lower() for e in by_name["typescript-web"].expected for k in e.keywords)
+    assert "xss" in ts, "typescript: no DOM-injection finding"
+    assert "milliseconds" in ts or "seconds" in ts, "typescript: no epoch-unit finding"
+
+
+@pytest.mark.skipif(shutil.which("ast-grep") is None, reason="ast-grep binary not installed")
+@pytest.mark.parametrize(
+    ("name", "symbol", "path"),
+    [
+        # Rust `impl_item` exposes no tree-sitter `name` field, so an `impl` block
+        # cannot bind by name — anchor on `function_item` instead.
+        ("rust-safety", "charge", "src/billing.rs"),
+        ("go-concurrency", "FetchAll", "report/report.go"),
+        ("typescript-web", "renderComment", "src/orders.ts"),
+    ],
+)
+def test_symbol_resolution_reaches_each_language(name: str, symbol: str, path: str) -> None:
+    """Real ast-grep, over the fixture's own corpus. Resolution is what a
+    cross-file deferral rides on, and it is registered per language — so
+    "lgtmaybe works on Go" is only true if this holds for Go."""
+    _diff, manifest = _fixture(name)
+    root = manifest.corpus_root
+    assert root is not None, f"{name}: needs a repo/ corpus to resolve against"
+
+    resolve = build_symbol_resolver(lambda: root)
+    assert resolve is not None
+    assert resolve(symbol) == [path]
+
+
+# ---------------------------------------------------------------------------
+# static-hints fixture (F1 A/B) + head/ loading
+# ---------------------------------------------------------------------------
+
+
+def test_static_hints_head_matches_the_diff() -> None:
+    """The head/ text must be exactly what the diff adds — a drifted copy would
+    lint different code than the model reviews."""
+    diff, manifest = _fixture("static-hints")
+
+    assert manifest.head_root is not None
+    head = (manifest.head_root / "report.py").read_text()
+    added = [
+        line[1:] for line in diff.splitlines() if line.startswith("+") and line != "+++ b/report.py"
+    ]
+    assert added == head.splitlines()
+
+
+def test_static_hints_plants_tool_detectable_bugs() -> None:
+    """Each planted bug is a pattern bandit fires on deterministically, so an
+    A/B run (--static-analysis on/off) measures the fusion's recall delta."""
+    _diff, manifest = _fixture("static-hints")
+    head = (manifest.head_root / "report.py").read_text()  # type: ignore[union-attr]
+
+    for marker in ("yaml.load", "verify=False", "shell=True", "hashlib.md5"):
+        assert marker in head, marker
+    # Every expected finding sits on a real added line of the diff.
+    lines = head.splitlines()
+    for exp in manifest.expected:
+        assert 1 <= exp.line <= len(lines)
+
+
+def test_head_root_set_only_for_fixtures_with_a_head_dir() -> None:
+    fixtures = run_mod._load_fixtures()
+    by_name = {m.name: m for _d, m in fixtures}
+    assert by_name["static-hints"].head_root is not None
+    assert by_name["badcode"].head_root is None
+
+
+def test_eval_ctx_loads_head_files_as_file_contents() -> None:
+    from evals.scorer import _eval_ctx
+
+    diff, manifest = _fixture("static-hints")
+    ctx = _eval_ctx(diff, manifest)
+
+    assert "report.py" in ctx.file_contents
+    assert "yaml.load" in ctx.file_contents["report.py"]
+
+
+def test_eval_ctx_without_head_dir_has_no_file_contents() -> None:
+    from evals.scorer import _eval_ctx
+
+    diff, manifest = _fixture("badcode")
+    assert _eval_ctx(diff, manifest).file_contents == {}

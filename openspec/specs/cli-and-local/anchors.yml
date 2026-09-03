@@ -1,0 +1,137 @@
+# ast-grep anchors for cli-and-local — see "Living specs" in CLAUDE.md.
+
+cli.review-command:
+  rule:
+    kind: function_definition
+    has: { field: name, regex: '^review$' }
+  files: [src/lgtmaybe/cli/**/*.py]
+
+cli.run-review:
+  rule:
+    kind: function_definition
+    has: { field: name, regex: '^run_review$' }
+  files: [src/lgtmaybe/cli/**/*.py]
+
+cli.graceful-interrupt:
+  rule:
+    kind: function_definition
+    has: { field: name, regex: '^graceful_interrupt$' }
+  files: [src/lgtmaybe/cli/**/*.py]
+
+cli.slash:
+  - rule:
+      kind: function_definition
+      has: { field: name, regex: '^parse_command$' }
+    files: [src/lgtmaybe/cli/**/*.py]
+  - rule:
+      kind: function_definition
+      has: { field: name, regex: '^dispatch$' }
+    files: [src/lgtmaybe/cli/**/*.py]
+
+cli.diagram-sequence:
+  rule:
+    kind: function_definition
+    has: { field: name, regex: '^_sequence_views$' }
+  files: [src/lgtmaybe/engine/**/*.py]
+
+cli.overview-high-impact:
+  - rule:
+      kind: function_definition
+      has: { field: name, regex: '^build_overview$' }
+    files: [src/lgtmaybe/engine/overview.py]
+  - rule:
+      kind: function_definition
+      has: { field: name, regex: '^path_signals$' }
+    files: [src/lgtmaybe/engine/high_impact.py]
+
+cli.review-comment-noop:
+  rule:
+    kind: function_definition
+    has: { field: name, regex: '^action$' }
+  files: [src/lgtmaybe/cli/**/*.py]
+
+cli.response-style:
+  rule:
+    kind: function_definition
+    has: { field: name, regex: '^_answer_question$' }
+  files: [src/lgtmaybe/cli/slash.py]
+
+cli.profile-output:
+  rule:
+    kind: function_definition
+    has: { field: name, regex: '^_write_profile_json$' }
+  files: [src/lgtmaybe/cli/**/*.py]
+
+cli.local-context:
+  rule:
+    kind: function_definition
+    has: { field: name, regex: '^local_pr_context$' }
+  files: [src/lgtmaybe/local/**/*.py]
+
+cli.config:
+  - rule:
+      kind: function_definition
+      has: { field: name, regex: '^load_config$' }
+    files: [src/lgtmaybe/config/**/*.py]
+  - rule:
+      kind: function_definition
+      has: { field: name, regex: '^set_key$' }
+    files: [src/lgtmaybe/config/**/*.py]
+
+cli.github-identity:
+  rule:
+    kind: function_definition
+    has: { field: name, regex: '^validate$' }
+  files: [scripts/github-app-identity.py]
+
+cli.github-identity-provider:
+  rule:
+    kind: function_definition
+    has: { field: name, regex: '^exchange$' }
+  files: [scripts/github-app-identity.py]
+
+cli.utf8-boundaries:
+  - rule:
+      kind: function_definition
+      has: { field: name, regex: '^_utf8_stdio$' }
+    files: [src/lgtmaybe/cli/**/*.py]
+  # The local git adapter's own text boundary: UTF-8 decoding plus unescaped
+  # (non-C-quoted) path names on every `git` invocation.
+  - rule:
+      kind: function_definition
+      has: { field: name, regex: '^_git$' }
+    files: [src/lgtmaybe/local/__init__.py]
+
+cli.starter-workflow-diagrams:
+  rule:
+    kind: function_definition
+    has: { field: name, regex: '^should_auto_diagram$' }
+  files: [src/lgtmaybe/cli/**/*.py]
+
+cli.docs-homepage-diagram:
+  rule:
+    kind: fenced_code_block
+    regex: 'flowchart LR'
+  language: markdown
+  files: [docs/index.md]
+
+cli.docs-homepage-diagram-breadth:
+  rule:
+    kind: fenced_code_block
+    regex: '(?s)Order events.*Notification worker'
+  language: markdown
+  files: [docs/index.md]
+
+cli.docs-homepage-overview:
+  rule:
+    kind: atx_heading
+    has: { field: heading_content, regex: '^Start here$' }
+  language: markdown
+  files: [docs/index.md]
+
+distribution.action-major:
+  rule:
+    kind: block_mapping_pair
+    has: { field: key, regex: '^image$' }
+  language: yaml
+  files: [action.yml]

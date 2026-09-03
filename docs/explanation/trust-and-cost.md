@@ -1,3 +1,7 @@
+---
+description: How lgtmaybe's trigger gate and cost model work — who can start a review, and why opening it wide is a cost not a security choice.
+---
+
 # Trust and Cost
 
 lgtmaybe lets you decide **who can trigger a review**. This document explains that
@@ -26,8 +30,8 @@ run:
 
 - **ollama is free** — it runs the model on your own hardware, so trigger it for
   whoever you like; there's no per-run cost.
-- **Hosted providers** (OpenAI, Anthropic, OpenRouter, Bedrock, Vertex, Azure)
-  charge for the tokens each review uses.
+- **Hosted providers** (OpenAI, Anthropic, OpenRouter, z.ai, Bedrock, Vertex,
+  Azure) charge for the tokens each review uses.
 
 So if you're on a hosted provider and your repo is public, "everyone" means
 anyone can start a run. That's perfectly fine for plenty of projects — just pick
@@ -38,6 +42,21 @@ want.
 Two built-in caps also keep any single run modest regardless of who starts it:
 `max_files` (default 50) and `max_input_tokens` (default 100k). See
 [What gets reviewed](what-gets-reviewed.md) for how the diff is bounded.
+
+When a run does bump into a cap, it **degrades rather than fails**. A review call
+that outruns its wall clock, or writes until it hits the `max_tokens` ceiling, is
+not simply lost: the batch was more than one call could cover, so lgtmaybe halves
+it and reviews the pieces, keeping anything the model had already written. That
+costs up to twice the calls for the affected batch, and it is bounded to one
+split — a piece that still runs past the ceiling is reported rather than split
+again. Whatever the outcome, a partial review says so: the summary carries a
+"results may be incomplete" notice, and a lens that was cut short is never
+presented as a clean bill of health. The one thing lgtmaybe will not do is answer
+👍 LGTM for code no model finished reading.
+
+To measure what a run actually spends and bring it down — triage, static
+analysis, prompt caching, and a hard `max_review_tokens` ceiling — see
+[Reduce review cost](../how-to/reduce-review-cost.md).
 
 ## How the choice is expressed
 
@@ -51,21 +70,37 @@ if: >-
   (github.event_name == 'pull_request_target' &&
    contains(fromJson('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.pull_request.author_association)) ||
   (github.event.issue.pull_request &&
-   contains(fromJson('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association))
+   contains(fromJson('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association) &&
+   (contains(github.event.comment.body, '/review') ||
+    contains(github.event.comment.body, '/improve') ||
+    contains(github.event.comment.body, '/ask') ||
+    contains(github.event.comment.body, '/describe') ||
+    contains(github.event.comment.body, '/diagram')))
 ```
 
 A maintainer can still review an outside contributor's PR any time by commenting
 `/review` on it — their own association passes the gate. To change the policy,
 edit the list:
 
-- **Open it up to everyone** — drop the `if:` so any PR or `/review` comment runs
-  a review.
+- **Open it up to everyone** — drop the author-association checks so any PR or
+  `/review` comment runs a review.
 - **Welcome returning contributors** — add `CONTRIBUTOR` to auto-review anyone
   whose PR has merged before.
 - **Tighten to admins** — keep just `OWNER` (and `MEMBER` for your org).
 
 Because the gate lives in the workflow YAML, not in the action's code, the policy
 is entirely yours.
+
+The second half of the comment arm is a different kind of thrift. `issue_comment`
+fires on every comment on every pull request, and lgtmaybe's answer to one that
+holds no slash command is to exit — correct, and free of tokens, but only after a
+runner has been claimed, a container pulled and Python booted. Deciding that in
+the `if:` costs nothing at all, and on a busy runner pool it is the difference
+between a review starting now and a review queueing behind comment threads. The
+clause is deliberately looser than the parser it stands in for — substring, not
+prefix, and case-insensitive — because a guard tighter than the parser would
+silently disable a command that used to work. Replies inside a finding thread
+do not invoke the model; a pushed fix is checked by the next incremental review.
 
 ## If you want extra guardrails
 
@@ -78,9 +113,11 @@ Optional, for repos where you want belt-and-braces:
 
 ## Reviews are safe to run for anyone
 
-Whoever triggers a review, a malicious PR can't use it to do harm: lgtmaybe
-triggers on `pull_request_target` (so it has the secrets it needs) but **never
-checks out or executes PR code** — it fetches the diff through the GitHub API and
-treats it as untrusted input. So opening the gate wide is a cost decision, not a
+Whoever triggers a review, a malicious PR can't use it to do harm: on GitHub
+lgtmaybe triggers on `pull_request_target` (so it has the secrets it needs) but
+**never checks out or executes PR code** — it fetches the diff through the
+host's API and treats it as untrusted input. That second half is what actually
+does the work, and it holds identically on GitLab and Gitea, which have no
+`pull_request_target` of their own. So opening the gate wide is a cost decision, not a
 security one. The full boundary — secret redaction, prompt-injection defence, and
 fork safety — is in [Data and Privacy](data-and-privacy.md).

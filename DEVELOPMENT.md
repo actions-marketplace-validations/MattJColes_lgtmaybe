@@ -7,7 +7,7 @@ see [CLAUDE.md](CLAUDE.md).
 
 ## Prerequisites
 
-- **Python 3.12+**
+- **Python 3.11+**
 - **[uv](https://github.com/astral-sh/uv)** — the project's package manager and
   task runner. Install: `curl -LsSf https://astral.sh/uv/install.sh | sh`.
 - **Docker** — only if you want to build/run the container action image locally.
@@ -56,11 +56,13 @@ fetch → redact → split + skip generated → file cap → expand hunks → ba
 
 The fan-out is the key non-obvious bit: the system prompt is composed per
 `ReviewCategory` (security, correctness, deprecation, tests, documentation,
-performance, complexity, intent), and
+performance, complexity, intent, ponytail), and
 the engine issues **one concurrent model call per category per batch** (a
 `ThreadPoolExecutor` over the synchronous provider port), then merges and
-de-duplicates the findings before the reflection pass. `ReviewConfig.categories`
-selects which lenses run (default: all eight) — it's a `.lgtmaybe.yml` knob, not a
+de-duplicates the findings before the reflection pass.
+
+`ReviewConfig.categories`
+selects which lenses run (default: all nine) — it's a `.lgtmaybe.yml` knob, not a
 CLI flag. Narrowing it means fewer model calls. The `intent` lens reads the PR's
 stated intent (title/description/commit names on GitHub; local `git log` commit
 names on the CLI, in both branch and `--working` mode) and is skipped
@@ -140,7 +142,7 @@ API calls, so you pay for the token usage:
 ### Inspecting config
 
 ```bash
-uv run lgtmaybe config init     # write a starter .lgtmaybe.yml
+uv run lgtmaybe config init     # interactively write the user-level config (~/.config/lgtmaybe/config.yml)
 uv run lgtmaybe config show     # print the resolved config
 uv run lgtmaybe config get <key>
 ```
@@ -164,7 +166,7 @@ A few things worth knowing when a local run misbehaves:
   can therefore "succeed" with zero findings even though every call struggled —
   check the debug log, and prefer a model that follows the structured-output
   instruction. `parse.py` tolerates fenced JSON but not arbitrary prose.
-- **Fan-out makes N calls** (one per category — all eight by default, seven when
+- **Fan-out makes N calls** (one per category — all nine by default, eight when
   nothing states an intent). They run
   **concurrently for cloud** providers but **serially for ollama** (a single
   ollama instance serves one request at a time, so concurrency would only cause
@@ -176,13 +178,15 @@ A few things worth knowing when a local run misbehaves:
   Raise `--timeout`, pick a more reliable model, or check `LITELLM_LOG=DEBUG`.
 - **`--no-reflect`** removes the extra confidence-filtering call — useful when a
   weaker model drops valid findings during reflection, and one fewer call to wait
-  on.
+  on. Note the reflection pass also enforces *codebase humility* (it drops findings
+  that rest on assumptions about code outside the diff), so turning it off removes
+  that guard too, not just confidence filtering.
 
 ## Testing
 
 ### Run the full check suite (what CI runs)
 
-These four commands are the gate. Run all of them before opening a PR:
+These five commands are the gate. Run all of them before opening a PR:
 
 ```bash
 uv lock --check          # lockfile matches pyproject (no drift)
@@ -212,6 +216,75 @@ LLM or the GitHub API. Test layout mirrors `src/`:
 - `tests/core/`, `tests/local/` — diff parsing, local git context
 - `tests/docs/` + `tests/snapshots/` — committed schema snapshots and the
   generated-reference freshness check (see below)
+- `tests/specs/` — the living-spec anchor hygiene gate: every requirement in
+  `openspec/specs/*/spec.md` has an ast-grep anchor in its `anchors.yml` that
+  resolves to exactly one place in `src/` (see "Living specs" in `CLAUDE.md`;
+  the non-blocking PR drift warning is `scripts/check_spec_drift.py`)
+- `tests/e2e/` — end-to-end through the real CLI: one suite against a stub
+  provider (no setup), one against a live local model server (deselected by
+  default; see below)
+
+### CLI scenario e2e (tests/e2e/test_cli_scenarios.py)
+
+Ten scenarios of rising complexity — a one-file review up to an oversize diff,
+path filters, line anchoring, secret redaction, the worktree modes, output
+formats, and a provider that has fallen over — driven through the **real CLI**
+against `tests/e2e/stub_provider.py`, an in-process OpenAI-compatible server.
+
+The stub answers from **planted markers** in the diff it is actually sent, so
+each scenario has exact ground truth:
+
+```python
+value = compute()  # @flag sev=high title=Something is wrong
+```
+
+Only the model's judgement is stubbed; git-diff resolution, redaction, injection
+wrapping, batching, parsing, re-anchoring, dedupe, reflection, filtering and
+rendering are the real code. That covers the seams a unit test never crosses —
+and catches whole-pipeline bugs (a file silently skipped, a token budget
+ignored, an unwrapped prompt) that per-module tests cannot see.
+
+Hermetic: no model, no network, no GitHub, no setup. Marked `e2e` only because
+a few dozen CLI subprocesses is too slow for the per-commit gate:
+
+```bash
+uv run pytest -m e2e tests/e2e/test_cli_scenarios.py
+```
+
+### Live provider e2e (tests/e2e/test_local_providers.py)
+
+This one drives the **real `lgtmaybe` CLI** against a
+local model server, proving the app round-trips end-to-end through each local
+serving stack — **ollama**, **llama.cpp**, and **vLLM** — on a tiny qwen model.
+It exercises the whole path (arg parsing, `.lgtmaybe.yml`, the local git diff,
+provider/credential resolution, the litellm wire format, structured-output
+parsing, rendering). This is a **compatibility** smoke, not a recall test — for
+recall use `evals/run.py` (below).
+
+The three backends cover both adapter routes: ollama hits litellm's native
+`ollama/` route; llama.cpp and vLLM both ride the `openai-compatible` route
+(`openai/` + a custom `--api-base`).
+
+These need a live server + a downloaded model, so they are **marked `e2e` and
+deselected from the default gate** (`addopts = -m 'not e2e'`). Stand the servers
+up, then opt in:
+
+```bash
+scripts/e2e-up.sh            # start every backend with a runner available + pull models
+uv run pytest -m e2e         # run every backend the suite finds reachable
+scripts/e2e-up.sh down       # stop the docker-run backends (llama.cpp, vLLM)
+```
+
+Each backend **auto-skips when its server isn't up**, so you can start only one
+(`scripts/e2e-up.sh ollama`) and just that leg runs. Endpoints and model tags are
+env-overridable (`LGTMAYBE_E2E_OLLAMA_BASE`, `LGTMAYBE_E2E_VLLM_MODEL`, …) so the
+suite fits whatever you have running.
+
+> **Context window is a launch-time setting for llama.cpp/vLLM.** Unlike ollama
+> (where lgtmaybe passes `num_ctx` per request), the OpenAI-compatible servers
+> fix their context at startup — llama.cpp `-c`, vLLM `--max-model-len`. The
+> client can't raise it later, so `scripts/e2e-up.sh` bakes the window in at
+> launch (`E2E_CTX`, default 8192); bump it if you point the suite at a bigger diff.
 
 ### Regenerating generated artifacts
 
@@ -271,13 +344,188 @@ uv run python -m evals.run --provider ollama --model qwen3.6:35b \
 ```
 
 It reviews each fixture and reports, per fixture, whether the model produced
-parseable output and its **recall** against the expected findings, then exits
-non-zero if any fixture failed to parse or fell below `--min-recall` (default
-0.6) — so it can gate a model or prompt change.
+parseable output and its **recall** against the expected findings. It also flags
+any **false positive** — a `FALSE POSITIVE:` line for a *forbidden* finding the
+review should not have made — and the run exits non-zero if any fixture failed to
+parse, fell below `--min-recall` (default 0.6), or wasn't **clean** (a forbidden
+finding fired). Those are the three gate bars: parse, pooled recall, and clean.
 
 The scorer (`evals/scorer.py`) is pure and unit-tested (`tests/evals/`); only the
 runner needs a live model. To add a fixture, drop a `diff.txt` and an
-`expected.json` (matching the `Fixture` schema) under `evals/fixtures/<name>/`.
+`expected.json` (matching the `Fixture` schema) under `evals/fixtures/<name>/`. A
+fixture may also declare `forbidden` traps — claims that must *not* appear,
+typically cross-file false positives where the relevant guard lives in a file the
+reviewer can't see. The `cross-file-fp` fixture is the worked example: one genuine
+in-diff catch alongside three forbidden cross-file claims.
+
+`unshown-code-fp` is its sibling, for the two shapes cross-file-fp cannot express
+(its changed file is new, so nothing of it is unshown). Its diff is a short edit
+to the bottom of a long existing module, and both traps turn on what the reviewer
+was *not* shown:
+
+- **the value of a symbol in the same file** — `SINGLE_STREAM_PROVIDERS` is an
+  empty frozenset defined ~180 lines above the function that reads it, so a
+  finding asserting what it *contains* ("this pins ollama to one worker") is
+  false, and no amount of context padding reaches it;
+- **a test that exists elsewhere** — `worker_count` arrives with no test beside
+  it in the diff, while `tests/test_dispatch.py` covers it in a file the PR never
+  touched, so "this change is untested" is true of the diff and wrong as a defect.
+
+### Secret findings are scored after redaction
+
+Redaction is the **first** pipeline stage, so it runs on the fixtures too. A
+fixture that plants `API_TOKEN = "ghp_…"` shows the model:
+
+```
++API_TOKEN = "[REDACTED]"
+```
+
+The constant name and the inline assignment survive; the value does not. So the
+finding those fixtures actually measure is *"a credential is held in a source
+constant instead of configuration"* — a fair catch, graded `medium` — and **not**
+*"a live token is committed"*, which the input cannot support and which would
+penalise a model right to decline. Their labels say so, and
+`test_no_expectation_is_graded_on_a_value_the_model_never_saw` enforces it
+mechanically across every fixture, because the bar moves whenever
+`engine/redact.py` does.
+
+If you want a finding scored against a real value, don't bypass the redactor —
+the harness exists to exercise the pipeline. Plant something it doesn't match,
+and say in the label that that is what you did.
+
+### Separating a reproducible failure from an intermittent one
+
+A single pass says a fixture passed or failed; it cannot say whether the model
+*reliably* passes it. `--repeats N` runs every selected fixture N times and adds
+a spread line per fixture — mean/min/max recall plus `parsed=n/N`:
+
+```bash
+uv run python -m evals.run --provider ollama --model qwen3.6:35b \
+  --api-base http://localhost:11434 --repeats 5
+```
+
+That distinction is the one a structured-output audit turns on: a model that
+fails to produce parseable output on *every* repeat of a case has a reproducible
+defect worth reporting upstream, while one that fails on some repeats has a
+flakiness problem you handle with the repair pass instead.
+
+The per-fixture rows stay flat (N entries per fixture), so pooled recall and
+precision keep their meaning and `evals/ab.py` is unaffected. Two bars do get
+strictly harsher, because they are all-quantified over the rows: one parse
+failure or one forbidden finding in **any** repeat fails the run. That is what
+you want from a false-positive gate, but it means a `--repeats 5` run is not
+comparable to a single pass at the same `--min-recall`.
+
+### Languages other than Python
+
+`rust-safety`, `go-concurrency` and `typescript-web` cover the languages
+`engine/astgrep.py` registers beyond Python. Each plants a bug the language
+*specifically* invites — Rust's `u64` subtraction underflowing, Go's
+unsynchronised map write from goroutines, JS comparing a seconds-based JWT `exp`
+against a millisecond `Date.now()` — alongside the portable catches (hardcoded
+token, injection, off-by-one) so recall is comparable across all three.
+
+Two things worth knowing before adding another:
+
+- The prompt's worked examples are all Python filenames
+  (`engine/prompt.py`). Not a hard dependency, but a real bias — if a non-Python
+  fixture under-recalls, suspect the prompt before the fixture.
+- The bundled semgrep pack declares only Python and JavaScript/TypeScript, so
+  `--static-analysis` grounds the TypeScript fixture and is a no-op on the Rust
+  and Go ones. An A/B of the fusion is only meaningful on the languages the pack
+  covers.
+
+Each ships a `repo/` corpus holding the file it adds, so `tests/evals` can check
+that real ast-grep resolves a symbol in that language. Anchor Rust cases on
+`function_item` or `struct_item`: `impl_item` exposes no tree-sitter `name`
+field, so a bare `impl Foo` block will never bind by name.
+
+### Measuring what the fast preset trades away
+
+The default `fast` preset covers the nine lenses in four grouped calls;
+`--preset full` runs one call per lens. What that grouping costs in recall is a
+per-model question, so measure it on the model you actually run rather than
+trusting a generic claim. `evals/ab.py` sweeps the preset on the current tree
+in one command — first value is the baseline:
+
+```bash
+# Needs a live model — full-vs-fast recall/precision on the fixture set:
+uv run python -m evals.ab --provider ollama --model qwen3.6:35b \
+  --api-base http://localhost:11434 --sweep preset=full,fast --timeout 900
+```
+
+Each leg reviews every fixture through the real engine; only the preset varies
+(temperature pinned to 0, fixtures fixed). The report is the pooled
+recall/precision delta of `fast` against `full`. On a slow local model expect a
+`full` leg to take `~9 × per-call time` per big fixture — the eval harness
+disables the production `max_review_seconds` ceiling so a slow run measures
+recall, not the deadline. A single `--preset full` (no comma) instead pins the
+preset on both legs of a `--baseline-ref` comparison, for "did this change
+regress the full preset?" A/Bs between refs (both refs must be ≥ 0.10.0, where
+the flag exists).
+
+### Benchmarking the recursive (RLM) walk
+
+`ReviewConfig.recursive` (default on) decides what happens when a single file's
+diff exceeds `max_input_tokens`: walk it hunk-by-hunk (each hunk its own focused
+call) or send the whole file in one call. `evals.ab --sweep` is an on-demand A/B
+benchmark that runs both through the **real** engine — they differ only by that
+one flag — and reports pooled recall, precision, and anchoring for each, so "does walking the diff
+actually raise recall?" gets a real number instead of a hunch:
+
+```bash
+# Defaults to both RLM fixtures (rlm-bigfile, rlm-pipeline) — each a single
+# multi-hunk file ~600 tokens; a token budget below that (but above a single
+# hunk) forces the over-budget split. Needs a live model.
+uv run python -m evals.ab --provider ollama --model qwen3.5:4b \
+  --api-base http://localhost:11434 --sweep recursive=false,true \
+  --fixture rlm-bigfile --fixture rlm-pipeline --max-input-tokens 300
+```
+
+It runs both strategies once through the real engine with temperature pinned to
+zero. The first sweep value is the baseline; each later value gets a pooled
+recall/precision delta against it. `--categories`, `--max-input-tokens`, and the
+usual provider options tune the run. This is the **same command** the
+`rlm-bench` workflow runs, so a local run and CI cannot drift.
+
+Two distinct effects are in play, and the benchmark separates them by fixture
+size:
+
+- **Focus** (every fixture): even when the whole file fits the model's context,
+  splitting gives each hunk its own focused per-lens call. On small local models
+  this tends to lift recall — fewer regions to attend to per call — at the cost
+  of more calls and lost cross-hunk context. `rlm-bigfile` (small, fits any
+  context window) isolates this effect.
+- **Truncation-avoidance** (large files only): when a file's diff genuinely
+  exceeds the model's context window (`num_ctx` on ollama), the whole-file call
+  drops the tail entirely while the walk reviews every hunk. To exercise this you
+  need a diff larger than the context window — the planted bugs in `rlm-bigfile`'s
+  *tail* hunks (`shell=True`, N+1, the unhandled `None`) are what a truncating
+  whole-file pass would miss.
+
+Use it to confirm the walk helps on your model before trusting the default. Its
+plumbing (usage accounting, the comparison record) is unit-tested in
+`tests/evals/test_ab.py`; only the A/B runner needs a live model.
+
+The `.github/workflows/rlm-bench.yml` workflow runs the generic sweep as one
+on-demand task against a live ollama model and publishes the comparison to the
+run summary.
+
+**Historical recorded result** from the former repeated RLM harness (qwen3.5:4b,
+fixtures `rlm-bigfile` + `rlm-pipeline` pooled, token budget 300, categories
+security/correctness/performance, eight samples at temperature 0.6):
+
+| strategy | mean recall | range | spread | tokens |
+|---|---|---|---|---|
+| `whole` (original) | 61% | 45–82% | 36 pts | ~17.0k |
+| `recursive` (RLM)  | 88% | 82–100% | 18 pts | ~40.4k |
+
+Recursive averaged **+27 points** of recall, and its *worst* run (82%) matched the
+whole-file method's *best* — a real effect, not run-to-run noise — while also being
+more stable (smaller spread). The diffs (~600 tokens) fit the 16k context window,
+so this is the *focus* / "lost-in-the-middle" effect, **not** truncation
+avoidance. Cost is ~2.4× the tokens (and wall-time). Measured on a small model,
+where the focus effect is largest; expect a smaller gap on a frontier hosted model.
 
 ## Testing in GitHub Actions
 
@@ -329,4 +577,7 @@ pytest suite (`tests/cli/test_provider_threading.py`), not by this workflow.
   on dependency-touching changes). A known CVE upstream surfaces here, not as a
   per-PR gate.
 - **`docs.yml`** — builds/publishes the docs site.
-- **`release.yml`** — on a `v*.*.*` tag: PyPI trusted publishing + GHCR image push.
+- **`release.yml`** — reusable workflow called by `release-please.yml` (or run
+  manually via `workflow_dispatch`): pushes the GHCR image + moves the clean
+  v-tags. PyPI trusted publishing is *not* here — it runs inline in
+  `release-please.yml` so the OIDC publisher matches that workflow.

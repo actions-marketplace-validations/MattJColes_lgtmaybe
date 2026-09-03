@@ -1,3 +1,7 @@
+---
+description: Provider-agnostic AI code review for pull and merge requests on GitHub, GitLab and Gitea — OpenAI, Claude, Bedrock, Vertex, Azure, ollama and any OpenAI-compatible endpoint. Inline review comments, keyless OIDC/WIF cloud auth, GitHub Action + GitLab CI + CLI.
+---
+
 <div class="hero" markdown>
 
 ![lgtmaybe logo — a shrugging face with curly-brace arms](assets/logo.svg){ width="128" }
@@ -6,41 +10,58 @@
 
 </div>
 
-Provider-agnostic PR reviewer. Six hosted providers plus local ollama, one
-flag, and no static keys for cloud providers. It posts inline comments and a
-summary straight onto the pull request.
+lgtmaybe reviews the code a pull request changes. Pick OpenAI, Claude, Bedrock,
+Vertex, Azure, ollama, or any OpenAI-compatible endpoint, then run it on
+**GitHub, GitLab, or Gitea** — or from your terminal. The change gets inline
+comments and one summary; locally, you get the same findings before you push.
 
-lgtmaybe reviews the lines a change touches, and it runs in two places: as a
-GitHub Action on a pull request, or locally from the command line against your
-`git` diff before you push. As an Action it fetches the diff from the GitHub API
-and never checks out or runs your code; locally it reads your working branch.
-Either way it pads each change with a few surrounding lines, so a finding lands
-with the function around it in view, but it only ever comments on the lines that
-actually changed.
+It reads the diff and a little surrounding code, but only comments on changed
+lines. It never checks out or runs the change. Generated files and binaries are
+skipped, secrets are redacted, and all author-supplied text is treated as
+untrusted.
 
-Reviews surface the things you'd want a careful reviewer to catch:
+It checks for:
 
-- **Logic and correctness bugs** — edge cases, null/None dereferences, off-by-one and boundary errors, mismatched or inverted ranges, unhandled error paths, races and TOCTOU, missed `await`s, and numeric or timezone bugs.
-- **Security vulnerabilities** — an OWASP-aligned sweep: injection, XSS, CSRF and open redirects, hardcoded secrets, broken authn/authz (including JWT pitfalls), path traversal, unrestricted uploads, SSRF, insecure deserialization and XXE, mass assignment, weak crypto, resource/DoS safety (including ReDoS), secrets or PII (passwords, tokens, SSNs, card data) leaking into logs, and CI/IaC misconfiguration.
-- **Missing or weak tests** — changed code paths shipped without a test (flagged with a suggested test to drop in), and tests that don't really test: assertion-free, over-mocked, or sleep-based.
-- **Documentation gaps and stale docs** — public APIs added without a docstring, names that contradict what the code does, and docstrings or comments the change just made wrong.
-- **Deprecated and end-of-life code** — deprecated APIs, end-of-life or vulnerable dependencies, and typosquat-looking additions, flagged when the diff shows them (with the modern replacement suggested where known).
-- **Intent** — does the PR do what it says? The PR title, description, and commit names (or your local `git log` commit names on the CLI) are compared against the diff, flagging out-of-scope hunks, contradictions, and promised behaviour that never lands.
+- **Correctness and security** — logic errors, missed `await`s, injection, auth mistakes, and leaked secrets.
+- **Code health** — performance problems, needless complexity, deprecations, and risky dependencies.
+- **Tests and documentation** — missing or weak tests, stale comments, and undocumented APIs.
+- **Intent** — whether the change does what its title, description, and commits say it does.
+- **Ponytail** — code you don't need, standard-library opportunities, and simpler ways to get the job done.
 
-Every finding is graded from `info` up to `critical`, so you can set the
-severity floor that matters to you, and each one lands as an inline comment on
-the exact line where the problem is, with a single summary at the top. On the CLI
-the same findings print to your terminal — ready to read, or to hand to an AI
-agent to apply. Generated files and binaries are skipped, secrets are redacted
-and the diff is treated as untrusted input (hardened against prompt injection)
-before anything leaves for the model, and a clean PR just gets a 👍 **LGTM!**.
+Findings are graded from `info` to `critical` and land on the exact changed
+line. A clean change just gets a 👍 **LGTM!**.
+
+![An inline lgtmaybe review comment flagging a [CRITICAL] SQL injection vulnerability, with an explanation and a committable parameterized-query suggestion](assets/marketplace/marketplace-screenshot-1.png){ width="720" }
+
+Reviews aren't all it does. **`/review`** and **`/improve`** run the review, and
+**`/diagram`** posts [the change overview](how-to/generate-a-change-diagram.md) —
+a description, a bold **High Impact Areas** call-out (infrastructure, security
+posture, outage risk, migrations, backups, compatibility, cost and more), a
+flowchart of what the change touches and a sequence diagram of the flow it
+alters. **`/ask`** answers questions in the change. Run `lgtmaybe diagram` to
+print the same overview locally.
+
+```mermaid
+flowchart LR
+    web["Storefront<br/>React<br/>places orders"]
+    api["Order API<br/>Python<br/>creates orders (changed)"]
+    db["Order database<br/>PostgreSQL<br/>stores orders"]
+    queue["Order events<br/>SQS<br/>buffers events (new)"]
+    worker["Notification worker<br/>Python<br/>sends confirmations (new)"]
+    email["Email provider<br/>delivers messages"]
+    web -->|calls| api
+    api -->|stores in| db
+    api -->|publishes to| queue
+    queue -->|delivers to| worker
+    worker -->|sends via| email
+```
 
 ## Start here
 
 <div class="grid cards" markdown>
 
 - **Tutorial** — [Getting started](tutorial/getting-started.md): your first review with ollama, locally and free.
-- **How-to** — task recipes: [run locally](how-to/run-locally-with-ollama.md), [Bedrock OIDC](how-to/review-with-bedrock-oidc.md), [Vertex WIF](how-to/review-with-vertex-wif.md), [Azure OpenAI](how-to/review-with-azure.md), [GitHub Action](how-to/use-as-github-action.md).
+- **How-to** — task recipes: [choose a review model](how-to/choose-a-review-model.md), [run locally](how-to/run-locally-with-ollama.md), [Bedrock OIDC](how-to/review-with-bedrock-oidc.md), [Vertex WIF](how-to/review-with-vertex-wif.md), [Azure OpenAI](how-to/review-with-azure.md), [GitHub Action](how-to/use-as-github-action.md), [GitLab](how-to/review-on-gitlab.md), [Gitea](how-to/review-on-gitea.md).
 - **Reference** — [Configuration](reference/config.md): every config field and schema.
 - **Explanation** — [What gets reviewed](explanation/what-gets-reviewed.md), [Architecture](explanation/architecture.md), [Auth model](explanation/auth-model.md), [Data & privacy](explanation/data-and-privacy.md).
 
@@ -53,7 +74,32 @@ before anything leaves for the model, and a clean PR just gets a 👍 **LGTM!**.
 | `openai` | `OPENAI_API_KEY` |
 | `anthropic` | `ANTHROPIC_API_KEY` |
 | `openrouter` | `OPENROUTER_API_KEY` |
+| `zai` | `ZAI_API_KEY` — GLM / Zhipu AI; optional `--api-base` for the China / coding-plan endpoint |
 | `bedrock` | Ambient AWS creds — GitHub OIDC, no static key |
 | `vertex` | Ambient GCP creds — Workload Identity Federation, no key |
 | `azure` | Ambient Azure AD creds — GitHub OIDC, no static key (or `AZURE_API_KEY`) + endpoint |
 | `ollama` | None — local only, zero cost |
+| `openai-compatible` | `--api-base` to any OpenAI `/v1` endpoint; key optional (placeholder for keyless local servers) |
+
+## Where it posts
+
+The model provider and the code host are independent — any provider above works
+on any host below.
+
+| Host | How it runs | Token | Guide |
+|---|---|---|---|
+| GitHub | GitHub Action | `GITHUB_TOKEN` | [GitHub Action](how-to/use-as-github-action.md) |
+| GitLab | GitLab CI job | `GITLAB_TOKEN` | [Review on GitLab](how-to/review-on-gitlab.md) |
+| Gitea | Gitea Actions | `GITEA_TOKEN` | [Review on Gitea](how-to/review-on-gitea.md) |
+| None | `lgtmaybe review` locally | — | [Install the CLI](how-to/install-the-cli.md) |
+
+The review is identical on all three. What differs is what each host's API can
+do with the result — auto-resolving a fixed finding, reviewing only new commits,
+and keyless cloud auth are not available everywhere. See
+[Architecture](explanation/architecture.md#code-hosts-forges) for the details.
+
+## For AI agents
+
+The site root publishes a curated [`llms.txt`](llms.txt) index of these docs,
+plus a whole-corpus [`llms-full.txt`](llms-full.txt), for LLM crawlers and
+coding agents.

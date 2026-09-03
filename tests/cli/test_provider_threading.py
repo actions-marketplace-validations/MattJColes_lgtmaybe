@@ -16,6 +16,7 @@ litellm) is exercised.
 
 from __future__ import annotations
 
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
@@ -45,11 +46,17 @@ def _fake_response() -> SimpleNamespace:
 
 
 @pytest.fixture
-def captured_completion(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, Any]]:
+def captured_completion(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> list[dict[str, Any]]:
     """Mock litellm at the boundary and feed the engine a local diff.
 
     Returns the list of kwargs every ``litellm.completion`` call received.
+
+    Runs from an empty directory: the CLI probes ``.lgtmaybe.yml`` relative to
+    the cwd, so a suite run from the repo root would otherwise assert against
+    lgtmaybe's own dogfood config rather than against the defaults these tests
+    are about — silently, until someone adds a key to it.
     """
+    monkeypatch.chdir(tmp_path)
     calls: list[dict[str, Any]] = []
 
     def fake_completion(**kwargs: Any) -> SimpleNamespace:
@@ -101,7 +108,16 @@ CASES = [
         "azure/gpt-4o",
         True,
     ),
-    ("ollama", "ollama", "llama3", [], {}, "ollama/llama3", False),
+    ("ollama", "ollama", "llama3", [], {}, "ollama_chat/llama3", False),
+    (
+        "openai-compatible",
+        "openai-compatible",
+        "deepseek-chat",
+        ["--api-key", "sk-x", "--api-base", "https://api.deepseek.com/v1"],
+        {},
+        "openai/deepseek-chat",
+        True,
+    ),
 ]
 
 
@@ -150,6 +166,94 @@ def test_ollama_call_carries_api_base(captured_completion: list[dict[str, Any]])
     assert captured_completion[0].get("api_base")
 
 
+def test_openai_compatible_call_carries_custom_base(
+    captured_completion: list[dict[str, Any]],
+) -> None:
+    """A custom OpenAI-compatible endpoint must reach litellm with its api_base."""
+    result = CliRunner().invoke(
+        main,
+        [
+            "review",
+            "--provider",
+            "openai-compatible",
+            "--model",
+            "deepseek-chat",
+            "--api-base",
+            "https://api.deepseek.com/v1",
+            "--api-key",
+            "sk-x",
+            "--no-reflect",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert captured_completion[0].get("api_base") == "https://api.deepseek.com/v1"
+
+
+def test_openai_compatible_keyless_local_server_sends_base_and_placeholder(
+    captured_completion: list[dict[str, Any]],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A local llama.cpp / LM Studio / vLLM server needs no key — the base reaches
+    litellm and a placeholder key is supplied (the OpenAI client demands one)."""
+    monkeypatch.delenv("OPENAI_COMPATIBLE_API_KEY", raising=False)
+    result = CliRunner().invoke(
+        main,
+        [
+            "review",
+            "--provider",
+            "openai-compatible",
+            "--model",
+            "local-model",
+            "--api-base",
+            "http://localhost:8000/v1",
+            "--no-reflect",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert captured_completion[0].get("api_base") == "http://localhost:8000/v1"
+    assert captured_completion[0].get("api_key")
+
+
+def test_structured_output_sends_response_format_by_default(
+    captured_completion: list[dict[str, Any]],
+) -> None:
+    """By default the findings JSON schema reaches litellm as response_format."""
+    result = CliRunner().invoke(
+        main, ["review", "--provider", "ollama", "--model", "llama3", "--no-reflect"]
+    )
+
+    assert result.exit_code == 0, result.output
+    assert captured_completion[0].get("response_format") is not None
+
+
+def test_no_structured_output_omits_response_format(
+    captured_completion: list[dict[str, Any]],
+) -> None:
+    """--no-structured-output is the escape hatch for a gateway that rejects
+    response_format: litellm must then be called without it (issue #104)."""
+    result = CliRunner().invoke(
+        main,
+        [
+            "review",
+            "--provider",
+            "openai-compatible",
+            "--model",
+            "gemini-3.5-flash",
+            "--api-base",
+            "https://api.myllm.com/v1",
+            "--api-key",
+            "sk-x",
+            "--no-reflect",
+            "--no-structured-output",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert all("response_format" not in call for call in captured_completion)
+
+
 def test_num_ctx_flag_reaches_litellm_for_ollama(
     captured_completion: list[dict[str, Any]],
 ) -> None:
@@ -194,3 +298,130 @@ def test_num_ctx_flag_is_ignored_for_hosted_provider(
 
     assert result.exit_code == 0, result.output
     assert "num_ctx" not in captured_completion[0]
+
+
+def test_max_tokens_flag_reaches_litellm(captured_completion: list[dict[str, Any]]) -> None:
+    """`--max-tokens` caps each completion. Prepaid routes (OpenRouter) reserve
+    prompt + max_tokens against the balance BEFORE generating, and fall back to the
+    model's full output ceiling when the request omits it — so an uncapped review
+    can be refused for credit it was never going to spend. The cap has to reach
+    litellm to shrink that reservation."""
+    result = CliRunner().invoke(
+        main,
+        [
+            "review",
+            "--provider",
+            "openrouter",
+            "--model",
+            "vendor/m",
+            "--api-key",
+            "sk-x",
+            "--no-reflect",
+            "--max-tokens",
+            "8192",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert captured_completion[0].get("max_tokens") == 8192
+
+
+def test_reasoning_effort_flag_reaches_litellm(captured_completion: list[dict[str, Any]]) -> None:
+    """`--reasoning-effort` bounds what the model spends THINKING, which
+    `max_tokens` cannot separate out.
+
+    Measured on this repo's own dogfood review: 5 of 9 lens calls spent 32k-35k
+    reasoning tokens — at or above the entire 32,768 `max_tokens` ceiling —
+    before writing a single finding, and the one large success wrote ~733
+    tokens of findings after 28,909 tokens of thought. Raising the cap 16k->32k
+    did not help; reasoning simply expanded to fill it. The cap is the wrong
+    lever, so the knob has to reach the provider.
+    """
+    result = CliRunner().invoke(
+        main,
+        [
+            "review",
+            "--provider",
+            "ollama",
+            "--model",
+            "llama3",
+            "--no-reflect",
+            "--reasoning-effort",
+            "low",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert captured_completion[0].get("reasoning_effort") == "low"
+
+
+def test_reasoning_effort_reaches_openrouter_as_its_native_field(
+    captured_completion: list[dict[str, Any]],
+) -> None:
+    """On openrouter, litellm forwards `reasoning_effort` only for models its
+    capability map flags reasoning-capable — the newest models are not in it, so
+    the budget was silently discarded on exactly the models it was set for. It
+    goes out as OpenRouter's own top-level `reasoning` object instead, and never
+    alongside the flat param (OpenRouter 400s on both together)."""
+    result = CliRunner().invoke(
+        main,
+        [
+            "review",
+            "--provider",
+            "openrouter",
+            "--model",
+            "vendor/m",
+            "--api-key",
+            "sk-x",
+            "--no-reflect",
+            "--reasoning-effort",
+            "low",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert captured_completion[0].get("extra_body") == {"reasoning": {"effort": "low"}}
+    assert "reasoning_effort" not in captured_completion[0]
+
+
+def test_reasoning_effort_is_absent_by_default(captured_completion: list[dict[str, Any]]) -> None:
+    """Unset sends nothing: a route that does not accept the param must not
+    start receiving it because lgtmaybe upgraded."""
+    result = CliRunner().invoke(
+        main,
+        [
+            "review",
+            "--provider",
+            "openai",
+            "--model",
+            "gpt-4o",
+            "--api-key",
+            "sk-x",
+            "--no-reflect",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "reasoning_effort" not in captured_completion[0]
+
+
+def test_max_tokens_is_absent_by_default(captured_completion: list[dict[str, Any]]) -> None:
+    """Unset means uncapped — the request must carry no max_tokens at all, so the
+    model's own ceiling applies and nothing silently truncates a long findings
+    payload."""
+    result = CliRunner().invoke(
+        main,
+        [
+            "review",
+            "--provider",
+            "openai",
+            "--model",
+            "gpt-4o",
+            "--api-key",
+            "sk-x",
+            "--no-reflect",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "max_tokens" not in captured_completion[0]

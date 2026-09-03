@@ -2,13 +2,77 @@
   "additionalProperties": false,
   "description": "The normalised return of one LLM completion, with token usage.",
   "properties": {
+    "attempts": {
+      "default": 1,
+      "minimum": 1,
+      "title": "Attempts",
+      "type": "integer"
+    },
+    "cache_creation_tokens": {
+      "default": 0,
+      "title": "Cache Creation Tokens",
+      "type": "integer"
+    },
+    "cache_read_tokens": {
+      "default": 0,
+      "title": "Cache Read Tokens",
+      "type": "integer"
+    },
+    "cost_usd": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Cost Usd"
+    },
     "input_tokens": {
       "title": "Input Tokens",
       "type": "integer"
     },
+    "model": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Model"
+    },
+    "output_ceiling": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Output Ceiling"
+    },
     "output_tokens": {
       "title": "Output Tokens",
       "type": "integer"
+    },
+    "reasoning_tokens": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Reasoning Tokens"
     },
     "text": {
       "title": "Text",

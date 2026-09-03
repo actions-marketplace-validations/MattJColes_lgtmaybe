@@ -9,6 +9,7 @@ guarantee; it complements, never replaces, keeping real secrets out of git.
 from __future__ import annotations
 
 import re
+from functools import lru_cache
 
 REDACTED_PLACEHOLDER = "[REDACTED]"
 
@@ -28,27 +29,45 @@ _SIMPLE_PATTERNS: list[re.Pattern[str]] = [
     re.compile(r"AIza[0-9A-Za-z\-_]{35}"),
     # Stripe live/test secret keys
     re.compile(r"sk_(?:live|test)_[A-Za-z0-9]{16,}"),
+    # JSON Web Encryption (compact): header.encrypted_key.iv.ciphertext.tag —
+    # five base64url segments. The second segment is an encrypted key, NOT a
+    # base64url JSON header, so the three-part JWT pattern below never matches a
+    # JWE; without this it would egress whole. Listed first so the 5-segment form
+    # is consumed before the 3-segment pattern can claim a prefix of it.
+    re.compile(r"(?<![A-Za-z0-9_-])eyJ[A-Za-z0-9_-]{8,}(?:\.[A-Za-z0-9_-]{8,}){4}"),
     # JSON Web Tokens: header.payload.signature, each base64url. The payload
     # carries claims/PII, so the whole token must go — not just up to a dot.
-    re.compile(r"eyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}"),
+    re.compile(r"(?<![A-Za-z0-9_-])eyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}"),
     # npm automation/auth tokens: npm_ followed by 36 base62 chars.
     re.compile(r"npm_[A-Za-z0-9]{36,}"),
     # PyPI API tokens: pypi- followed by a long base64 macaroon.
     re.compile(r"pypi-[A-Za-z0-9_-]{16,}"),
-    # PEM private-key blocks (RSA/EC/OPENSSH/generic) — match the whole block.
-    re.compile(
-        r"-----BEGIN (?:RSA |EC |OPENSSH |DSA |PGP )?PRIVATE KEY-----"
-        r".*?-----END (?:RSA |EC |OPENSSH |DSA |PGP )?PRIVATE KEY-----",
-        re.DOTALL,
-    ),
 ]
+
+# PEM private-key blocks (RSA/EC/OPENSSH/generic) — the one multi-line pattern,
+# kept out of _SIMPLE_PATTERNS because its replacement must be line-count
+# preserving: hunk expansion and diff hunk headers index into the redacted text
+# by line number, so collapsing an N-line block into one placeholder desyncs
+# (and can crash) everything downstream that counts lines.
+_PEM_PATTERN = re.compile(
+    r"-----BEGIN (?:RSA |EC |OPENSSH |DSA |PGP )?PRIVATE KEY-----"
+    r".*?-----END (?:RSA |EC |OPENSSH |DSA |PGP )?PRIVATE KEY-----",
+    re.DOTALL,
+)
+
+
+def _replace_pem(m: re.Match[str]) -> str:
+    """One placeholder per matched line, so the block's line count is preserved."""
+    return "\n".join([REDACTED_PLACEHOLDER] * (m.group(0).count("\n") + 1))
+
 
 # Capturing-group patterns — only the named ``secret`` group is replaced, so the
 # surrounding key name / scheme stays readable in the diff.
 _VALUE_PATTERNS: list[re.Pattern[str]] = [
     # Generic high-entropy assignments: api_key = "..." or token = "..." (value ≥ 16 chars)
     re.compile(
-        r"(?i)(?:api[_\-]?key|api[_\-]?secret|access[_\-]?token|secret[_\-]?key|token)"
+        r"(?i)(?:api[_\-]?key|api[_\-]?secret|secret[_\-]?access[_\-]?key|"
+        r"session[_\-]?token|access[_\-]?token|secret[_\-]?key|token)"
         r'\s*[=:]\s*["\']?(?P<secret>[A-Za-z0-9\-_/+=]{16,})["\']?'
     ),
     # Quoted password / passphrase literals: password = "hunter2" (value ≥ 4 chars).
@@ -63,8 +82,11 @@ _VALUE_PATTERNS: list[re.Pattern[str]] = [
         r"(?i)[\"']?authorization[\"']?\s*[=:]\s*[\"']?(?:bearer|basic)\s+"
         r"(?P<secret>[A-Za-z0-9\-._~+/=]{16,})"
     ),
-    # Credentials embedded in connection-string URLs: scheme://user:secret@host
-    re.compile(r"(?i)[a-z][a-z0-9+.\-]*://[^:/?#\s]+:(?P<secret>[^@/?#\s]{4,})@"),
+    # Credentials embedded in connection-string URLs: scheme://user:secret@host.
+    # The scheme length is bounded (schemes are short) so the leading character
+    # class can't rescan a long run at every start offset — an unbounded `*` here
+    # is quadratic (ReDoS) on a long credential-free line, e.g. a base64 blob.
+    re.compile(r"(?i)[a-z][a-z0-9+.\-]{0,31}://[^:/?#\s]+:(?P<secret>[^@/?#\s]{4,})@"),
     # Azure storage / Cosmos connection strings: ...;AccountKey=<base64>;...
     # Only the key value is scrubbed; AccountName/EndpointSuffix stay readable.
     re.compile(r"(?i)(?:Account|Shared(?:Access)?)Key\s*=\s*(?P<secret>[A-Za-z0-9/+]{32,}={0,2})"),
@@ -74,12 +96,21 @@ _VALUE_PATTERNS: list[re.Pattern[str]] = [
 def _replace_value(m: re.Match[str]) -> str:
     """Replace only the captured ``secret`` group, preserving the key name / scheme."""
     full = m.group(0)
-    value = m.group("secret")
-    return full.replace(value, REDACTED_PLACEHOLDER, 1)
+    start = m.start("secret") - m.start()
+    end = m.end("secret") - m.start()
+    return full[:start] + REDACTED_PLACEHOLDER + full[end:]
 
 
+@lru_cache(maxsize=128)
 def redact(text: str) -> str:
-    """Return *text* with known secret patterns replaced by REDACTED_PLACEHOLDER."""
+    """Return *text* with known secret patterns replaced by REDACTED_PLACEHOLDER.
+
+    Memoized: the same file head text is redacted at several pipeline stages
+    (hunk expansion, reflection grounding, every deferral re-judge), and each
+    pass runs the full pattern battery over the whole input. Bounded so the
+    cache can't retain an unbounded number of large file texts.
+    """
+    text = _PEM_PATTERN.sub(_replace_pem, text)
     for pattern in _SIMPLE_PATTERNS:
         text = pattern.sub(REDACTED_PLACEHOLDER, text)
     for pattern in _VALUE_PATTERNS:

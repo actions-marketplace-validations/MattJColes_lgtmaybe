@@ -16,8 +16,13 @@ permissions:
   pull-requests: write
   id-token: write # required for the WIF token exchange (keyless auth)
 
+# The automatic diagram posts an issue_comment event after a review. Because
+# workflow-level concurrency applies before the job guard, the event name keeps
+# that run from cancelling the review job that posted it. A new push still
+# cancels an in-flight review — two pushes are both
+# pull_request_target, so they still collide.
 concurrency:
-  group: lgtmaybe-${{ github.event.pull_request.number || github.event.issue.number }}
+  group: lgtmaybe-${{ github.event.pull_request.number || github.event.issue.number }}-${{ github.event_name }}
   cancel-in-progress: true
 
 jobs:
@@ -26,15 +31,28 @@ jobs:
     # review, so fork PRs and drive-by /ask or /review comments from strangers
     # cannot spend your provider budget. A maintainer can still opt-in to an
     # external PR by commenting /review on it. (Comments not on a PR are skipped.)
+    # The issue_comment arm also requires a slash command in the body. That event
+    # fires on EVERY comment on every PR, so without it an ordinary "lgtm,
+    # merging" starts a job that claims a runner, pulls the container and boots
+    # Python only to find no command and exit — no provider spend, but a runner
+    # held ahead of the reviews that do have work to do. `contains` is
+    # case-insensitive and substring-based, so the guard stays looser than the
+    # parser (which additionally wants the command at the START of the body):
+    # /REVIEW and `/review full` both pass.
     if: >-
       (github.event_name == 'pull_request_target' &&
        contains(fromJson('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.pull_request.author_association)) ||
       (github.event.issue.pull_request &&
-       contains(fromJson('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association))
+       contains(fromJson('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association) &&
+       (contains(github.event.comment.body, '/review') ||
+        contains(github.event.comment.body, '/improve') ||
+        contains(github.event.comment.body, '/ask') ||
+        contains(github.event.comment.body, '/describe') ||
+        contains(github.event.comment.body, '/diagram')))
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
-      - uses: MattJColes/lgtmaybe@v0
+      - uses: actions/checkout@v7
+      - uses: MattJColes/lgtmaybe@v2
         with:
           provider: vertex
           model: gemini-3-pro

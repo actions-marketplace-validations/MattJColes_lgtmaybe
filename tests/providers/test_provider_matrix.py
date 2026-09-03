@@ -29,7 +29,11 @@ EXPECTED_PREFIX: dict[Provider, str] = {
     Provider.bedrock: "bedrock/",
     Provider.vertex: "vertex_ai/",
     Provider.azure: "azure/",
-    Provider.ollama: "ollama/",
+    Provider.ollama: "ollama_chat/",
+    # OpenAI-compatible servers ride the openai route with a custom api_base.
+    Provider.openai_compatible: "openai/",
+    # GLM / Zhipu AI rides litellm's native zai/ route.
+    Provider.zai: "zai/",
 }
 
 # Providers that authenticate with an API key, and the env var that supplies it.
@@ -37,6 +41,7 @@ KEY_PROVIDERS: dict[Provider, str] = {
     Provider.openai: "OPENAI_API_KEY",
     Provider.anthropic: "ANTHROPIC_API_KEY",
     Provider.openrouter: "OPENROUTER_API_KEY",
+    Provider.zai: "ZAI_API_KEY",
 }
 # Providers that authenticate with ambient cloud creds (keyless).
 CLOUD_PROVIDERS = (Provider.bedrock, Provider.vertex)
@@ -44,6 +49,9 @@ CLOUD_PROVIDERS = (Provider.bedrock, Provider.vertex)
 NO_AUTH_PROVIDERS = (Provider.ollama,)
 # Hybrid: always needs an endpoint, then EITHER a key OR an ambient AD token.
 HYBRID_PROVIDERS = (Provider.azure,)
+# Custom endpoint: always needs an api_base; the key is optional (placeholder
+# sent for keyless local servers).
+ENDPOINT_PROVIDERS = (Provider.openai_compatible,)
 
 
 def test_every_provider_is_classified_exactly_once() -> None:
@@ -58,6 +66,7 @@ def test_every_provider_is_classified_exactly_once() -> None:
         set(CLOUD_PROVIDERS),
         set(NO_AUTH_PROVIDERS),
         set(HYBRID_PROVIDERS),
+        set(ENDPOINT_PROVIDERS),
     ]
     union = set().union(*auth_classes)
     assert union == set(Provider)
@@ -100,7 +109,10 @@ class TestCloudProviderCredentials:
     def test_ambient_present_resolves_keyless(self, provider: Provider) -> None:
         assert resolve_credentials(provider, ambient_probe=lambda: True).api_key is None
 
-    def test_ambient_absent_raises_actionable_error(self, provider: Provider) -> None:
+    def test_ambient_absent_uses_provider_native_behavior(self, provider: Provider) -> None:
+        if provider is Provider.bedrock:
+            assert resolve_credentials(provider, ambient_probe=lambda: False).api_key is None
+            return
         with pytest.raises(ValueError, match=provider.value):
             resolve_credentials(provider, ambient_probe=lambda: False)
 
@@ -155,3 +167,84 @@ class TestHybridProviderCredentials:
     def test_build_provider_threads_the_endpoint(self, provider: Provider) -> None:
         built = build_provider(provider, "gpt-4o", api_key="k", api_base=_AZURE_BASE)
         assert built.default_opts.get("api_base") == _AZURE_BASE
+
+
+class TestEngineBehaviourMatrix:
+    """Engine behaviour that keys off the provider, asserted for EVERY Provider.
+
+    Same spirit as the auth matrix above: a new provider can't be merged
+    without deciding its fan-out concurrency, and the preset/deadline
+    behaviour must hold whatever the backend is.
+    """
+
+    # Auto max_concurrency is 6 for every provider — wide enough to overlap the
+    # fan-out, narrow enough that one API key does not rate-limit itself. Local
+    # backends are no longer special-cased: what bounds their throughput is the
+    # server's own parallelism setting, not this pool's width.
+    @pytest.mark.parametrize("provider", list(Provider))
+    def test_auto_concurrency_default(self, provider: Provider) -> None:
+        from lgtmaybe.core.models import ReviewConfig
+        from lgtmaybe.engine.engine import _resolve_workers
+
+        cfg = ReviewConfig(provider=provider, model="m")
+        assert _resolve_workers(cfg, task_count=99) == 6
+
+    @pytest.mark.parametrize("provider", list(Provider))
+    def test_fast_preset_makes_four_calls_on_every_provider(self, provider: Provider) -> None:
+        """The fast lens set is four distinct concerns regardless of provider —
+        auto-concurrency changes the schedule, never the call count."""
+        from lgtmaybe.core.models import PRContext, ReviewConfig
+        from lgtmaybe.engine import LLMReviewEngine
+        from tests.fakes import FakeProvider
+
+        ctx = PRContext(
+            diff="@@ -1,1 +1,2 @@\n context\n+new line\n",
+            changed_files=["a.py"],
+            base_sha="a",
+            head_sha="b",
+            repo="o/r",
+            pr_number=1,
+        )
+        cfg = ReviewConfig(provider=provider, model="m", reflect=False)
+        fake = FakeProvider()
+        LLMReviewEngine(fake).review(ctx, cfg)
+        assert len(fake.calls) == 4
+
+    @pytest.mark.parametrize("provider", list(Provider))
+    def test_review_deadline_field_defaults_on_every_provider(self, provider: Provider) -> None:
+        from lgtmaybe.core.models import ReviewConfig
+
+        assert ReviewConfig(provider=provider, model="m").max_review_seconds == 3600
+
+
+_CUSTOM_BASE = "https://api.deepseek.com/v1"
+
+
+@pytest.mark.parametrize("provider", ENDPOINT_PROVIDERS)
+class TestEndpointProviderCredentials:
+    """openai-compatible: always needs an api_base; the key is optional.
+
+    Hosted endpoints (DeepSeek) take a key; local servers (llama.cpp / LM Studio /
+    vLLM) take none — and lgtmaybe supplies a placeholder so the OpenAI client,
+    which rejects an empty key, still works.
+    """
+
+    def test_requires_an_endpoint(self, provider: Provider) -> None:
+        with pytest.raises(ValueError, match=provider.value):
+            resolve_credentials(provider, api_key="k")
+
+    def test_explicit_key_and_base_resolve(self, provider: Provider) -> None:
+        cfg = resolve_credentials(provider, api_key="sk-x", api_base=_CUSTOM_BASE)
+        assert cfg.api_key == "sk-x"
+        assert cfg.api_base == _CUSTOM_BASE
+
+    def test_keyless_base_resolves_with_a_placeholder(self, provider: Provider) -> None:
+        from lgtmaybe.providers.factory import OPENAI_COMPATIBLE_PLACEHOLDER_KEY
+
+        cfg = resolve_credentials(provider, api_base=_CUSTOM_BASE)
+        assert cfg.api_key == OPENAI_COMPATIBLE_PLACEHOLDER_KEY
+        assert cfg.api_base == _CUSTOM_BASE
+
+    def test_build_provider_threads_the_endpoint(self, provider: Provider) -> None:
+        built = build_provider(provider, "deepseek-chat", api_key="k", api_base=_CUSTOM_BASE)
+        assert built.default_opts.get("api_base") == _CUSTOM_BASE

@@ -1,0 +1,94 @@
+name: winget
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        description: "Version or tag to submit, e.g. 1.0.0 or lgtmaybe-v1.0.0."
+        required: true
+        type: string
+    secrets:
+      WINGET_TOKEN:
+        required: true
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version or tag to submit, e.g. 1.0.0 or lgtmaybe-v1.0.0."
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: windows-latest
+    steps:
+      - name: Resolve version
+        id: ver
+        shell: pwsh
+        run: |
+          $v = "${{ inputs.version }}" -replace '^lgtmaybe-v', '' -replace '^v', ''
+          if (-not $v) {
+            throw "version is required"
+          }
+          $asset = "lgtmaybe-$v-windows-x86_64.exe"
+          "version=$v" >> $env:GITHUB_OUTPUT
+          "asset_url=https://github.com/MattJColes/lgtmaybe/releases/download/lgtmaybe-v$v/$asset" >> $env:GITHUB_OUTPUT
+
+      - name: Wait for the release asset
+        shell: pwsh
+        run: |
+          $url = "${{ steps.ver.outputs.asset_url }}"
+          for ($attempt = 1; $attempt -le 60; $attempt++) {
+            try {
+              Invoke-WebRequest -Uri $url -Method Head -TimeoutSec 30 | Out-Null
+              Write-Output "Release asset is available: $url"
+              exit 0
+            } catch {
+              if ($attempt -eq 60) {
+                throw "Release asset did not become available within 10 minutes: $url"
+              }
+              Start-Sleep -Seconds 10
+            }
+          }
+
+      # `gh` is preinstalled on windows-latest and already drives this pipeline's
+      # release steps (windows-exe.yml), so the "does this path exist" question
+      # is one call with the auth and API headers handled for us.
+      - name: Check whether the winget package exists
+        id: package
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $failure = gh api repos/microsoft/winget-pkgs/contents/manifests/m/MattJColes/lgtmaybe --silent 2>&1
+          if ($LASTEXITCODE -eq 0) {
+            "exists=true" >> $env:GITHUB_OUTPUT
+          } elseif ("$failure" -match "HTTP 404") {
+            "exists=false" >> $env:GITHUB_OUTPUT
+            Write-Warning "MattJColes.lgtmaybe is not published in winget yet. Submit and moderate the first manifest manually; automatic updates will start with the next release."
+          } else {
+            # Only a 404 means "not published yet". A 401/403/5xx/timeout must
+            # fail the job rather than silently skip the winget submission.
+            throw "gh api could not reach the winget manifest path: $failure"
+          }
+
+      - name: Install wingetcreate
+        if: steps.package.outputs.exists == 'true'
+        shell: pwsh
+        run: |
+          winget install --id Microsoft.WingetCreate --exact `
+            --accept-package-agreements --accept-source-agreements `
+            --disable-interactivity
+
+      - name: Submit winget update
+        if: steps.package.outputs.exists == 'true'
+        shell: pwsh
+        env:
+          WINGET_TOKEN: ${{ secrets.WINGET_TOKEN }}
+        run: |
+          wingetcreate update MattJColes.lgtmaybe `
+            --version "${{ steps.ver.outputs.version }}" `
+            --urls "${{ steps.ver.outputs.asset_url }}" `
+            --submit --token $env:WINGET_TOKEN

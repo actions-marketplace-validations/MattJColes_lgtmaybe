@@ -1,7 +1,20 @@
+---
+description: Run lgtmaybe on AWS Bedrock with keyless GitHub OIDC — no static AWS credentials stored in repository secrets.
+---
+
 # Review with AWS Bedrock (keyless OIDC)
 
 Use this guide to run lgtmaybe with **AWS Bedrock** using GitHub's OIDC token
 — no static AWS credentials stored in secrets.
+
+## Contents
+
+- [How it works](#how-it-works)
+- [One-time AWS setup](#one-time-aws-setup)
+- [Workflow example](#workflow-example)
+- [Choosing a Bedrock model ID](#choosing-a-bedrock-model-id)
+- [Running locally with ambient AWS credentials](#running-locally-with-ambient-aws-credentials)
+- [Troubleshooting](#troubleshooting)
 
 ## How it works
 
@@ -44,10 +57,10 @@ The role needs only:
 (the `us.`/`eu.`/`apac.`-prefixed ids below). A cross-region inference profile
 fans the call out to the foundation model in several regions, so the role needs
 `bedrock:InvokeModel*` on **both** the `inference-profile/*` ARN **and** the
-underlying `foundation-model/*` ARN — granting only one of them still fails with
-`AccessDeniedException`. (A bare `anthropic.…` model id needs only the
+underlying `foundation-model/*` ARN. Granting only one of them still fails with
+`AccessDeniedException`. A bare `anthropic.…` model id needs only the
 `foundation-model/*` ARN, but most current Claude models are invocable only
-through an inference profile — see the model table below.)
+through an inference profile — see the model table below.
 
 Scope each `Resource` to specific model / inference-profile ARNs for tighter
 least-privilege once it works, e.g.
@@ -74,11 +87,23 @@ permissions:
 
 jobs:
   review:
-    if: ${{ github.event_name == 'pull_request_target' || github.event.issue.pull_request }}
+    # Only trusted authors (repo owner / org member / collaborator) can trigger
+    # a review, so fork PRs and drive-by comments cannot spend your provider
+    # budget. A maintainer can still opt in to an external PR with /review.
+    if: >-
+      (github.event_name == 'pull_request_target' &&
+       contains(fromJson('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.pull_request.author_association)) ||
+      (github.event.issue.pull_request &&
+       contains(fromJson('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association) &&
+       (contains(github.event.comment.body, '/review') ||
+        contains(github.event.comment.body, '/improve') ||
+        contains(github.event.comment.body, '/ask') ||
+        contains(github.event.comment.body, '/describe') ||
+        contains(github.event.comment.body, '/diagram')))
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
-      - uses: MattJColes/lgtmaybe@v0
+      - uses: actions/checkout@v7
+      - uses: MattJColes/lgtmaybe@v2
         with:
           provider: bedrock
           model: us.anthropic.claude-sonnet-4-6
@@ -119,10 +144,18 @@ pip install 'lgtmaybe[bedrock]'
 
 lgtmaybe review \
   --provider bedrock \
-  --model us.anthropic.claude-haiku-4-5
+  --model us.anthropic.claude-sonnet-4-6
 ```
 
 lgtmaybe does not require or accept a static API key for Bedrock.
+
+> **`No matching distribution found for lgtmaybe[bedrock]`** (`from versions:
+> none`) — this is not a packaging problem; the `bedrock` extra is published on
+> PyPI. It means `pip` found no version compatible with your environment. The
+> usual cause is an interpreter older than the required **Python 3.11+** (check
+> with `python --version`); install under 3.11+ (e.g. via `pipx`/`uv`). If your
+> Python is fine, your `pip` can't reach PyPI — check your network/proxy or
+> `--index-url`.
 
 ## Troubleshooting
 
@@ -135,6 +168,19 @@ selected model, or the model is not enabled in the Bedrock console for your
 account and region. For an inference-profile id (`us.`/`eu.`/`apac.`-prefixed),
 the policy must also allow the `inference-profile/*` ARN, not just
 `foundation-model/*`.
+
+**`output_config.format: Extra inputs are not permitted`** — the model's Converse
+route doesn't accept the structured-output field lgtmaybe asks for, and Bedrock
+rejects the whole request with a 400. No action is needed: lgtmaybe detects the
+rejection and re-sends the *same* schema through the mechanism Converse does
+implement — a forced tool call, whose arguments are the findings — so output
+stays schema-enforced. It remembers that for the rest of the run, so the rest of
+the lens fan-out uses that shape straight away. Only if the route refuses the
+tool schema too does it fall back to prompt-instructed JSON (the prompt asks for
+JSON anyway and the parser is lenient); that fallback is logged as a warning. If
+you're on a build from before this (the symptom is every lens failing at once,
+and the review reporting `every review call failed`), upgrade, or pass
+`--no-structured-output` / set `structured_output: false` as a stopgap.
 
 **`The provided model identifier is invalid`** — the `model` is not a Bedrock
 model id. Two common causes: (1) it's a non-Bedrock id such as `openai.gpt-5.5`

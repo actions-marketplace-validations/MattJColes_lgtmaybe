@@ -1,17 +1,31 @@
+---
+description: Review pull requests with Azure OpenAI in lgtmaybe using keyless GitHub OIDC federated to Entra, or an API key.
+---
+
 # Review with Azure OpenAI (keyless OIDC)
 
 Use this guide to run lgtmaybe against **Azure OpenAI** using GitHub's OIDC token
 federated to Entra (Azure AD) — no static Azure key stored in secrets. A
 key-based fallback is covered at the end.
 
+## Contents
+
+- [How it works](#how-it-works)
+- [One-time Azure setup](#one-time-azure-setup)
+- [Workflow example](#workflow-example)
+- [Choosing the model name](#choosing-the-model-name)
+- [Running locally with ambient Azure credentials](#running-locally-with-ambient-azure-credentials)
+- [Key-based alternative](#key-based-alternative)
+- [Troubleshooting](#troubleshooting)
+
 ## How it works
 
-GitHub Actions issues a short-lived OIDC token. Entra (Azure AD) exchanges it —
-via a **federated credential** on an app registration or managed identity — for
-an Azure AD access token scoped to your Azure OpenAI resource. The action does
-that exchange for you (pass `azure_client_id` / `azure_tenant_id`) and lgtmaybe
-picks up the ambient token through `azure-identity`'s `DefaultAzureCredential` —
-no `AZURE_API_KEY` in your secrets.
+GitHub Actions issues a short-lived OIDC token. Entra (Azure AD) exchanges it
+for an access token scoped to your Azure OpenAI resource, via a **federated
+credential** on an app registration or managed identity. The action does that
+exchange for you (pass `azure_client_id` / `azure_tenant_id`), and lgtmaybe
+picks up the ambient token through `azure-identity`'s `DefaultAzureCredential`.
+No `AZURE_API_KEY` in your secrets.
 
 Azure still needs two non-secret values: the **deployment name** (`model`) and
 the **resource endpoint** (`api_base`, `https://<resource>.openai.azure.com`).
@@ -56,11 +70,23 @@ permissions:
 
 jobs:
   review:
-    if: ${{ github.event_name == 'pull_request_target' || github.event.issue.pull_request }}
+    # Only trusted authors (repo owner / org member / collaborator) can trigger
+    # a review, so fork PRs and drive-by comments cannot spend your provider
+    # budget. A maintainer can still opt in to an external PR with /review.
+    if: >-
+      (github.event_name == 'pull_request_target' &&
+       contains(fromJson('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.pull_request.author_association)) ||
+      (github.event.issue.pull_request &&
+       contains(fromJson('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association) &&
+       (contains(github.event.comment.body, '/review') ||
+        contains(github.event.comment.body, '/improve') ||
+        contains(github.event.comment.body, '/ask') ||
+        contains(github.event.comment.body, '/describe') ||
+        contains(github.event.comment.body, '/diagram')))
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
-      - uses: MattJColes/lgtmaybe@v0
+      - uses: actions/checkout@v7
+      - uses: MattJColes/lgtmaybe@v2
         with:
           provider: azure
           model: my-gpt-4o-deployment            # your deployment name
@@ -102,7 +128,7 @@ If you would rather use a resource key, set `AZURE_API_KEY` and `AZURE_API_BASE`
 extra is not required in this mode.
 
 ```yaml
-      - uses: MattJColes/lgtmaybe@v0
+      - uses: MattJColes/lgtmaybe@v2
         with:
           provider: azure
           model: my-gpt-4o-deployment

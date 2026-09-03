@@ -1,0 +1,96 @@
+"""Finding suppression: drop findings a team has marked known-fine.
+
+Three suppression channels, all deterministic and applied before reflection so a
+suppressed finding costs no reflection tokens:
+
+- **Config fingerprint** — ``ReviewConfig.ignore_fingerprints`` lists
+  ``finding_fingerprint(path, title)`` ids a team has permanently dismissed.
+- **Inline pragma** — a ``# lgtmaybe: ignore`` comment on the flagged line (or
+  the line immediately above it) in the file's head text suppresses that finding,
+  so a developer can silence a known-fine pattern at the source.
+- **Feedback learning** — fingerprints an authorised reviewer reacted 👎 to on a
+  previous run (``PRContext.feedback_downvotes``). Unlike the two above, this
+  channel **never** suppresses a high/critical security finding, so a downvote
+  can't be used to hide a serious vulnerability.
+"""
+
+from __future__ import annotations
+
+import re
+
+from lgtmaybe.core.findings import finding_fingerprint
+from lgtmaybe.core.models import ReviewConfig, ReviewFinding, Severity
+
+from .labels import is_security_finding
+
+# A `# lgtmaybe: ignore` pragma anywhere in a line (after a `#` comment marker).
+# Case-insensitive so `# LGTMAYBE: IGNORE` works too.
+_PRAGMA = re.compile(r"#\s*lgtmaybe:\s*ignore\b", re.IGNORECASE)
+
+
+def _is_protected_security(finding: ReviewFinding) -> bool:
+    """A high/critical security finding is never auto-suppressed by feedback.
+
+    On a public repo a 👎 reaction is only as trustworthy as who left it, so a
+    downvote must never be able to hide a serious vulnerability. An explicit
+    config ``ignore_fingerprints`` dismissal is a deliberate maintainer decision
+    and still applies — this carve-out is for the feedback channel only.
+    """
+    return is_security_finding(finding) and finding.severity >= Severity.high
+
+
+def _is_suppressed(
+    finding: ReviewFinding,
+    cfg: ReviewConfig,
+    lines: list[str] | None,
+    feedback_downvotes: frozenset[str],
+) -> bool:
+    """Whether *finding* is suppressed, against a file's already-split lines (None if no text).
+
+    Split out so ``apply_suppressions`` can split each file's head text once and
+    reuse it across every finding on that file, rather than re-splitting per
+    finding (the file's text is unchanged within a run).
+    """
+    fingerprint = finding_fingerprint(finding.path, finding.title)
+    # Config dismissal — unconditional (a maintainer's explicit decision).
+    if fingerprint in cfg.ignore_fingerprints:
+        return True
+    # Feedback learning — an authorised reviewer's 👎, but never a high/critical
+    # security finding, so a downvote can't hide a serious vulnerability.
+    if fingerprint in feedback_downvotes and not _is_protected_security(finding):
+        return True
+    if not lines:
+        return False
+    # The finding's own line and the one just above it (1-based -> 0-based index).
+    for idx in (finding.line - 1, finding.line - 2):
+        if 0 <= idx < len(lines) and _PRAGMA.search(lines[idx]):
+            return True
+    return False
+
+
+def apply_suppressions(
+    findings: list[ReviewFinding],
+    cfg: ReviewConfig,
+    file_contents: dict[str, str],
+    feedback_downvotes: frozenset[str] = frozenset(),
+) -> list[ReviewFinding]:
+    """Return *findings* with the suppressed ones removed (order preserved).
+
+    Each file's head text is split into lines once (lazily, only for paths a
+    finding actually lands on) and reused across that file's findings.
+    ``feedback_downvotes`` is the set of finding fingerprints an authorised
+    reviewer reacted 👎 to (see ``_is_suppressed``); empty when off.
+    """
+    lines_cache: dict[str, list[str]] = {}
+
+    def lines_for(path: str) -> list[str]:
+        cached = lines_cache.get(path)
+        if cached is None:
+            text = file_contents.get(path)
+            cached = text.split("\n") if text else []
+            lines_cache[path] = cached
+        return cached
+
+    return [
+        f for f in findings if not _is_suppressed(f, cfg, lines_for(f.path), feedback_downvotes)
+    ]

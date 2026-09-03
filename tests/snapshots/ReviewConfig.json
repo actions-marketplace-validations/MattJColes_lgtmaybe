@@ -1,5 +1,182 @@
 {
   "$defs": {
+    "CustomLens": {
+      "additionalProperties": false,
+      "description": "A user-defined review lens \u2014 a \"skill file\" run alongside the built-ins.\n\nThe engine fans it out as its own focused LLM call (same pipeline as a\nbuilt-in ``ReviewCategory``) and merges its findings with the rest. A lens is\ndeclared in **trusted** config (``.lgtmaybe.yml`` or a file referenced by\n``lens_paths``), never from PR-author content, so its text is safe to put in\nthe system prompt. Supplying a worked example (``example_diff`` +\n``example_finding``) is optional but sharply improves a small model's output.",
+      "properties": {
+        "example_diff": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Example Diff"
+        },
+        "example_finding": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ReviewFinding"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "instructions": {
+          "title": "Instructions",
+          "type": "string"
+        },
+        "title": {
+          "default": "",
+          "title": "Title",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "instructions"
+      ],
+      "title": "CustomLens",
+      "type": "object"
+    },
+    "DirectoryRule": {
+      "additionalProperties": false,
+      "description": "Extra review instructions and context scoped to part of the repo.\n\nA monorepo is not uniform: ``payments/**`` wants strictness that would be\nnoise in ``tests/**``, and reviewing ``src/**`` well may need a design doc\nthe diff never shows. Each rule names the paths it applies to (fnmatch globs\nagainst the repo-relative path, a ``**/`` prefix also matching at the repo\nroot \u2014 the same matcher the path filters use; an EMPTY list applies the rule\neverywhere, mirroring ``FindingRuleMatch``), free-text ``instructions``, and\n``context_files`` read from the checked-out workspace.\n\nBoth are trusted configuration: on ``pull_request_target`` the workspace is\nthe BASE branch, so neither the instructions nor the context text is ever\nPR-author content.",
+      "properties": {
+        "context_files": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Context Files",
+          "type": "array"
+        },
+        "instructions": {
+          "default": "",
+          "title": "Instructions",
+          "type": "string"
+        },
+        "paths": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Paths",
+          "type": "array"
+        }
+      },
+      "title": "DirectoryRule",
+      "type": "object"
+    },
+    "FindingRule": {
+      "additionalProperties": false,
+      "description": "One declarative post-processing rule, applied in list order.\n\nThe safe alternative to arbitrary user hooks: rules can only filter or\nre-grade findings \u2014 no user code ever executes.",
+      "properties": {
+        "action": {
+          "$ref": "#/$defs/FindingRuleAction"
+        },
+        "match": {
+          "$ref": "#/$defs/FindingRuleMatch",
+          "default": {
+            "category": null,
+            "min_severity": null,
+            "path": null,
+            "title_contains": null
+          }
+        }
+      },
+      "required": [
+        "action"
+      ],
+      "title": "FindingRule",
+      "type": "object"
+    },
+    "FindingRuleAction": {
+      "additionalProperties": false,
+      "description": "What a matched rule does: drop the finding, or remap its severity.",
+      "properties": {
+        "drop": {
+          "default": false,
+          "title": "Drop",
+          "type": "boolean"
+        },
+        "set_severity": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Severity"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "title": "FindingRuleAction",
+      "type": "object"
+    },
+    "FindingRuleMatch": {
+      "additionalProperties": false,
+      "description": "The selector of a finding rule. Every specified field must match (AND).\n\nAn empty match selects every finding. ``path`` is an fnmatch glob against\nthe repo-relative path (a ``**/`` prefix also matches at the repo root,\nlike the path filters); ``category`` is the originating lens id;\n``title_contains`` is a case-insensitive substring; ``min_severity``\nselects findings at or above that severity.",
+      "properties": {
+        "category": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Category"
+        },
+        "min_severity": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Severity"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Path"
+        },
+        "title_contains": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Title Contains"
+        }
+      },
+      "title": "FindingRuleMatch",
+      "type": "object"
+    },
     "Provider": {
       "description": "The backend selected by the `--provider` flag.",
       "enum": [
@@ -9,13 +186,15 @@
         "bedrock",
         "vertex",
         "azure",
-        "ollama"
+        "ollama",
+        "openai-compatible",
+        "zai"
       ],
       "title": "Provider",
       "type": "string"
     },
     "ReviewCategory": {
-      "description": "A single review lens. The engine asks for each one in its own LLM call.\n\n``intent`` checks the diff against the PR's stated intent (title, description,\ncommit messages); it only runs when the context carries some stated intent.",
+      "description": "A single review lens. The engine asks for each one in its own LLM call.\n\n``intent`` checks the diff against the PR's stated intent (title, description,\ncommit messages); it only runs when the context carries some stated intent.\n``ponytail`` is the \"lazy senior dev\" lens \u2014 the best code is the code you\nnever wrote \u2014 flagging code that needn't exist at all (YAGNI, reach for the\nstandard library, do it in fewer lines).\n``spec`` checks the diff against a specification the repository commits\n(OpenSpec, GitHub Spec Kit, Kiro); like ``intent`` it only runs when there is\nsomething to check against \u2014 here, a detected spec that matches the PR.",
       "enum": [
         "security",
         "correctness",
@@ -24,9 +203,136 @@
         "documentation",
         "performance",
         "complexity",
-        "intent"
+        "intent",
+        "ponytail",
+        "spec"
       ],
       "title": "ReviewCategory",
+      "type": "string"
+    },
+    "ReviewFinding": {
+      "additionalProperties": false,
+      "description": "A single inline review comment the model wants to post.",
+      "properties": {
+        "anchor": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Anchor"
+        },
+        "anchored": {
+          "default": true,
+          "title": "Anchored",
+          "type": "boolean"
+        },
+        "body": {
+          "title": "Body",
+          "type": "string"
+        },
+        "broad": {
+          "default": false,
+          "title": "Broad",
+          "type": "boolean"
+        },
+        "category": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Category"
+        },
+        "confidence": {
+          "anyOf": [
+            {
+              "maximum": 10,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Confidence"
+        },
+        "failure_scenario": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Failure Scenario"
+        },
+        "line": {
+          "minimum": 1,
+          "title": "Line",
+          "type": "integer"
+        },
+        "path": {
+          "title": "Path",
+          "type": "string"
+        },
+        "severity": {
+          "$ref": "#/$defs/Severity"
+        },
+        "side": {
+          "default": "RIGHT",
+          "enum": [
+            "LEFT",
+            "RIGHT"
+          ],
+          "title": "Side",
+          "type": "string"
+        },
+        "suggestion": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Suggestion"
+        },
+        "title": {
+          "title": "Title",
+          "type": "string"
+        }
+      },
+      "required": [
+        "path",
+        "line",
+        "severity",
+        "title",
+        "body"
+      ],
+      "title": "ReviewFinding",
+      "type": "object"
+    },
+    "ReviewPreset": {
+      "description": "How many model calls a review spends: the everyday path or the deep audit.\n\n``fast`` (the default) covers all nine built-in categories in FOUR calls,\none per concern: security, correctness (with stated intent folded in), code\nhealth, and artefacts (tests + documentation). The same four run on every\nprovider \u2014 worker count changes the schedule, not the call count.\n``full`` runs each of the nine categories as its own call for release\nbranches and deep audits. An explicit ``categories`` list always wins over\nthe preset.",
+      "enum": [
+        "fast",
+        "full"
+      ],
+      "title": "ReviewPreset",
       "type": "string"
     },
     "Severity": {
@@ -39,6 +345,108 @@
         "critical"
       ],
       "title": "Severity",
+      "type": "string"
+    },
+    "StaticAnalysisConfig": {
+      "additionalProperties": false,
+      "description": "Static-analysis fusion: deterministic tool findings as LLM grounding.\n\nWhen enabled, the installed tools run over the already-fetched changed-file\ntexts (sandboxed subprocess, scrubbed environment, no network, never a\ncheckout) and their findings enter each lens prompt as untrusted HINTS \u2014\n\"confirm, contextualise, or discard\" \u2014 raising recall on the deterministic\nbugs models miss without posting raw linter noise. A tool that isn't\ninstalled is skipped silently, so the feature degrades to nothing on a\nminimal install.",
+      "properties": {
+        "ast_grep_rules": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Ast Grep Rules"
+        },
+        "enabled": {
+          "default": false,
+          "title": "Enabled",
+          "type": "boolean"
+        },
+        "min_severity": {
+          "$ref": "#/$defs/Severity",
+          "default": "info"
+        },
+        "semgrep_rules": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Semgrep Rules"
+        },
+        "tool_min_severity": {
+          "additionalProperties": {
+            "$ref": "#/$defs/Severity"
+          },
+          "propertyNames": {
+            "$ref": "#/$defs/StaticAnalysisTool"
+          },
+          "title": "Tool Min Severity",
+          "type": "object"
+        },
+        "tool_mode": {
+          "additionalProperties": {
+            "$ref": "#/$defs/ToolMode"
+          },
+          "propertyNames": {
+            "$ref": "#/$defs/StaticAnalysisTool"
+          },
+          "title": "Tool Mode",
+          "type": "object"
+        },
+        "tools": {
+          "default": [
+            "ruff",
+            "bandit",
+            "semgrep",
+            "mypy",
+            "gitleaks",
+            "zizmor",
+            "ast-grep",
+            "osv-scanner"
+          ],
+          "items": {
+            "$ref": "#/$defs/StaticAnalysisTool"
+          },
+          "title": "Tools",
+          "type": "array"
+        }
+      },
+      "title": "StaticAnalysisConfig",
+      "type": "object"
+    },
+    "StaticAnalysisTool": {
+      "description": "A deterministic linter/SAST tool whose findings feed the review.\n\nThe value is the binary name looked up on PATH, so it may differ from the\nmember name where the binary is hyphenated.",
+      "enum": [
+        "ruff",
+        "bandit",
+        "semgrep",
+        "mypy",
+        "gitleaks",
+        "zizmor",
+        "ast-grep",
+        "osv-scanner"
+      ],
+      "title": "StaticAnalysisTool",
+      "type": "string"
+    },
+    "ToolMode": {
+      "description": "How a tool's findings reach the review.\n\n``hint`` is the original fusion behaviour: findings become an untrusted\nHINTS block the model confirms, contextualises, or discards. ``finding``\nskips the model entirely and posts the tool's result as a review comment.\n\nWhich one is right is a property of the tool's precision, not a user\npreference: a secret is present or it isn't, so asking a model to \"confirm\nor discard\" a deterministic regex match only adds cost and doubt. A lint or\na SAST heuristic genuinely benefits from a model judging whether it matters\nhere. Per-tool defaults live in ``engine.static_analysis``; this enum is the\noverride users reach for via ``static_analysis.tool_mode``.",
+      "enum": [
+        "hint",
+        "finding"
+      ],
+      "title": "ToolMode",
       "type": "string"
     }
   },
@@ -57,6 +465,16 @@
       "default": null,
       "title": "Api Base"
     },
+    "auto_describe": {
+      "default": true,
+      "title": "Auto Describe",
+      "type": "boolean"
+    },
+    "auto_diagram": {
+      "default": true,
+      "title": "Auto Diagram",
+      "type": "boolean"
+    },
     "categories": {
       "default": [
         "security",
@@ -66,7 +484,9 @@
         "documentation",
         "performance",
         "complexity",
-        "intent"
+        "intent",
+        "ponytail",
+        "spec"
       ],
       "items": {
         "$ref": "#/$defs/ReviewCategory"
@@ -79,11 +499,72 @@
       "title": "Context Lines",
       "type": "integer"
     },
+    "directory_rules": {
+      "items": {
+        "$ref": "#/$defs/DirectoryRule"
+      },
+      "title": "Directory Rules",
+      "type": "array"
+    },
     "exclude_paths": {
       "items": {
         "type": "string"
       },
       "title": "Exclude Paths",
+      "type": "array"
+    },
+    "extra_lenses": {
+      "items": {
+        "$ref": "#/$defs/CustomLens"
+      },
+      "title": "Extra Lenses",
+      "type": "array"
+    },
+    "fail_on": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Severity"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "fallback_model": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Fallback Model"
+    },
+    "finding_rules": {
+      "items": {
+        "$ref": "#/$defs/FindingRule"
+      },
+      "title": "Finding Rules",
+      "type": "array"
+    },
+    "function_context": {
+      "default": true,
+      "title": "Function Context",
+      "type": "boolean"
+    },
+    "high_impact": {
+      "default": true,
+      "title": "High Impact",
+      "type": "boolean"
+    },
+    "ignore_fingerprints": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Ignore Fingerprints",
       "type": "array"
     },
     "include_paths": {
@@ -93,9 +574,63 @@
       "title": "Include Paths",
       "type": "array"
     },
+    "incremental": {
+      "anyOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Incremental"
+    },
+    "language": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Language"
+    },
+    "learn_feedback": {
+      "default": true,
+      "title": "Learn Feedback",
+      "type": "boolean"
+    },
+    "max_concurrency": {
+      "anyOf": [
+        {
+          "minimum": 1,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Max Concurrency"
+    },
+    "max_file_diff_lines": {
+      "default": 2000,
+      "minimum": 0,
+      "title": "Max File Diff Lines",
+      "type": "integer"
+    },
     "max_files": {
       "default": 50,
       "title": "Max Files",
+      "type": "integer"
+    },
+    "max_findings_per_lens": {
+      "default": 50,
+      "minimum": 0,
+      "title": "Max Findings Per Lens",
       "type": "integer"
     },
     "max_input_tokens": {
@@ -103,9 +638,46 @@
       "title": "Max Input Tokens",
       "type": "integer"
     },
+    "max_review_seconds": {
+      "default": 3600,
+      "minimum": 0,
+      "title": "Max Review Seconds",
+      "type": "integer"
+    },
+    "max_review_tokens": {
+      "default": 0,
+      "minimum": 0,
+      "title": "Max Review Tokens",
+      "type": "integer"
+    },
+    "max_tokens": {
+      "anyOf": [
+        {
+          "minimum": 0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Max Tokens"
+    },
+    "mid_review_retrieval": {
+      "default": false,
+      "title": "Mid Review Retrieval",
+      "type": "boolean"
+    },
+    "min_confidence": {
+      "default": 0,
+      "maximum": 10,
+      "minimum": 0,
+      "title": "Min Confidence",
+      "type": "integer"
+    },
     "min_severity": {
       "$ref": "#/$defs/Severity",
-      "default": "info"
+      "default": "low"
     },
     "model": {
       "title": "Model",
@@ -123,17 +695,129 @@
       "default": null,
       "title": "Num Ctx"
     },
+    "pr_labels": {
+      "default": false,
+      "title": "Pr Labels",
+      "type": "boolean"
+    },
+    "preset": {
+      "$ref": "#/$defs/ReviewPreset",
+      "default": "fast"
+    },
     "provider": {
       "$ref": "#/$defs/Provider"
+    },
+    "reasoning_effort": {
+      "anyOf": [
+        {
+          "enum": [
+            "none",
+            "minimal",
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "default"
+          ],
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Reasoning Effort"
+    },
+    "recursive": {
+      "default": true,
+      "title": "Recursive",
+      "type": "boolean"
     },
     "reflect": {
       "default": true,
       "title": "Reflect",
       "type": "boolean"
     },
+    "reflect_model": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Reflect Model"
+    },
+    "repair_unparseable": {
+      "default": true,
+      "title": "Repair Unparseable",
+      "type": "boolean"
+    },
+    "resolve_fixed": {
+      "default": true,
+      "title": "Resolve Fixed",
+      "type": "boolean"
+    },
+    "retry_without_schema": {
+      "default": true,
+      "title": "Retry Without Schema",
+      "type": "boolean"
+    },
+    "spec_paths": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Spec Paths",
+      "type": "array"
+    },
+    "spec_review": {
+      "default": true,
+      "title": "Spec Review",
+      "type": "boolean"
+    },
+    "static_analysis": {
+      "$ref": "#/$defs/StaticAnalysisConfig",
+      "default": {
+        "ast_grep_rules": null,
+        "enabled": false,
+        "min_severity": "info",
+        "semgrep_rules": null,
+        "tool_min_severity": {},
+        "tool_mode": {},
+        "tools": [
+          "ruff",
+          "bandit",
+          "semgrep",
+          "mypy",
+          "gitleaks",
+          "zizmor",
+          "ast-grep",
+          "osv-scanner"
+        ]
+      }
+    },
     "structured_output": {
       "default": true,
       "title": "Structured Output",
+      "type": "boolean"
+    },
+    "summary_template": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Summary Template"
+    },
+    "symbol_resolution": {
+      "default": true,
+      "title": "Symbol Resolution",
       "type": "boolean"
     },
     "temperature": {
@@ -152,6 +836,22 @@
       ],
       "default": null,
       "title": "Timeout"
+    },
+    "triage_model": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Triage Model"
+    },
+    "unanchored_min_severity": {
+      "$ref": "#/$defs/Severity",
+      "default": "high"
     }
   },
   "required": [

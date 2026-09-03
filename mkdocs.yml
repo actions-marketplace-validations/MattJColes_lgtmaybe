@@ -1,20 +1,23 @@
 site_name: lgtmaybe
-site_description: Provider-agnostic PR reviewer — six providers, one flag, no keys in secrets for cloud.
-site_url: https://mattjcoles.github.io/lgtmaybe/
+site_description: Provider-agnostic AI PR reviewer — OpenAI, Claude, Bedrock, Vertex, Azure, ollama and more. One flag, keyless OIDC/WIF for cloud, no keys in secrets. GitHub Action + CLI.
+site_url: https://lgtmaybe.coles.codes/
 repo_url: https://github.com/MattJColes/lgtmaybe
 repo_name: MattJColes/lgtmaybe
 edit_uri: edit/main/docs/
 
 docs_dir: docs
-# generate_reference.py lives in docs/ as the source for reference/config.md;
-# keep it out of the built site.
+# The generator scripts live in docs/ as the source for their generated files;
+# keep them out of the built site.
 exclude_docs: |
   generate_reference.py
+  generate_llms_txt.py
 
 theme:
   name: material
   custom_dir: overrides
-  logo: assets/logo.svg
+  # Light-stroke variant: the header bar is slate, the same colour as the
+  # primary logo's strokes, which made the brace arms invisible there.
+  logo: assets/logo-light.svg
   favicon: assets/favicon.ico
   icon:
     repo: fontawesome/brands/github
@@ -42,6 +45,12 @@ theme:
 extra_css:
   - stylesheets/extra.css
 
+# Cookieless, privacy-first analytics. The config (endpoint + no_onload) must load
+# before GoatCounter's script, which is why goatcounter.js is listed first.
+extra_javascript:
+  - javascripts/goatcounter.js
+  - https://gc.zgo.at/count.js
+
 markdown_extensions:
   - admonition
   - tables
@@ -50,7 +59,11 @@ markdown_extensions:
   - toc:
       permalink: true
   - pymdownx.highlight
-  - pymdownx.superfences
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
   - pymdownx.inlinehilite
   - pymdownx.tabbed:
       alternate_style: true
@@ -60,16 +73,37 @@ nav:
   - Tutorial:
       - Getting started: tutorial/getting-started.md
   - How-to:
-      - Run locally with ollama: how-to/run-locally-with-ollama.md
-      - Fix findings with an AI agent: how-to/fix-findings-with-an-ai-agent.md
-      - Review with Bedrock OIDC: how-to/review-with-bedrock-oidc.md
-      - Review with Vertex WIF: how-to/review-with-vertex-wif.md
-      - Review with Azure OpenAI: how-to/review-with-azure.md
-      - Use as a GitHub Action: how-to/use-as-github-action.md
-      - Configure .lgtmaybe.yml: how-to/configure-lgtmaybe-yml.md
-      - Releasing (maintainers): how-to/releasing.md
+      - Install & run:
+          - Install the CLI: how-to/install-the-cli.md
+          - Choose a review model: how-to/choose-a-review-model.md
+          - Use as a GitHub Action: how-to/use-as-github-action.md
+          - Post as lgtmaybe[bot]: how-to/post-as-a-github-app.md
+          - Review on Gitea: how-to/review-on-gitea.md
+          - Review on GitLab: how-to/review-on-gitlab.md
+      - Cloud providers (API key):
+          - Review with OpenAI: how-to/review-with-openai.md
+          - Review with Claude (Anthropic): how-to/review-with-anthropic.md
+          - Review with OpenRouter: how-to/review-with-openrouter.md
+          - Review with z.ai (GLM): how-to/review-with-zai.md
+      - Keyless cloud (OIDC/WIF):
+          - Review with Bedrock OIDC: how-to/review-with-bedrock-oidc.md
+          - Review with Vertex WIF: how-to/review-with-vertex-wif.md
+          - Review with Azure OpenAI: how-to/review-with-azure.md
+      - Local & self-hosted:
+          - Run locally with ollama: how-to/run-locally-with-ollama.md
+          - Other OpenAI-compatible servers: how-to/use-a-custom-openai-compatible-endpoint.md
+      - Configure & extend:
+          - Configure .lgtmaybe.yml: how-to/configure-lgtmaybe-yml.md
+          - Add a custom review lens: how-to/add-a-custom-lens.md
+          - Scope instructions to a directory: how-to/scope-review-instructions-to-a-directory.md
+          - Generate a change overview: how-to/generate-a-change-diagram.md
+          - Fix findings with an AI agent: how-to/fix-findings-with-an-ai-agent.md
+          - Reduce review cost: how-to/reduce-review-cost.md
+      - Maintainers:
+          - Releasing: how-to/releasing.md
   - Reference:
       - Configuration: reference/config.md
+      - Profile output: reference/profile.md
   - Explanation:
       - What gets reviewed: explanation/what-gets-reviewed.md
       - Architecture: explanation/architecture.md

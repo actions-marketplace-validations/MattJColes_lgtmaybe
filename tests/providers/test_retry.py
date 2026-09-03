@@ -2,13 +2,41 @@
 
 from __future__ import annotations
 
+import json
+import logging
+import threading
+import time
+from datetime import UTC, datetime, timedelta
+from email.utils import format_datetime
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import patch
 
+import httpx
+import litellm
 import pytest
 
-from lgtmaybe.providers.litellm_provider import LiteLLMProvider
+from lgtmaybe.core.models import ReviewResult, attempts_of, is_unrecoverable
+from lgtmaybe.core.ports import ProviderTruncated
+from lgtmaybe.providers import litellm_provider as provider_module
+from lgtmaybe.providers.litellm_provider import (
+    _EFFORT_FLOOR,
+    _EFFORT_LADDER,
+    _MAX_ATTEMPTS,
+    LiteLLMProvider,
+)
+
+
+def _reasoning_response(reasoning: Any, content: str = "ok") -> Any:
+    """A response whose route DOES report the thinking/answer breakdown."""
+    return SimpleNamespace(
+        choices=[SimpleNamespace(message=SimpleNamespace(content=content))],
+        usage=SimpleNamespace(
+            prompt_tokens=5,
+            completion_tokens=10,
+            completion_tokens_details=SimpleNamespace(reasoning_tokens=reasoning),
+        ),
+    )
 
 
 def _fake_response(content: str = "ok") -> Any:
@@ -18,7 +46,117 @@ def _fake_response(content: str = "ok") -> Any:
     )
 
 
+def _tool_call_response(arguments: str, content: str = "") -> Any:
+    """A reply that answered through a forced tool call, as Bedrock's Converse
+    endpoint does — the payload is in the arguments, the content is empty."""
+    call = SimpleNamespace(
+        function=SimpleNamespace(name="lgtmaybe_structured_output", arguments=arguments)
+    )
+    return SimpleNamespace(
+        choices=[SimpleNamespace(message=SimpleNamespace(content=content, tool_calls=[call]))],
+        usage=SimpleNamespace(prompt_tokens=5, completion_tokens=10),
+    )
+
+
 class TestRetry:
+    def test_sdk_hang_cannot_exceed_the_request_timeout(self) -> None:
+        """The adapter timeout is a real wall-clock bound even if LiteLLM's
+        downstream transport never returns."""
+        release = threading.Event()
+
+        def hangs(*args: Any, **kwargs: Any) -> Any:
+            release.wait(timeout=5)
+            return _fake_response()
+
+        started = time.perf_counter()
+        try:
+            with (
+                patch("litellm.completion", side_effect=hangs),
+                patch("lgtmaybe.providers.litellm_provider._MAX_ATTEMPTS", 1),
+            ):
+                provider = LiteLLMProvider(timeout=0.05)
+                with pytest.raises(TimeoutError, match="exceeded 0.05"):
+                    provider.complete([{"role": "user", "content": "hi"}], "openrouter/deepseek")
+        finally:
+            release.set()
+
+        assert time.perf_counter() - started < 0.5
+
+    def test_timeout_error_reports_the_measured_wait(self) -> None:
+        """The bound is decided by the monotonic clock, so the error says how long
+        we actually waited — an overshoot on a coarse-timer platform (Windows'
+        ~15.6ms granularity) is then visible instead of silent."""
+        release = threading.Event()
+
+        def hangs(*args: Any, **kwargs: Any) -> Any:
+            release.wait(timeout=5)
+            return _fake_response()
+
+        try:
+            with (
+                patch("litellm.completion", side_effect=hangs),
+                patch("lgtmaybe.providers.litellm_provider._MAX_ATTEMPTS", 1),
+            ):
+                provider = LiteLLMProvider(timeout=0.05)
+                with pytest.raises(TimeoutError, match=r"exceeded 0.05s \(waited \d+\.\d+s\)"):
+                    provider.complete([{"role": "user", "content": "hi"}], "openrouter/deepseek")
+        finally:
+            release.set()
+
+    def test_call_completing_inside_the_timer_slop_is_not_discarded(self) -> None:
+        """A call that finished just past the deadline is honoured, not thrown away.
+
+        Discarding it would waste a response the provider already billed for, and
+        (worse) replace its real error — a quota 429, a bad key — with a bare
+        timeout that says nothing about what to fix. Driven with a fake clock and
+        an inline worker so it pins the behaviour deterministically rather than
+        racing a real deadline.
+        """
+        # start=0.0, then every check is past the 0.05s deadline.
+        clock = iter([0.0] + [100.0] * 20)
+
+        class _InlineThread:
+            """Runs the worker inline, so the future is complete before the wait."""
+
+            def __init__(self, target: Any, **_: Any) -> None:
+                self._target = target
+
+            def start(self) -> None:
+                self._target()
+
+        with (
+            patch("litellm.completion", return_value=_fake_response("late but complete")),
+            patch.object(provider_module, "time", SimpleNamespace(monotonic=lambda: next(clock))),
+            patch.object(provider_module.threading, "Thread", _InlineThread),
+        ):
+            response = provider_module._completion_with_wall_timeout(
+                "openai/gpt-4o", [{"role": "user", "content": "hi"}], {"timeout": 0.05}
+            )
+
+        assert response.choices[0].message.content == "late but complete"
+
+    def test_permanent_error_is_not_converted_into_a_retryable_timeout(self) -> None:
+        """A permanent failure must surface as itself, not as a timeout: the review's
+        failure notice quotes the error, and "provider request exceeded 60s" tells
+        a user nothing about an invalid API key."""
+        calls = 0
+
+        def bad_auth(*args: Any, **kwargs: Any) -> Any:
+            nonlocal calls
+            calls += 1
+            raise litellm.AuthenticationError(
+                message="AuthenticationError: invalid api key",
+                model="gpt-4o",
+                llm_provider="openai",
+            )
+
+        with patch("litellm.completion", side_effect=bad_auth):
+            provider = LiteLLMProvider(timeout=0.05)
+            with pytest.raises(litellm.AuthenticationError):
+                provider.complete([{"role": "user", "content": "hi"}], "openai/gpt-4o")
+
+        assert calls == 1
+
     def test_first_call_raises_then_retry_succeeds(self) -> None:
         """Provider retries on transient failure and returns the good result."""
         good_response = _fake_response("retried ok")
@@ -37,6 +175,14 @@ class TestRetry:
 
         assert result.text == "retried ok"
         assert call_count == 2
+        # The retry is visible on the result, for the timing instrumentation.
+        assert result.attempts == 2
+
+    def test_first_try_success_reports_one_attempt(self) -> None:
+        with patch("litellm.completion", return_value=_fake_response("ok")):
+            provider = LiteLLMProvider()
+            result = provider.complete([{"role": "user", "content": "hi"}], "openai/gpt-4o")
+        assert result.attempts == 1
 
     def test_all_retries_exhausted_raises(self) -> None:
         """When all retries are exhausted the error propagates."""
@@ -44,6 +190,1304 @@ class TestRetry:
             provider = LiteLLMProvider()
             with pytest.raises(RuntimeError):
                 provider.complete([{"role": "user", "content": "hi"}], "openai/gpt-4o")
+
+    def test_terminal_failure_carries_the_attempts_it_burned(self) -> None:
+        """A failed call must say how many attempts it cost.
+
+        The count only ever rode home on a successful ProviderResult, so a
+        three-attempt failure was recorded as ``attempts=0`` — reading as
+        "never retried" in the timing profile, while it had in fact burned the
+        whole retry budget.
+        """
+        with patch("litellm.completion", side_effect=RuntimeError("always fails")):
+            provider = LiteLLMProvider()
+            with pytest.raises(RuntimeError) as caught:
+                provider.complete([{"role": "user", "content": "hi"}], "openai/gpt-4o")
+
+        assert attempts_of(caught.value) == _MAX_ATTEMPTS
+
+    def test_fail_fast_error_reports_its_single_attempt(self) -> None:
+        """A permanent error is tried once, and says so."""
+        with patch(
+            "litellm.completion",
+            side_effect=litellm.AuthenticationError(
+                message="invalid api key", model="gpt-4o", llm_provider="openai"
+            ),
+        ):
+            provider = LiteLLMProvider()
+            with pytest.raises(litellm.AuthenticationError) as caught:
+                provider.complete([{"role": "user", "content": "hi"}], "openai/gpt-4o")
+
+        assert attempts_of(caught.value) == 1
+
+    def test_an_unstamped_exception_reports_no_attempts(self) -> None:
+        """An error raised before the adapter ever counted an attempt stays 0."""
+        assert attempts_of(RuntimeError("never reached the adapter")) == 0
+
+    def test_a_failing_fallback_reports_both_models_requests(self) -> None:
+        """Both legs' requests were billed, so a total failure counts both."""
+        with patch("litellm.completion", side_effect=RuntimeError("both models fail")):
+            provider = LiteLLMProvider(model="openrouter/slow", fallback_model="openrouter/quick")
+            with pytest.raises(RuntimeError) as caught:
+                provider.complete([{"role": "user", "content": "hi"}], "ignored")
+
+        assert attempts_of(caught.value) == 2 * _MAX_ATTEMPTS
+
+    def test_a_re_send_inside_one_attempt_still_counts(self) -> None:
+        """Every request that goes out counts, not every tenacity attempt.
+
+        The empty-structured-output path issues a SECOND model request inside one
+        attempt. Counting attempts rather than requests reported that failure as
+        one call when the provider had been asked twice.
+        """
+        calls = 0
+
+        def empty_then_fail(*args: Any, **kwargs: Any) -> Any:
+            nonlocal calls
+            calls += 1
+            if "response_format" in kwargs:
+                return _fake_response("")  # schema decoder yielded nothing
+            raise litellm.AuthenticationError(
+                message="invalid api key", model="gpt-4o", llm_provider="openai"
+            )
+
+        with patch("litellm.completion", side_effect=empty_then_fail):
+            provider = LiteLLMProvider()
+            with pytest.raises(litellm.AuthenticationError) as caught:
+                provider.complete(
+                    [{"role": "user", "content": "hi"}], "openai/gpt-4o", response_format={}
+                )
+
+        assert calls == 2
+        assert attempts_of(caught.value) == 2
+
+
+class TestWallTimeoutIsNotRetried:
+    """A wall-clock timeout re-sent unchanged cannot do anything but burn budget.
+
+    The request, the model and the wall are all identical on the retry, so
+    attempts 2..N buy nothing and cost another full timeout each — at the
+    generous 1800s default that is an hour of runner time per lens before the
+    failure surfaces.
+    """
+
+    def test_the_wall_timeout_is_attempted_once(self) -> None:
+        # The request runs on a daemon thread the wall timeout abandons, so the
+        # counter is read only after that thread confirms it started — otherwise a
+        # loaded runner could time out before the worker was ever scheduled and
+        # the assertion would be about thread scheduling, not about retries.
+        release = threading.Event()
+        started = threading.Event()
+        counted = threading.Lock()
+        calls = 0
+
+        def hangs(*args: Any, **kwargs: Any) -> Any:
+            nonlocal calls
+            with counted:
+                calls += 1
+            started.set()
+            release.wait(timeout=5)
+            return _fake_response()
+
+        try:
+            with patch("litellm.completion", side_effect=hangs):
+                provider = LiteLLMProvider(timeout=0.05)
+                with pytest.raises(provider_module.ProviderWallTimeout, match="exceeded 0.05"):
+                    provider.complete([{"role": "user", "content": "hi"}], "openrouter/deepseek")
+        finally:
+            release.set()
+
+        assert started.wait(timeout=5), "the one request never reached the provider"
+        with counted:
+            assert calls == 1
+
+    def test_it_still_reads_as_a_timeout_error(self) -> None:
+        """Callers (and the review's failure notice) keep seeing a TimeoutError."""
+        assert issubclass(provider_module.ProviderWallTimeout, TimeoutError)
+
+    def test_a_transport_timeout_is_still_retried(self) -> None:
+        """litellm's own connect/read timeout is a blip, not a blown wall — it
+        keeps its retries."""
+        calls = 0
+
+        def transport_timeout(*args: Any, **kwargs: Any) -> Any:
+            nonlocal calls
+            calls += 1
+            raise litellm.Timeout(
+                message="Connection timed out", model="deepseek", llm_provider="openrouter"
+            )
+
+        with patch("litellm.completion", side_effect=transport_timeout):
+            provider = LiteLLMProvider()
+            with pytest.raises(litellm.Timeout):
+                provider.complete([{"role": "user", "content": "hi"}], "openrouter/deepseek")
+
+        assert calls == _MAX_ATTEMPTS
+
+    def test_the_fallback_model_still_gets_its_chance(self) -> None:
+        """Not retrying is about re-sending the SAME request; a different model is
+        a different request, and still worth trying."""
+        release = threading.Event()
+        seen: list[str] = []
+
+        def hang_then_answer(*args: Any, **kwargs: Any) -> Any:
+            seen.append(kwargs["model"])
+            if kwargs["model"] == "openrouter/slow":
+                release.wait(timeout=5)
+            return _fake_response("fallback answered")
+
+        try:
+            with patch("litellm.completion", side_effect=hang_then_answer):
+                provider = LiteLLMProvider(
+                    model="openrouter/slow", fallback_model="openrouter/quick", timeout=0.05
+                )
+                result = provider.complete([{"role": "user", "content": "hi"}], "ignored")
+        finally:
+            release.set()
+
+        assert result.text == "fallback answered"
+        assert seen == ["openrouter/slow", "openrouter/quick"]
+        # Two requests went out and both were billed, so both are in the total —
+        # a fallback rescue reported as one request would hide the primary's
+        # burnt budget entirely.
+        assert result.attempts == 2
+
+
+class TestTemperatureRejection:
+    def test_retries_without_temperature_when_model_rejects_the_value(self) -> None:
+        """Models like gpt-5.5 accept the temperature param but only the default
+        value; on that rejection the provider retries without temperature."""
+        good = _fake_response("ok without temperature")
+        seen_temperatures: list[Any] = []
+
+        def side_effect(*args: Any, **kwargs: Any) -> Any:
+            seen_temperatures.append(kwargs.get("temperature", "absent"))
+            if "temperature" in kwargs:
+                raise RuntimeError(
+                    "litellm.BadRequestError: OpenAIException - Unsupported value: "
+                    "'temperature' does not support 0 with this model. Only the "
+                    "default (1) value is supported."
+                )
+            return good
+
+        with patch("litellm.completion", side_effect=side_effect):
+            provider = LiteLLMProvider()
+            for _ in range(2):
+                result = provider.complete(
+                    [{"role": "user", "content": "hi"}], "openai/gpt-5.5", temperature=0.0
+                )
+
+        assert result.text == "ok without temperature"
+        assert seen_temperatures == [0.0, "absent", "absent"]
+
+    def test_unrelated_bad_request_is_not_swallowed(self) -> None:
+        """A non-temperature error must still propagate, not be retried bare."""
+        with patch("litellm.completion", side_effect=RuntimeError("invalid api key")):
+            provider = LiteLLMProvider()
+            with pytest.raises(RuntimeError, match="invalid api key"):
+                provider.complete(
+                    [{"role": "user", "content": "hi"}], "openai/gpt-5.5", temperature=0.0
+                )
+
+
+class TestOutputCeilingTruncation:
+    """A generation that runs to the model's output ceiling comes back cut off
+    mid-JSON. Handing that to the parser reports it as "unparseable model
+    output", which sends the user hunting for a prompt bug instead of the
+    `max_tokens` ceiling they actually hit — and an identical re-send at
+    temperature 0 just runs to the ceiling again, at full price."""
+
+    @staticmethod
+    def _truncated(reason: str = "length") -> Any:
+        return SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    message=SimpleNamespace(content='{"findings": [{"path": "a.py"'),
+                    finish_reason=reason,
+                )
+            ],
+            usage=SimpleNamespace(prompt_tokens=13215, completion_tokens=65536),
+        )
+
+    def test_length_finish_reason_raises_truncated(self) -> None:
+        with patch("litellm.completion", return_value=self._truncated()):
+            provider = LiteLLMProvider()
+            with pytest.raises(ProviderTruncated) as exc_info:
+                provider.complete([{"role": "user", "content": "hi"}], "openrouter/deepseek")
+
+        # The message must name the ceiling that was hit and the knob that moves
+        # it — the whole point is that "unparseable" told the user nothing.
+        assert "65536" in str(exc_info.value)
+        assert "max_tokens" in str(exc_info.value)
+
+    def test_truncation_is_not_retried(self) -> None:
+        """Permanent by design: the identical request against the identical
+        ceiling can only end the same way, and each attempt costs a full
+        ceiling-length generation (21 minutes, in the run that prompted this)."""
+        calls = 0
+
+        def side_effect(*args: Any, **kwargs: Any) -> Any:
+            nonlocal calls
+            calls += 1
+            return self._truncated()
+
+        with patch("litellm.completion", side_effect=side_effect):
+            provider = LiteLLMProvider()
+            with pytest.raises(ProviderTruncated):
+                provider.complete([{"role": "user", "content": "hi"}], "openrouter/deepseek")
+
+        assert calls == 1
+
+    def test_the_ceiling_is_named_as_max_tokens_not_as_the_model_s_limit(self) -> None:
+        """The ceiling hit is almost always `max_tokens`, not the model's own.
+
+        In the run that prompted this it was lgtmaybe's own configured 16,384
+        against a model that would have gone to 65,536 — so calling it "the
+        model's output limit" points the reader at the wrong knob, and at one
+        they cannot move.
+        """
+        with patch("litellm.completion", return_value=self._truncated()):
+            provider = LiteLLMProvider()
+            with pytest.raises(ProviderTruncated) as exc_info:
+                provider.complete([{"role": "user", "content": "hi"}], "openrouter/deepseek")
+
+        message = str(exc_info.value)
+        assert "max_tokens" in message
+        assert "model's output limit" not in message
+
+    def test_the_truncated_body_travels_with_the_failure(self) -> None:
+        """The engine salvages the findings finished before the cut from it."""
+        with patch("litellm.completion", return_value=self._truncated()):
+            provider = LiteLLMProvider()
+            with pytest.raises(ProviderTruncated) as exc_info:
+                provider.complete([{"role": "user", "content": "hi"}], "openrouter/deepseek")
+
+        assert exc_info.value.text == '{"findings": [{"path": "a.py"'
+
+    def test_reasoning_tokens_are_named_when_the_route_reports_them(self) -> None:
+        """A reasoning model spends the same `max_tokens` budget on thinking.
+
+        That is how a fifteen-line diff truncates: the cap went on thought, not
+        on findings. Saying so is the difference between "my diff is too big"
+        (wrong) and "my cap is too low for this model" (right).
+        """
+        response = SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    message=SimpleNamespace(content=""),
+                    finish_reason="length",
+                )
+            ],
+            usage=SimpleNamespace(
+                prompt_tokens=900,
+                completion_tokens=16384,
+                completion_tokens_details=SimpleNamespace(reasoning_tokens=16200),
+            ),
+        )
+        with patch("litellm.completion", return_value=response):
+            provider = LiteLLMProvider()
+            with pytest.raises(ProviderTruncated) as exc_info:
+                provider.complete([{"role": "user", "content": "hi"}], "openrouter/deepseek")
+
+        assert "16200 reasoning" in str(exc_info.value)
+
+    def test_a_route_without_reasoning_detail_still_reports_the_ceiling(self) -> None:
+        """No detail is not zero detail — the message simply omits the breakdown."""
+        with patch("litellm.completion", return_value=self._truncated()):
+            provider = LiteLLMProvider()
+            with pytest.raises(ProviderTruncated) as exc_info:
+                provider.complete([{"role": "user", "content": "hi"}], "openrouter/deepseek")
+
+        assert "reasoning" not in str(exc_info.value)
+        assert "65536" in str(exc_info.value)
+
+    def test_the_counts_travel_as_numbers_not_only_as_prose(self) -> None:
+        """The diagnosis is data, not a sentence.
+
+        The engine reacts differently to "the answer was too long" and "the
+        thinking ate the ceiling" — the first is fixed by covering less, the
+        second is not fixable by size at all. It can only tell them apart from
+        the two numbers, and re-reading them out of the message would be
+        parsing our own prose.
+        """
+        response = SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    message=SimpleNamespace(content=""),
+                    finish_reason="length",
+                )
+            ],
+            usage=SimpleNamespace(
+                prompt_tokens=900,
+                completion_tokens=16384,
+                completion_tokens_details=SimpleNamespace(reasoning_tokens=16200),
+            ),
+        )
+        with patch("litellm.completion", return_value=response):
+            provider = LiteLLMProvider()
+            with pytest.raises(ProviderTruncated) as exc_info:
+                provider.complete([{"role": "user", "content": "hi"}], "openrouter/deepseek")
+
+        assert exc_info.value.reasoning_tokens == 16200
+        assert exc_info.value.output_tokens == 16384
+
+    def test_a_route_without_reasoning_detail_carries_no_reasoning_count(self) -> None:
+        """None, not 0: "the route never said" is not "it thought nothing".
+
+        A caller reading 0 as a measurement would conclude the ceiling went
+        entirely on findings — the opposite diagnosis — from an absence of data.
+        """
+        with patch("litellm.completion", return_value=self._truncated()):
+            provider = LiteLLMProvider()
+            with pytest.raises(ProviderTruncated) as exc_info:
+                provider.complete([{"role": "user", "content": "hi"}], "openrouter/deepseek")
+
+        assert exc_info.value.reasoning_tokens is None
+        assert exc_info.value.output_tokens == 65536
+
+    def test_truncation_still_falls_back_to_the_secondary_model(self) -> None:
+        """Permanent stops the *retry*, not the fallback — a different model is a
+        genuinely different request and may well fit its answer in budget."""
+
+        def side_effect(*args: Any, **kwargs: Any) -> Any:
+            if kwargs["model"] == "openrouter/deepseek":
+                return self._truncated()
+            return _fake_response('{"findings": []}')
+
+        with patch("litellm.completion", side_effect=side_effect):
+            provider = LiteLLMProvider(fallback_model="openrouter/backup")
+            result = provider.complete([{"role": "user", "content": "hi"}], "openrouter/deepseek")
+
+        assert result.text == '{"findings": []}'
+
+    def test_stop_finish_reason_is_untouched(self) -> None:
+        response = SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content="ok"), finish_reason="stop")],
+            usage=SimpleNamespace(prompt_tokens=5, completion_tokens=10),
+        )
+        with patch("litellm.completion", return_value=response):
+            provider = LiteLLMProvider()
+            assert provider.complete([{"role": "user", "content": "hi"}], "openai/gpt-4o").text
+
+    def test_absent_finish_reason_is_untouched(self) -> None:
+        """Not every route reports one; its absence is not a truncation."""
+        with patch("litellm.completion", return_value=_fake_response("ok")):
+            provider = LiteLLMProvider()
+            assert provider.complete([{"role": "user", "content": "hi"}], "openai/gpt-4o").text
+
+
+class TestRejectedStructuredOutputParam:
+    """Bedrock's Converse endpoint rejects the structured-output field outright
+    for some models: litellm still translates ``response_format`` into
+    ``output_config.format`` and the service 400s the whole request. A 400 is
+    permanent, so without a fallback every lens of the review dies at once and
+    the run reports "every review call failed"."""
+
+    BEDROCK_400 = (
+        "litellm.BadRequestError: BedrockException - "
+        '{"message":"The model returned the following errors: '
+        'output_config.format: Extra inputs are not permitted"}'
+    )
+
+    def test_bedrock_rejection_retries_without_response_format(self) -> None:
+        seen_response_format: list[bool] = []
+
+        def side_effect(*args: Any, **kwargs: Any) -> Any:
+            has_rf = "response_format" in kwargs
+            seen_response_format.append(has_rf)
+            if has_rf:
+                raise litellm.BadRequestError(
+                    message=self.BEDROCK_400, model=kwargs["model"], llm_provider="bedrock"
+                )
+            return _fake_response('{"findings": []}')
+
+        with patch("litellm.completion", side_effect=side_effect):
+            provider = LiteLLMProvider()
+            result = provider.complete(
+                [{"role": "user", "content": "hi"}],
+                "bedrock/us.anthropic.claude-opus-4-8",
+                response_format={"type": "json_schema"},
+            )
+
+        assert result.text == '{"findings": []}'
+        assert seen_response_format == [True, False]
+
+    def test_rejection_makes_later_calls_skip_response_format_up_front(self) -> None:
+        """The drop is sticky, so the rest of the lens fan-out doesn't each pay a
+        wasted rejected round-trip first."""
+        seen_response_format: list[bool] = []
+
+        def side_effect(*args: Any, **kwargs: Any) -> Any:
+            has_rf = "response_format" in kwargs
+            seen_response_format.append(has_rf)
+            if has_rf:
+                raise litellm.BadRequestError(
+                    message=self.BEDROCK_400, model=kwargs["model"], llm_provider="bedrock"
+                )
+            return _fake_response('{"findings": []}')
+
+        with patch("litellm.completion", side_effect=side_effect):
+            provider = LiteLLMProvider()
+            model = "bedrock/us.anthropic.claude-opus-4-8"
+            provider.complete([{"role": "user", "content": "a"}], model, response_format={"x": 1})
+            provider.complete([{"role": "user", "content": "b"}], model, response_format={"x": 1})
+
+        assert seen_response_format == [True, False, False]
+
+    def test_both_rejected_params_are_dropped_across_attempts(self) -> None:
+        """A model can reject the temperature value *and* the structured-output
+        field; each rejection drops one param, so the call still lands."""
+        seen: list[tuple[bool, bool]] = []
+
+        def side_effect(*args: Any, **kwargs: Any) -> Any:
+            has_temp, has_rf = "temperature" in kwargs, "response_format" in kwargs
+            seen.append((has_temp, has_rf))
+            if has_rf:
+                raise litellm.BadRequestError(
+                    message=self.BEDROCK_400, model=kwargs["model"], llm_provider="bedrock"
+                )
+            if has_temp:
+                raise RuntimeError(
+                    "litellm.BadRequestError: 'temperature' does not support 0 with this model."
+                )
+            return _fake_response('{"findings": []}')
+
+        with patch("litellm.completion", side_effect=side_effect):
+            provider = LiteLLMProvider()
+            result = provider.complete(
+                [{"role": "user", "content": "hi"}],
+                "bedrock/us.anthropic.claude-opus-4-8",
+                temperature=0.0,
+                response_format={"type": "json_schema"},
+            )
+
+        assert result.text == '{"findings": []}'
+        assert seen == [(True, True), (True, False), (False, False)]
+
+    def test_unrelated_bad_request_still_propagates(self) -> None:
+        """An error that merely happens under response_format must not be
+        swallowed as a param rejection — it surfaces as itself."""
+        with patch("litellm.completion", side_effect=RuntimeError("invalid api key")):
+            provider = LiteLLMProvider()
+            with pytest.raises(RuntimeError, match="invalid api key"):
+                provider.complete(
+                    [{"role": "user", "content": "hi"}],
+                    "bedrock/us.anthropic.claude-opus-4-8",
+                    response_format={"type": "json_schema"},
+                )
+
+    def test_rejection_without_response_format_is_not_retried(self) -> None:
+        """Nothing to drop → the error surfaces immediately, no retry loop."""
+        calls = 0
+
+        def side_effect(*args: Any, **kwargs: Any) -> Any:
+            nonlocal calls
+            calls += 1
+            raise litellm.BadRequestError(
+                message=self.BEDROCK_400, model=kwargs["model"], llm_provider="bedrock"
+            )
+
+        with patch("litellm.completion", side_effect=side_effect):
+            provider = LiteLLMProvider()
+            with pytest.raises(litellm.BadRequestError):
+                provider.complete(
+                    [{"role": "user", "content": "hi"}],
+                    "bedrock/us.anthropic.claude-opus-4-8",
+                )
+
+        assert calls == 1
+
+
+class TestSchemaAsToolFallback:
+    """A route that refuses ``response_format`` has not necessarily refused
+    *structured output* — Bedrock's Converse endpoint implements it as a forced
+    tool call instead. Giving up on the schema at the first 400 downgrades the
+    whole review to prompt-instructed JSON when enforcement was available all
+    along, one request shape away."""
+
+    BEDROCK_400 = TestRejectedStructuredOutputParam.BEDROCK_400
+    MODEL = "bedrock/us.anthropic.claude-opus-5"
+
+    def _rejects_response_format(self, arguments: str = '{"findings": []}') -> Any:
+        def side_effect(*args: Any, **kwargs: Any) -> Any:
+            if "response_format" in kwargs:
+                raise litellm.BadRequestError(
+                    message=self.BEDROCK_400, model=kwargs["model"], llm_provider="bedrock"
+                )
+            if "tools" in kwargs:
+                return _tool_call_response(arguments)
+            return _fake_response("prose, not findings")
+
+        return side_effect
+
+    def test_rejection_re_sends_the_schema_as_a_forced_tool_call(self) -> None:
+        seen: list[dict[str, Any]] = []
+
+        def side_effect(*args: Any, **kwargs: Any) -> Any:
+            seen.append(kwargs)
+            return self._rejects_response_format()(*args, **kwargs)
+
+        with patch("litellm.completion", side_effect=side_effect):
+            provider = LiteLLMProvider()
+            result = provider.complete(
+                [{"role": "user", "content": "hi"}], self.MODEL, response_format=ReviewResult
+            )
+
+        assert result.text == '{"findings": []}'
+        assert "response_format" not in seen[1]
+        tool = seen[1]["tools"][0]["function"]
+        assert tool["parameters"]["properties"]["findings"]
+        # Forced, not offered: an optional tool lets the model answer in prose
+        # and the enforcement is worth nothing.
+        assert seen[1]["tool_choice"]["function"]["name"] == tool["name"]
+
+    def test_the_answer_comes_from_the_tool_call_arguments(self) -> None:
+        """Under a forced tool call the findings ride in the arguments, and the
+        message content is empty — reading only content reports every lens as
+        having returned nothing."""
+        payload = '{"findings": [{"path": "a.py", "line": 1, "severity": "low", "title": "t"}]}'
+        with patch("litellm.completion", side_effect=self._rejects_response_format(payload)):
+            provider = LiteLLMProvider()
+            result = provider.complete(
+                [{"role": "user", "content": "hi"}], self.MODEL, response_format=ReviewResult
+            )
+
+        assert result.text == payload
+
+    def test_later_calls_go_straight_to_tool_mode(self) -> None:
+        """Sticky like the plain drop: the lens fan-out sends the same shape N
+        times and must not each pay its own rejected round-trip."""
+        seen: list[str] = []
+
+        def side_effect(*args: Any, **kwargs: Any) -> Any:
+            if "response_format" in kwargs:
+                seen.append("rf")
+            else:
+                seen.append("tools" if "tools" in kwargs else "plain")
+            return self._rejects_response_format()(*args, **kwargs)
+
+        with patch("litellm.completion", side_effect=side_effect):
+            provider = LiteLLMProvider()
+            for _ in range(3):
+                provider.complete(
+                    [{"role": "user", "content": "a"}], self.MODEL, response_format=ReviewResult
+                )
+
+        assert seen == ["rf", "tools", "tools", "tools"]
+
+    def test_tool_mode_is_not_a_downgrade(self) -> None:
+        """The schema is still enforced, so the review must not carry a notice
+        telling the user structured output was lost."""
+        with patch("litellm.completion", side_effect=self._rejects_response_format()):
+            provider = LiteLLMProvider()
+            provider.complete(
+                [{"role": "user", "content": "hi"}], self.MODEL, response_format=ReviewResult
+            )
+
+        assert provider.schema_dropped() is False
+        assert provider.sends_response_format(self.MODEL) is True
+
+    def test_a_route_that_refuses_tools_too_falls_back_to_plain(self) -> None:
+        """Two recoveries, in order of how much they preserve: schema → tool →
+        prompt-instructed JSON. The last one is the real downgrade."""
+        seen: list[str] = []
+
+        def side_effect(*args: Any, **kwargs: Any) -> Any:
+            if "response_format" in kwargs:
+                seen.append("rf")
+                raise litellm.BadRequestError(
+                    message=self.BEDROCK_400, model=kwargs["model"], llm_provider="bedrock"
+                )
+            if "tools" in kwargs:
+                seen.append("tools")
+                raise litellm.BadRequestError(
+                    message="BedrockException - toolConfig: Extra inputs are not permitted",
+                    model=kwargs["model"],
+                    llm_provider="bedrock",
+                )
+            seen.append("plain")
+            return _fake_response('{"findings": []}')
+
+        with patch("litellm.completion", side_effect=side_effect):
+            provider = LiteLLMProvider()
+            result = provider.complete(
+                [{"role": "user", "content": "hi"}], self.MODEL, response_format=ReviewResult
+            )
+
+        assert result.text == '{"findings": []}'
+        assert seen == ["rf", "tools", "plain"]
+        assert provider.schema_dropped() is True
+
+    def test_a_tool_mode_reply_with_no_tool_call_falls_back_to_plain(self) -> None:
+        """A route can accept ``tools`` and ignore them. An empty content with no
+        tool call is the same dead end as an empty schema-mode reply."""
+        seen: list[str] = []
+
+        def side_effect(*args: Any, **kwargs: Any) -> Any:
+            if "response_format" in kwargs:
+                seen.append("rf")
+                raise litellm.BadRequestError(
+                    message=self.BEDROCK_400, model=kwargs["model"], llm_provider="bedrock"
+                )
+            if "tools" in kwargs:
+                seen.append("tools")
+                return _fake_response("")
+            seen.append("plain")
+            return _fake_response('{"findings": []}')
+
+        with patch("litellm.completion", side_effect=side_effect):
+            provider = LiteLLMProvider()
+            result = provider.complete(
+                [{"role": "user", "content": "hi"}], self.MODEL, response_format=ReviewResult
+            )
+
+        assert result.text == '{"findings": []}'
+        assert seen == ["rf", "tools", "plain"]
+
+    def test_a_schema_we_cannot_express_as_a_tool_drops_straight_to_plain(self) -> None:
+        """No schema to put in the tool's parameters means a tool call would
+        enforce nothing — skip the wasted round-trip."""
+        seen: list[str] = []
+
+        def side_effect(*args: Any, **kwargs: Any) -> Any:
+            if "response_format" in kwargs:
+                seen.append("rf")
+                raise litellm.BadRequestError(
+                    message=self.BEDROCK_400, model=kwargs["model"], llm_provider="bedrock"
+                )
+            seen.append("tools" if "tools" in kwargs else "plain")
+            return _fake_response('{"findings": []}')
+
+        with patch("litellm.completion", side_effect=side_effect):
+            provider = LiteLLMProvider()
+            provider.complete(
+                [{"role": "user", "content": "hi"}],
+                self.MODEL,
+                response_format={"type": "json_object"},
+            )
+
+        assert seen == ["rf", "plain"]
+
+    def test_a_callers_own_tools_survive_the_downgrade(self) -> None:
+        """The adapter removes only the tool IT added. A caller's tools are not
+        ours to retire, so a `response_format` this route never accepted must not
+        permanently disable unrelated tool use for the model."""
+        caller_tools = [{"type": "function", "function": {"name": "get_weather"}}]
+        seen: list[Any] = []
+
+        def side_effect(*args: Any, **kwargs: Any) -> Any:
+            seen.append(kwargs.get("tools"))
+            if "response_format" in kwargs:
+                raise litellm.BadRequestError(
+                    message=self.BEDROCK_400, model=kwargs["model"], llm_provider="bedrock"
+                )
+            return _fake_response('{"findings": []}')
+
+        with patch("litellm.completion", side_effect=side_effect):
+            provider = LiteLLMProvider()
+            # A schema we cannot express as a tool, so enforcement is given up
+            # outright and the caller's tools are the only ones in play.
+            for _ in range(2):
+                provider.complete(
+                    [{"role": "user", "content": "hi"}],
+                    self.MODEL,
+                    response_format={"type": "json_object"},
+                    tools=caller_tools,
+                )
+
+        assert seen == [caller_tools, caller_tools, caller_tools]
+
+    def test_a_callers_own_tools_are_never_overwritten(self) -> None:
+        """With tools already on the request, the schema swap would clobber them
+        — so the rejection degrades straight to prompt-instructed JSON instead."""
+        caller_tools = [{"type": "function", "function": {"name": "get_weather"}}]
+        seen: list[Any] = []
+
+        def side_effect(*args: Any, **kwargs: Any) -> Any:
+            seen.append(kwargs.get("tools"))
+            if "response_format" in kwargs:
+                raise litellm.BadRequestError(
+                    message=self.BEDROCK_400, model=kwargs["model"], llm_provider="bedrock"
+                )
+            return _fake_response('{"findings": []}')
+
+        with patch("litellm.completion", side_effect=side_effect):
+            provider = LiteLLMProvider()
+            provider.complete(
+                [{"role": "user", "content": "hi"}],
+                self.MODEL,
+                response_format=ReviewResult,
+                tools=caller_tools,
+            )
+
+        assert seen == [caller_tools, caller_tools]
+        assert provider.schema_dropped() is True
+
+    def test_a_callers_tool_call_does_not_become_the_answer(self) -> None:
+        """Reading arguments off any tool call would hijack a reply that answered
+        in `content` and called a caller's tool on the side."""
+        call = SimpleNamespace(
+            function=SimpleNamespace(name="get_weather", arguments='{"city": "London"}')
+        )
+        response = SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    message=SimpleNamespace(content="the real answer", tool_calls=[call])
+                )
+            ],
+            usage=SimpleNamespace(prompt_tokens=5, completion_tokens=10),
+        )
+
+        with patch("litellm.completion", return_value=response):
+            provider = LiteLLMProvider()
+            result = provider.complete([{"role": "user", "content": "hi"}], self.MODEL)
+
+        assert result.text == "the real answer"
+
+    def test_the_engine_can_still_turn_enforcement_off(self) -> None:
+        """``drop_response_format`` is the engine saying a reply parsed to
+        nothing useful. Tool mode is enforcement, so it has to go too — else the
+        re-run re-sends the request that just failed."""
+        with patch("litellm.completion", side_effect=self._rejects_response_format()):
+            provider = LiteLLMProvider(model=self.MODEL)
+            provider.complete(
+                [{"role": "user", "content": "hi"}], self.MODEL, response_format=ReviewResult
+            )
+            provider.drop_response_format(self.MODEL, "unparseable")
+            assert provider.sends_response_format(self.MODEL) is False
+
+        seen: list[str] = []
+
+        def side_effect(*args: Any, **kwargs: Any) -> Any:
+            seen.append("tools" if "tools" in kwargs else "plain")
+            return _fake_response('{"findings": []}')
+
+        with patch("litellm.completion", side_effect=side_effect):
+            provider.complete(
+                [{"role": "user", "content": "hi"}], self.MODEL, response_format=ReviewResult
+            )
+
+        assert seen == ["plain"]
+
+
+class TestBedrockSchemaSubset:
+    """Bedrock's structured-output validator accepts only a subset of JSON
+    Schema: the numeric-bound keywords pydantic emits for ``Field(ge=…, le=…)``
+    — ``ReviewFinding.line``'s ``minimum``, ``confidence``'s ``minimum`` and
+    ``maximum`` — are "Extra inputs" that 400 the whole request before the model
+    ever runs (issue #531). The bounds are re-checked by pydantic when the reply
+    is parsed, so on the bedrock route the schema goes out without them."""
+
+    MODEL = "bedrock/us.anthropic.claude-opus-5"
+    BOUND_KEYS = ("minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum", "multipleOf")
+
+    def test_the_bedrock_schema_carries_no_numeric_bounds(self) -> None:
+        with patch(
+            "litellm.completion", return_value=_fake_response('{"findings": []}')
+        ) as mock_completion:
+            provider = LiteLLMProvider()
+            provider.complete(
+                [{"role": "user", "content": "hi"}], self.MODEL, response_format=ReviewResult
+            )
+
+        sent = mock_completion.call_args.kwargs["response_format"]
+        # Still the same enforced shape litellm would derive itself — only the
+        # keywords Bedrock's validator refuses are gone.
+        assert sent["json_schema"]["schema"]["properties"]["findings"]
+        assert sent["json_schema"]["strict"] is True
+        schema_text = json.dumps(sent)
+        for key in self.BOUND_KEYS:
+            assert f'"{key}"' not in schema_text
+
+    def test_the_tool_mode_fallback_schema_is_clean_too(self) -> None:
+        """A model whose route refuses ``response_format`` re-sends the schema
+        as a forced tool call — the same validator reads that schema, so the
+        bounds must not ride back in through it."""
+
+        def side_effect(*args: Any, **kwargs: Any) -> Any:
+            if "response_format" in kwargs:
+                raise litellm.BadRequestError(
+                    message=TestRejectedStructuredOutputParam.BEDROCK_400,
+                    model=kwargs["model"],
+                    llm_provider="bedrock",
+                )
+            return _tool_call_response('{"findings": []}')
+
+        with patch("litellm.completion", side_effect=side_effect) as mock_completion:
+            provider = LiteLLMProvider()
+            provider.complete(
+                [{"role": "user", "content": "hi"}], self.MODEL, response_format=ReviewResult
+            )
+
+        parameters = mock_completion.call_args.kwargs["tools"][0]["function"]["parameters"]
+        schema_text = json.dumps(parameters)
+        for key in self.BOUND_KEYS:
+            assert f'"{key}"' not in schema_text
+
+    def test_other_routes_send_the_pydantic_class_unchanged(self) -> None:
+        """Each route's litellm transformation knows its own schema dialect —
+        vertex deliberately derives a compact ``$ref`` schema from the class,
+        which a pre-converted dict would deny it. Only bedrock needs the strip."""
+        with patch(
+            "litellm.completion", return_value=_fake_response('{"findings": []}')
+        ) as mock_completion:
+            provider = LiteLLMProvider()
+            provider.complete(
+                [{"role": "user", "content": "hi"}],
+                "vertex_ai/gemini-2.5-pro",
+                response_format=ReviewResult,
+            )
+
+        assert mock_completion.call_args.kwargs["response_format"] is ReviewResult
+
+    def test_a_property_named_like_a_bound_keyword_survives(self) -> None:
+        """The strip removes schema keywords, not fields: a caller's schema with
+        a property literally named ``minimum`` keeps it."""
+        response_format = {
+            "type": "json_schema",
+            "json_schema": {
+                "name": "Range",
+                "schema": {
+                    "type": "object",
+                    "properties": {"minimum": {"type": "integer", "minimum": 0}},
+                },
+                "strict": True,
+            },
+        }
+        with patch("litellm.completion", return_value=_fake_response("{}")) as mock_completion:
+            provider = LiteLLMProvider()
+            provider.complete(
+                [{"role": "user", "content": "hi"}], self.MODEL, response_format=response_format
+            )
+
+        sent = mock_completion.call_args.kwargs["response_format"]
+        prop = sent["json_schema"]["schema"]["properties"]["minimum"]
+        assert prop == {"type": "integer"}
+        # The caller's dict was not mutated in place.
+        assert response_format["json_schema"]["schema"]["properties"]["minimum"] == {
+            "type": "integer",
+            "minimum": 0,
+        }
+
+
+class TestEmptyStructuredOutputFallback:
+    """Some grammar-constrained backends (LM Studio fronting a thinking qwen
+    model) return empty content under a response_format JSON schema. The provider
+    drops the schema and retries once so the model can emit parseable text."""
+
+    def test_empty_content_under_response_format_retries_without_it(self) -> None:
+        seen_response_format: list[Any] = []
+
+        def side_effect(*args: Any, **kwargs: Any) -> Any:
+            seen_response_format.append("response_format" in kwargs)
+            if "response_format" in kwargs:
+                return _fake_response("")  # schema mode yields nothing
+            return _fake_response('{"findings": []}')
+
+        with patch("litellm.completion", side_effect=side_effect):
+            provider = LiteLLMProvider()
+            result = provider.complete(
+                [{"role": "user", "content": "hi"}],
+                "openai/qwen",
+                response_format={"type": "json_schema"},
+            )
+
+        assert result.text == '{"findings": []}'
+        assert seen_response_format == [True, False]
+
+    def test_non_empty_content_keeps_response_format(self) -> None:
+        calls = 0
+
+        def side_effect(*args: Any, **kwargs: Any) -> Any:
+            nonlocal calls
+            calls += 1
+            return _fake_response('{"findings": []}')
+
+        with patch("litellm.completion", side_effect=side_effect):
+            provider = LiteLLMProvider()
+            result = provider.complete(
+                [{"role": "user", "content": "hi"}],
+                "openai/gpt-4o",
+                response_format={"type": "json_schema"},
+            )
+
+        assert result.text == '{"findings": []}'
+        assert calls == 1  # good content first time → no retry
+
+    def test_empty_once_makes_later_calls_skip_response_format_up_front(self) -> None:
+        """After one empty structured response, the provider remembers the model's
+        schema mode is broken and drops response_format up front on later calls —
+        so a slow local model isn't billed a wasted empty round-trip every time."""
+        seen_response_format: list[bool] = []
+
+        def side_effect(*args: Any, **kwargs: Any) -> Any:
+            has_rf = "response_format" in kwargs
+            seen_response_format.append(has_rf)
+            if has_rf:
+                return _fake_response("")  # schema mode yields nothing
+            return _fake_response('{"findings": []}')
+
+        with patch("litellm.completion", side_effect=side_effect):
+            provider = LiteLLMProvider()
+            provider.complete(
+                [{"role": "user", "content": "a"}], "openai/qwen", response_format={"x": 1}
+            )
+            provider.complete(
+                [{"role": "user", "content": "b"}], "openai/qwen", response_format={"x": 1}
+            )
+
+        # First call: with-rf (empty) then without (good). Second call: straight
+        # to without-rf — no wasted empty round-trip.
+        assert seen_response_format == [True, False, False]
+
+    def test_empty_content_without_response_format_is_retried_once(self) -> None:
+        """An empty completion is a provider fault rather than an answer, so it
+        is retried even with no schema to drop.
+
+        This case used to be returned as-is, which left it with no recovery
+        anywhere: the engine cannot reformat an empty body and has no schema
+        left to drop, so the lens failed outright. Seen in the field as
+        "1 of 5 review calls failed (security - unparseable model output
+        (empty))" on a run where an earlier call had already disabled structured
+        output for the model.
+        """
+        seen: list[bool] = []
+        replies = iter(["", '{"findings": []}'])
+
+        def side_effect(*args: Any, **kwargs: Any) -> Any:
+            seen.append("response_format" in kwargs)
+            return _fake_response(next(replies))
+
+        with patch("litellm.completion", side_effect=side_effect):
+            provider = LiteLLMProvider()
+            result = provider.complete([{"role": "user", "content": "hi"}], "openai/gpt-4o")
+
+        assert seen == [False, False], "no schema was in play on either attempt"
+        assert result.text == '{"findings": []}'
+
+    def test_a_second_empty_reply_ends_it(self) -> None:
+        """One retry, never a loop — the bound the previous behaviour existed to
+        guarantee. A model answering empty twice will not answer on a third
+        identical request."""
+        calls = 0
+
+        def side_effect(*args: Any, **kwargs: Any) -> Any:
+            nonlocal calls
+            calls += 1
+            return _fake_response("")
+
+        with patch("litellm.completion", side_effect=side_effect):
+            provider = LiteLLMProvider()
+            result = provider.complete([{"role": "user", "content": "hi"}], "openai/gpt-4o")
+
+        assert result.text == ""
+        assert calls == 2, "the original call and exactly one retry"
+
+
+class TestFailFastOnPermanentErrors:
+    """Retrying a permanent error can't fix it — and stacked backoff over every
+    lens turns an instant "out of credit" into many minutes of burned runner
+    time (the gpt-5.5 quota failure that took ~13 min). Permanent errors must
+    fail fast; only genuinely transient ones get the exponential backoff."""
+
+    def test_quota_rate_limit_is_not_retried(self) -> None:
+        """OpenAI's insufficient_quota 429 ("exceeded your current quota") is a
+        billing dead-end — one attempt, then raise."""
+        calls = 0
+
+        def quota(*args: Any, **kwargs: Any) -> Any:
+            nonlocal calls
+            calls += 1
+            raise litellm.RateLimitError(
+                message=(
+                    "litellm.RateLimitError: OpenAIException - You exceeded your "
+                    "current quota, please check your plan and billing details."
+                ),
+                model="gpt-5.5",
+                llm_provider="openai",
+            )
+
+        with patch("litellm.completion", side_effect=quota):
+            provider = LiteLLMProvider()
+            with pytest.raises(litellm.RateLimitError):
+                provider.complete([{"role": "user", "content": "hi"}], "openai/gpt-5.5")
+
+        assert calls == 1
+
+    def test_transient_rate_limit_is_still_retried(self) -> None:
+        """A plain capacity rate-limit (not quota) is transient — keep the
+        exponential backoff and retry it."""
+        good = _fake_response("ok after backoff")
+        calls = 0
+
+        def flaky(*args: Any, **kwargs: Any) -> Any:
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                raise litellm.RateLimitError(
+                    message="RateLimitError: OpenAIException - Rate limit reached for gpt-4o",
+                    model="gpt-4o",
+                    llm_provider="openai",
+                )
+            return good
+
+        # The rate-limit ladder starts at five seconds on purpose (see
+        # _RATE_LIMIT_BACKOFF_INITIAL); this test is about the retry happening at
+        # all, so it is not made to sit through one.
+        with (
+            patch("litellm.completion", side_effect=flaky),
+            patch.object(provider_module, "_rate_limit_wait", lambda _: 0.0),
+        ):
+            provider = LiteLLMProvider()
+            result = provider.complete([{"role": "user", "content": "hi"}], "openai/gpt-4o")
+
+        assert result.text == "ok after backoff"
+        assert calls == 2
+
+    def test_expired_cloud_credentials_is_not_retried(self) -> None:
+        """An expired AWS security token (Bedrock 403) reaches litellm as an
+        APIConnectionError, not an AuthenticationError — but retrying can't
+        refresh it, so it's a permanent failure: one attempt, then raise. The
+        message is what distinguishes it from a genuinely transient connection
+        error (ollama warming up), which must still be retried."""
+        calls = 0
+
+        def expired(*args: Any, **kwargs: Any) -> Any:
+            nonlocal calls
+            calls += 1
+            raise litellm.APIConnectionError(
+                message=(
+                    "litellm.APIConnectionError: BedrockException - "
+                    '{"message":"The security token included in the request is expired"}'
+                ),
+                model="us.anthropic.claude-sonnet-4-6",
+                llm_provider="bedrock",
+            )
+
+        with patch("litellm.completion", side_effect=expired):
+            provider = LiteLLMProvider()
+            with pytest.raises(litellm.APIConnectionError):
+                provider.complete(
+                    [{"role": "user", "content": "hi"}],
+                    "bedrock/us.anthropic.claude-sonnet-4-6",
+                )
+
+        assert calls == 1
+
+    def test_openrouter_insufficient_credits_is_not_retried(self) -> None:
+        """OpenRouter reserves prompt + max_tokens against the balance BEFORE
+        generating, and refuses the request when the balance can't cover it. That
+        is a billing dead-end exactly like OpenAI's insufficient_quota — but it
+        arrives as a generic APIError, not a RateLimitError, so the type check
+        alone misses it and every lens retried it three times."""
+        calls = 0
+
+        def no_credit(*args: Any, **kwargs: Any) -> Any:
+            nonlocal calls
+            calls += 1
+            raise litellm.APIError(
+                status_code=402,
+                message=(
+                    "litellm.APIError: APIError: OpenrouterException - "
+                    '{"error":{"message":"This request requires more credits, or fewer '
+                    "max_tokens. You requested up to 65536 tokens, but can only afford "
+                    '25905."}}'
+                ),
+                model="vendor/m",
+                llm_provider="openrouter",
+            )
+
+        with patch("litellm.completion", side_effect=no_credit):
+            provider = LiteLLMProvider()
+            with pytest.raises(litellm.APIError):
+                provider.complete([{"role": "user", "content": "hi"}], "openrouter/vendor/m")
+
+        assert calls == 1
+
+    def test_transient_api_error_is_still_retried(self) -> None:
+        """A plain APIError (an upstream blip) stays transient — only the
+        credit-exhaustion message makes one permanent."""
+        good = _fake_response("ok after backoff")
+        calls = 0
+
+        def flaky(*args: Any, **kwargs: Any) -> Any:
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                raise litellm.APIError(
+                    status_code=500,
+                    message="litellm.APIError: APIError: OpenrouterException - upstream error",
+                    model="vendor/m",
+                    llm_provider="openrouter",
+                )
+            return good
+
+        with patch("litellm.completion", side_effect=flaky):
+            provider = LiteLLMProvider()
+            result = provider.complete([{"role": "user", "content": "hi"}], "openrouter/vendor/m")
+
+        assert result.text == "ok after backoff"
+        assert calls == 2
+
+    def test_authentication_error_is_not_retried(self) -> None:
+        """A bad key won't become good on a retry — fail fast."""
+        calls = 0
+
+        def bad_auth(*args: Any, **kwargs: Any) -> Any:
+            nonlocal calls
+            calls += 1
+            raise litellm.AuthenticationError(
+                message="AuthenticationError: invalid api key",
+                model="gpt-4o",
+                llm_provider="openai",
+            )
+
+        with patch("litellm.completion", side_effect=bad_auth):
+            provider = LiteLLMProvider()
+            with pytest.raises(litellm.AuthenticationError):
+                provider.complete([{"role": "user", "content": "hi"}], "openai/gpt-4o")
+
+        assert calls == 1
+
+    def test_not_found_error_is_not_retried(self) -> None:
+        """An unknown model won't be found on a retry — fail fast, one attempt."""
+        calls = 0
+
+        def not_found(*args: Any, **kwargs: Any) -> Any:
+            nonlocal calls
+            calls += 1
+            raise litellm.NotFoundError(
+                message="NotFoundError: model does not exist",
+                model="gpt-9000",
+                llm_provider="openai",
+            )
+
+        with patch("litellm.completion", side_effect=not_found):
+            provider = LiteLLMProvider()
+            with pytest.raises(litellm.NotFoundError):
+                provider.complete([{"role": "user", "content": "hi"}], "openai/gpt-9000")
+
+        assert calls == 1
+
+    def test_permission_denied_error_is_not_retried(self) -> None:
+        """A denied permission won't be granted on a retry — fail fast."""
+        calls = 0
+
+        def denied(*args: Any, **kwargs: Any) -> Any:
+            nonlocal calls
+            calls += 1
+            raise litellm.exceptions.PermissionDeniedError(
+                message="PermissionDeniedError: access denied",
+                model="gpt-4o",
+                llm_provider="openai",
+                response=httpx.Response(403, request=httpx.Request("POST", "https://api")),
+            )
+
+        with patch("litellm.completion", side_effect=denied):
+            provider = LiteLLMProvider()
+            with pytest.raises(litellm.exceptions.PermissionDeniedError):
+                provider.complete([{"role": "user", "content": "hi"}], "openai/gpt-4o")
+
+        assert calls == 1
+
+    def test_transient_error_retries_up_to_max_attempts(self) -> None:
+        """A transient error is retried, but no more than _MAX_ATTEMPTS times."""
+        calls = 0
+
+        def always_transient(*args: Any, **kwargs: Any) -> Any:
+            nonlocal calls
+            calls += 1
+            raise RuntimeError("transient")
+
+        with patch("litellm.completion", side_effect=always_transient):
+            provider = LiteLLMProvider()
+            with pytest.raises(RuntimeError):
+                provider.complete([{"role": "user", "content": "hi"}], "openai/gpt-4o")
+
+        assert calls == _MAX_ATTEMPTS
+
+    def test_attempts_share_a_wall_clock_budget_derived_from_the_timeout(self) -> None:
+        """Retries stop once 2.5× the per-request timeout is spent, even before
+        the attempt cap — a flaky model must not burn attempts × timeout +
+        backoff per call. With a 0.05s timeout the budget is 0.125s, which one
+        slow failing attempt plus the first backoff already exceeds."""
+        import time
+
+        calls = 0
+
+        def slow_transient(*args: Any, **kwargs: Any) -> Any:
+            nonlocal calls
+            calls += 1
+            # Must outlast the 0.05s wall bound by more than the platform's timer
+            # granularity, or `future.result(timeout=...)` can over-wait, see the
+            # call already finished, and surface this RuntimeError instead of the
+            # TimeoutError under test — 0.06s lost that race on Windows (~15.6ms
+            # granularity). The wall timeout abandons the worker thread rather
+            # than joining it, so a long sleep costs no test time.
+            time.sleep(1.0)
+            raise RuntimeError("transient")
+
+        with patch("litellm.completion", side_effect=slow_transient):
+            provider = LiteLLMProvider(timeout=0.05)
+            with pytest.raises(TimeoutError, match="exceeded 0.05"):
+                provider.complete([{"role": "user", "content": "hi"}], "openai/gpt-4o")
+
+        assert calls < _MAX_ATTEMPTS
+
+    def test_quota_error_does_not_storm_the_fallback_either(self) -> None:
+        """Fail-fast applies to the fallback leg too: each model is tried once,
+        no per-model retry storm."""
+        calls = 0
+
+        def quota(*args: Any, **kwargs: Any) -> Any:
+            nonlocal calls
+            calls += 1
+            raise litellm.RateLimitError(
+                message="OpenAIException - You exceeded your current quota",
+                model="m",
+                llm_provider="openai",
+            )
+
+        with patch("litellm.completion", side_effect=quota):
+            provider = LiteLLMProvider(fallback_model="openai/gpt-4o-mini")
+            with pytest.raises(litellm.RateLimitError):
+                provider.complete([{"role": "user", "content": "hi"}], "openai/gpt-5.5")
+
+        assert calls == 2  # primary once + fallback once
+
+    def test_ollama_connection_error_is_retried(self) -> None:
+        """ollama gets the same treatment: a transient connection error (the
+        local server still warming up) is retried, not failed fast."""
+        good = _fake_response("ok")
+        calls = 0
+
+        def flaky(*args: Any, **kwargs: Any) -> Any:
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                raise litellm.APIConnectionError(
+                    message="Connection refused",
+                    model="ollama/qwen3",
+                    llm_provider="ollama",
+                )
+            return good
+
+        with patch("litellm.completion", side_effect=flaky):
+            provider = LiteLLMProvider()
+            result = provider.complete([{"role": "user", "content": "hi"}], "ollama/qwen3")
+
+        assert result.text == "ok"
+        assert calls == 2
+
+    def test_litellm_internal_retries_are_disabled(self) -> None:
+        """We own retries via tenacity; litellm's own retry loop is switched off
+        so a failure isn't ground through two stacked backoff layers."""
+        response = _fake_response()
+        with patch("litellm.completion", return_value=response) as mock_completion:
+            provider = LiteLLMProvider()
+            provider.complete([{"role": "user", "content": "hi"}], "openai/gpt-4o")
+
+        assert mock_completion.call_args.kwargs.get("num_retries") == 0
 
 
 class TestFallback:
@@ -76,3 +1520,1244 @@ class TestFallback:
             provider = LiteLLMProvider()
             with pytest.raises(RuntimeError):
                 provider.complete([{"role": "user", "content": "hi"}], "openai/gpt-4o")
+
+
+class TestRateLimitBackoff:
+    """A capacity 429 is a rate *window*, not a blip.
+
+    The generic ladder (`initial=0.1, max=5`, tenacity's default `jitter=1`) puts
+    all four attempts inside about four seconds, which is nothing against a
+    per-minute limit — every attempt lands in the same window and fails
+    identically. So a rate limit waits on its own, much longer, ladder, and
+    prefers the server's own `Retry-After` when it sends one.
+    """
+
+    @staticmethod
+    def _state(exc: BaseException, attempt: int = 1) -> Any:
+        """A minimal tenacity RetryCallState stand-in.
+
+        `wait_exponential_jitter` reads only `attempt_number`, and `_retry_wait`
+        only that plus the outcome's exception — so the real class, which wants a
+        retry object and the called function, buys the test nothing.
+        """
+        return SimpleNamespace(
+            attempt_number=attempt,
+            outcome=SimpleNamespace(exception=lambda: exc),
+        )
+
+    @staticmethod
+    def _rate_limited(**kwargs: Any) -> litellm.RateLimitError:
+        return litellm.RateLimitError(
+            message="RateLimitError: OpenrouterException - rate limit exceeded",
+            model="deepseek/deepseek-v4-flash",
+            llm_provider="openrouter",
+            **kwargs,
+        )
+
+    def _429(self, headers: dict[str, str]) -> httpx.Response:
+        return httpx.Response(
+            429, headers=headers, request=httpx.Request("POST", "https://openrouter.ai")
+        )
+
+    def test_retry_after_header_is_honoured(self) -> None:
+        """The server said when to come back; that beats any ladder we invent."""
+        exc = self._rate_limited(response=self._429({"retry-after": "30"}))
+        assert provider_module._retry_wait(self._state(exc)) == 30.0
+
+    def test_retry_after_is_read_from_the_headers_attribute(self) -> None:
+        """litellm carries headers in three different places depending on the
+        route (its own `_get_response_headers` looks in all three) — the direct
+        `headers` attribute is one of them, and it is set independently of
+        `response`."""
+        exc = self._rate_limited(headers={"retry-after": "45"})
+        assert provider_module._retry_wait(self._state(exc)) == 45.0
+
+    def test_retry_after_is_read_from_litellm_response_headers(self) -> None:
+        """The third place: litellm stamps the mapped exception with
+        `litellm_response_headers` on its way out of the exception mapper."""
+        exc = self._rate_limited()
+        exc.litellm_response_headers = {"Retry-After": "12"}
+        assert provider_module._retry_wait(self._state(exc)) == 12.0
+
+    def test_an_upper_case_header_in_a_plain_dict_is_honoured(self) -> None:
+        """Casing is the route's choice, not ours.
+
+        `httpx.Headers` is case-insensitive, so reading `response.headers` with
+        two fixed spellings looks fine. But litellm's `headers=` kwarg is typed
+        `Dict[str, str]` and a plain dict lookup is exact, so a route spelling it
+        `RETRY-AFTER` was silently ignored and we fell back to the ladder — in
+        the one case the header exists to prevent.
+        """
+        exc = self._rate_limited(headers={"RETRY-AFTER": "30"})
+        assert provider_module._retry_wait(self._state(exc)) == 30.0
+
+    def test_a_source_without_the_header_does_not_hide_one_that_has_it(self) -> None:
+        """Search for the header, not for a non-empty mapping.
+
+        Returning the first *truthy* source mirrors litellm's own helper, but its
+        job is "give me the headers" and ours is "find Retry-After" — so an
+        exception carrying unrelated headers alongside a response that holds the
+        real hint lost the hint entirely.
+        """
+        exc = self._rate_limited(
+            response=self._429({"retry-after": "45"}),
+        )
+        exc.headers = {"x-request-id": "abc123"}  # truthy, but not what we want
+        assert provider_module._retry_wait(self._state(exc)) == 45.0
+
+    def test_retry_after_accepts_an_http_date(self) -> None:
+        """RFC 9110 allows either delta-seconds or an HTTP-date, and the
+        Cloudflare edge these gateways sit behind sends both forms.
+
+        The clock is frozen rather than read twice. Building the header from
+        `now` and then asserting on what the code computes from its own `now`
+        makes the answer depend on how long the test took: a worker stalled past
+        the header's date drives the wait to zero — correct behaviour, failing
+        test. Pinning both reads to one instant is what lets this assert the
+        exact number the header asked for.
+        """
+        frozen = datetime(2026, 8, 13, 12, 0, 0, tzinfo=UTC)
+
+        class _FrozenDatetime(datetime):
+            @classmethod
+            def now(cls, tz: Any = None) -> datetime:  # type: ignore[override]
+                return frozen
+
+        header = format_datetime(frozen + timedelta(seconds=40))
+        exc = self._rate_limited(response=self._429({"retry-after": header}))
+        with patch.object(provider_module, "datetime", _FrozenDatetime):
+            assert provider_module._retry_wait(self._state(exc)) == 40.0
+
+    def test_a_retry_after_in_the_past_waits_no_time(self) -> None:
+        """A stale HTTP-date must not produce a negative wait."""
+        when = datetime.now(UTC) - timedelta(seconds=120)
+        exc = self._rate_limited(response=self._429({"retry-after": format_datetime(when)}))
+        assert provider_module._retry_wait(self._state(exc)) == 0.0
+
+    def test_an_absurd_retry_after_is_clamped(self) -> None:
+        """A day-long hint is a limit we will never outwait inside one review —
+        clamp it, let the attempt fail, and let the engine's rescue wave or the
+        incomplete notice take it from there."""
+        exc = self._rate_limited(response=self._429({"retry-after": "86400"}))
+        wait = provider_module._retry_wait(self._state(exc))
+        assert wait == provider_module._RETRY_AFTER_CEILING
+
+    def test_a_garbage_retry_after_falls_through_to_the_ladder(self) -> None:
+        """An unparseable header is no header — never a crash inside the wait."""
+        exc = self._rate_limited(response=self._429({"retry-after": "soon"}))
+        wait = provider_module._retry_wait(self._state(exc))
+        assert wait >= provider_module._RATE_LIMIT_BACKOFF_INITIAL
+
+    def test_a_headerless_rate_limit_uses_the_long_ladder(self) -> None:
+        """No hint from the server: back off on the rate-limit ladder, not the
+        generic one — the whole point is to outlast a per-minute window."""
+        exc = self._rate_limited()
+        first = provider_module._retry_wait(self._state(exc, attempt=1))
+        later = provider_module._retry_wait(self._state(exc, attempt=4))
+        assert first >= provider_module._RATE_LIMIT_BACKOFF_INITIAL
+        assert later > first
+        assert later <= provider_module._RATE_LIMIT_BACKOFF_MAX
+
+    def test_the_ladder_outlasts_a_per_minute_metering_window(self) -> None:
+        """The point of the slow ladder, asserted the only way that catches it.
+
+        A gateway that meters per minute refuses everything in the window it just
+        refused in, so what matters is not how long any single wait is but where
+        the LAST attempt lands. The first version of this ladder waited 5s, 10s
+        and 20s — every wait comfortably "long", and all four attempts inside 36
+        seconds, i.e. inside the very window that had already said no. Asserting
+        per-wait passes happily on that; only the cumulative figure catches it.
+        """
+        exc = self._rate_limited()
+        waits = [
+            provider_module._retry_wait(self._state(exc, attempt=n))
+            for n in range(1, provider_module._MAX_ATTEMPTS)
+        ]
+        assert sum(waits) > 60, (
+            f"attempts all land within {sum(waits):.1f}s — inside one minute-long "
+            f"window (waits: {[round(w, 1) for w in waits]})"
+        )
+
+    def test_other_transient_errors_keep_the_fast_ladder(self) -> None:
+        """The slow ladder is for rate limits only. A connection blip (an ollama
+        server warming up) must still retry in fractions of a second."""
+        wait = provider_module._retry_wait(self._state(RuntimeError("connection reset")))
+        assert wait < provider_module._RATE_LIMIT_BACKOFF_INITIAL
+
+    def test_a_wait_with_no_outcome_does_not_crash(self) -> None:
+        """tenacity computes a wait before the first outcome exists."""
+        state = SimpleNamespace(attempt_number=1, outcome=None)
+        assert provider_module._retry_wait(state) >= 0
+
+
+class TestPermanenceIsVisibleToTheEngine:
+    """The adapter knows which failures no later attempt can fix; the engine
+    needs that to decide whether its rescue wave is worth a billed call.
+
+    Stamped onto the exception, in the same place and for the same reason as the
+    attempt count: a failure has no result object to carry anything home on.
+    """
+
+    def test_a_quota_rate_limit_is_stamped_unrecoverable(self) -> None:
+        def quota(*args: Any, **kwargs: Any) -> Any:
+            raise litellm.RateLimitError(
+                message="OpenAIException - You exceeded your current quota",
+                model="m",
+                llm_provider="openai",
+            )
+
+        with patch("litellm.completion", side_effect=quota):
+            with pytest.raises(litellm.RateLimitError) as caught:
+                LiteLLMProvider().complete([{"role": "user", "content": "hi"}], "openai/m")
+
+        assert is_unrecoverable(caught.value)
+
+    def test_a_bad_key_is_stamped_unrecoverable(self) -> None:
+        def bad_key(*args: Any, **kwargs: Any) -> Any:
+            raise litellm.AuthenticationError(
+                message="invalid api key", model="m", llm_provider="openai"
+            )
+
+        with patch("litellm.completion", side_effect=bad_key):
+            with pytest.raises(litellm.AuthenticationError) as caught:
+                LiteLLMProvider().complete([{"role": "user", "content": "hi"}], "openai/m")
+
+        assert is_unrecoverable(caught.value)
+
+    def test_a_capacity_rate_limit_is_not_stamped(self) -> None:
+        """Transient: the engine's rescue wave should still get its go."""
+
+        def busy(*args: Any, **kwargs: Any) -> Any:
+            raise litellm.RateLimitError(
+                message="RateLimitError: OpenrouterException - rate limit exceeded",
+                model="m",
+                llm_provider="openrouter",
+            )
+
+        with (
+            patch("litellm.completion", side_effect=busy),
+            patch.object(provider_module, "_rate_limit_wait", lambda _: 0.0),
+        ):
+            with pytest.raises(litellm.RateLimitError) as caught:
+                LiteLLMProvider().complete([{"role": "user", "content": "hi"}], "openrouter/m")
+
+        assert not is_unrecoverable(caught.value)
+
+    def test_a_wall_timeout_is_not_stamped(self) -> None:
+        """Not retried *here* — an identical request against an identical budget
+        can only fail the same way — but a stalled upstream is not a dead end
+        forever, so the engine's later rescue is still allowed to try."""
+        release = threading.Event()
+
+        def hangs(*args: Any, **kwargs: Any) -> Any:
+            release.wait(timeout=5)
+            return _fake_response()
+
+        try:
+            with patch("litellm.completion", side_effect=hangs):
+                with pytest.raises(TimeoutError) as caught:
+                    LiteLLMProvider(timeout=0.05).complete(
+                        [{"role": "user", "content": "hi"}], "openrouter/m"
+                    )
+        finally:
+            release.set()
+
+        assert not is_unrecoverable(caught.value)
+
+
+class TestRetryBudgetIsNotOvershot:
+    def test_a_long_retry_after_is_not_slept_past_the_call_budget(self) -> None:
+        """`stop_after_delay` checks the clock only AFTER a wait, so a 120s
+        `Retry-After` on a short-timeout call could sleep two minutes past a
+        budget that had all but run out. The stop is evaluated against the
+        UPCOMING sleep instead, so a wait that would blow the budget ends the
+        call rather than being taken.
+
+        Asserted on the attempt count rather than elapsed time: with a 0.05s
+        timeout every candidate wait exceeds the budget, so a working
+        `stop_before_delay` ends the call after exactly one attempt. That is the
+        same fact as "it did not sleep", observed deterministically instead of by
+        racing a loaded runner.
+
+        The elapsed bound is kept alongside it, but generously. On its own at 5s
+        it was flaky under load; at 60s it cannot be, since the call really takes
+        well under a second — and it makes a regression fail in seconds rather
+        than sitting through the 120s sleep before the attempt count disagrees.
+        """
+        started = time.perf_counter()
+
+        def rate_limited(*args: Any, **kwargs: Any) -> Any:
+            raise litellm.RateLimitError(
+                message="rate limited",
+                model="m",
+                llm_provider="openrouter",
+                response=httpx.Response(
+                    429,
+                    headers={"retry-after": "120"},
+                    request=httpx.Request("POST", "https://openrouter.ai"),
+                ),
+            )
+
+        with (
+            patch("litellm.completion", side_effect=rate_limited),
+            patch("tenacity.nap.time.sleep") as sleep,
+        ):
+            # Budget is 2.5 × 0.05s; the 120s hint cannot fit inside it.
+            with pytest.raises(litellm.RateLimitError) as caught:
+                LiteLLMProvider(timeout=0.05).complete(
+                    [{"role": "user", "content": "hi"}], "openrouter/m"
+                )
+
+        sleep.assert_not_called()
+        assert attempts_of(caught.value) == 1
+        assert time.perf_counter() - started < 60
+
+
+class TestMalformedRetryAfter:
+    def test_a_non_finite_retry_after_falls_through_to_the_ladder(self) -> None:
+        """`float()` happily parses "nan" and "inf". Either would reach the
+        sleep and raise from inside the retry loop — the one place left that can
+        still rescue the call — so both are treated as no header at all."""
+        for raw in ("nan", "inf", "-inf"):
+            exc = litellm.RateLimitError(
+                message="rate limited",
+                model="m",
+                llm_provider="openrouter",
+                headers={"retry-after": raw},
+            )
+            state = SimpleNamespace(
+                attempt_number=1, outcome=SimpleNamespace(exception=lambda exc=exc: exc)
+            )
+            wait = provider_module._retry_wait(state)
+            assert wait == wait  # not NaN
+            assert wait <= provider_module._RATE_LIMIT_BACKOFF_MAX
+
+
+class TestCeilingHitWithoutAFinishReason:
+    """A response that spent the whole configured ceiling IS a ceiling hit, even
+    when the route never says so.
+
+    litellm normalises `finish_reason` through a fixed map and rewrites anything
+    it doesn't recognise to `stop`, and ollama's route reports nothing useful at
+    all — so a call cut off at the cap arrives looking like a clean finish. In a
+    20-repository local benchmark two lens calls reported exactly the configured
+    512 output tokens with an empty error column, and the tooling downstream
+    counted zero truncations.
+
+    Spending the ceiling to the token is not something a model does by choosing
+    to stop there; it is what being cut off looks like. So it is treated as one.
+    """
+
+    @staticmethod
+    def _at_ceiling(completion_tokens: int, reason: str | None = "stop") -> Any:
+        return SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    message=SimpleNamespace(content='{"findings": [{"path": "a.py"'),
+                    finish_reason=reason,
+                )
+            ],
+            usage=SimpleNamespace(prompt_tokens=900, completion_tokens=completion_tokens),
+        )
+
+    def test_output_at_the_configured_ceiling_is_truncated(self) -> None:
+        with patch("litellm.completion", return_value=self._at_ceiling(512)):
+            provider = LiteLLMProvider(max_tokens=512)
+            with pytest.raises(ProviderTruncated) as exc_info:
+                provider.complete([{"role": "user", "content": "hi"}], "ollama/qwen2.5-coder:3b")
+
+        assert "512" in str(exc_info.value)
+        assert exc_info.value.output_tokens == 512
+
+    def test_a_per_call_ceiling_is_honoured_over_the_default(self) -> None:
+        """The engine may pass its own `max_tokens`; the check has to judge the
+        ceiling this call actually ran under, not the one it was built with."""
+        with patch("litellm.completion", return_value=self._at_ceiling(256)):
+            provider = LiteLLMProvider(max_tokens=4096)
+            with pytest.raises(ProviderTruncated):
+                provider.complete(
+                    [{"role": "user", "content": "hi"}],
+                    "ollama/qwen2.5-coder:3b",
+                    max_tokens=256,
+                )
+
+    def test_output_over_the_ceiling_is_truncated(self) -> None:
+        """Some routes count a token or two past the cap. Still a ceiling hit."""
+        with patch("litellm.completion", return_value=self._at_ceiling(513)):
+            provider = LiteLLMProvider(max_tokens=512)
+            with pytest.raises(ProviderTruncated):
+                provider.complete([{"role": "user", "content": "hi"}], "ollama/qwen2.5-coder:3b")
+
+    def test_output_below_the_ceiling_is_a_normal_answer(self) -> None:
+        """The guard must not fire on a model that simply finished. This is the
+        common case, and a false truncation would post an incomplete notice on a
+        review that was complete."""
+        with patch("litellm.completion", return_value=self._at_ceiling(511)):
+            provider = LiteLLMProvider(max_tokens=512)
+            result = provider.complete(
+                [{"role": "user", "content": "hi"}], "ollama/qwen2.5-coder:3b"
+            )
+
+        assert result.output_tokens == 511
+
+    def test_an_uncapped_call_is_never_judged_against_a_ceiling(self) -> None:
+        """With no configured ceiling there is nothing to compare against, and a
+        long answer is just a long answer."""
+        with patch("litellm.completion", return_value=self._at_ceiling(65536)):
+            provider = LiteLLMProvider()
+            result = provider.complete([{"role": "user", "content": "hi"}], "openrouter/deepseek")
+
+        assert result.output_tokens == 65536
+
+    def test_the_newer_openai_spelling_is_the_same_ceiling(self) -> None:
+        """litellm accepts `max_completion_tokens` for the same cap, so a caller
+        that uses it must get the same detection."""
+        with patch("litellm.completion", return_value=self._at_ceiling(512)):
+            provider = LiteLLMProvider()
+            with pytest.raises(ProviderTruncated):
+                provider.complete(
+                    [{"role": "user", "content": "hi"}],
+                    "ollama/qwen2.5-coder:3b",
+                    max_completion_tokens=512,
+                )
+
+    def test_an_explicit_zero_wins_over_the_other_spelling(self) -> None:
+        """`max_tokens=0` is the uncapped escape hatch, and it is chosen by being
+        PRESENT, not by being truthy. Falling through to a second spelling would
+        re-impose a ceiling the caller explicitly turned off — and then report a
+        truncation against it."""
+        with patch("litellm.completion", return_value=self._at_ceiling(512)):
+            provider = LiteLLMProvider()
+            result = provider.complete(
+                [{"role": "user", "content": "hi"}],
+                "ollama/qwen2.5-coder:3b",
+                max_tokens=0,
+                max_completion_tokens=512,
+            )
+
+        assert result.output_tokens == 512
+
+    def test_the_body_still_travels_for_salvage(self) -> None:
+        """Same contract as a reported truncation: the findings completed before
+        the cut are real, and the engine recovers them."""
+        with patch("litellm.completion", return_value=self._at_ceiling(512)):
+            provider = LiteLLMProvider(max_tokens=512)
+            with pytest.raises(ProviderTruncated) as exc_info:
+                provider.complete([{"role": "user", "content": "hi"}], "ollama/qwen2.5-coder:3b")
+
+        assert exc_info.value.text == '{"findings": [{"path": "a.py"'
+        assert exc_info.value.input_tokens == 900
+
+
+class TestTruncationAdviceMatchesTheMeasurement:
+    """The ceiling message must not send the reader to the knob that measurably
+    makes this worse.
+
+    `.lgtmaybe.yml` records the experiment: the dominant truncation is a CONTENT
+    runaway, not a thinking one — 961 tokens of thought against ~32,700 of output,
+    salvaging zero findings, on roughly one lens call in five. It is generation
+    instability, and no ceiling prevents it. At 32k the blast radius was 80–93% of
+    a review's wall clock; at 8k the same runaway costs ~95s.
+
+    So "raise `max_tokens`" buys a *larger wasted call*. The codebase already knows
+    this in one place — `_reasoning_exhausted_reason` overrides the adapter
+    precisely because "the advice ... is the one thing that provably does not work
+    here" — but that override only fires when thinking dominated. The common case
+    shipped the bad advice, and it is what made a reader propose raising the
+    ceiling on a repo whose own config says not to.
+    """
+
+    @staticmethod
+    def _message() -> str:
+        response = SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    message=SimpleNamespace(content='{"findings": [{"path": "a.py"'),
+                    finish_reason="length",
+                )
+            ],
+            usage=SimpleNamespace(prompt_tokens=13215, completion_tokens=8192),
+        )
+        with patch("litellm.completion", return_value=response):
+            provider = LiteLLMProvider()
+            with pytest.raises(ProviderTruncated) as exc_info:
+                provider.complete([{"role": "user", "content": "hi"}], "openrouter/deepseek")
+        return str(exc_info.value)
+
+    def test_it_does_not_advise_raising_the_ceiling(self) -> None:
+        assert "raise `max_tokens`" not in self._message()
+
+    def test_it_still_names_the_ceiling_that_was_hit(self) -> None:
+        """Diagnosis is not what was wrong — the reader still needs the number."""
+        message = self._message()
+        assert "8192" in message
+        assert "max_tokens" in message
+
+    def test_it_names_the_automatic_recovery_so_the_reader_does_not_chase_it(self) -> None:
+        assert "smaller pieces" in self._message()
+
+    def test_it_names_the_model_as_the_lever_that_actually_moves_this(self) -> None:
+        assert "model" in self._message()
+
+
+class TestTheCeilingRidesTheResult:
+    """The reasoning share needs a denominator, and only the adapter knows it —
+    `max_tokens` is resolved per provider and can be overridden per call, so the
+    ceiling this request actually carried is stamped on the result rather than
+    re-derived downstream from a setting that may not be the one sent."""
+
+    def test_a_successful_call_reports_the_ceiling_it_was_sent_with(self) -> None:
+        provider = LiteLLMProvider(model="openai/gpt-5.5", max_tokens=8192)
+
+        with patch("litellm.completion", return_value=_reasoning_response(1200)):
+            result = provider.complete([{"role": "user", "content": "hi"}], model="openai/gpt-5.5")
+
+        assert result.output_ceiling == 8192
+        assert result.reasoning_tokens == 1200
+
+    def test_a_per_call_ceiling_overrides_the_provider_default(self) -> None:
+        """`complete` merges per-call opts over the provider's, so the ceiling a
+        request carried is not always the one it was built with. A share against
+        the wrong denominator is worse than no share, and this is the only place
+        the right one is knowable."""
+        provider = LiteLLMProvider(model="openai/gpt-5.5", max_tokens=8192)
+
+        with patch("litellm.completion", return_value=_reasoning_response(1200)):
+            result = provider.complete(
+                [{"role": "user", "content": "hi"}], model="openai/gpt-5.5", max_tokens=2048
+            )
+
+        assert result.output_ceiling == 2048
+
+    def test_an_explicitly_reported_zero_is_kept_as_a_measurement(self) -> None:
+        """A route that reports the breakdown and puts 0 in it HAS said the model
+        did no thinking. That belongs in the table at 0%, beside the calls that
+        did — conflating it with silence loses a real reading."""
+        provider = LiteLLMProvider(model="openai/gpt-4o")
+
+        with patch("litellm.completion", return_value=_reasoning_response(0)):
+            result = provider.complete([{"role": "user", "content": "hi"}], model="openai/gpt-4o")
+
+        assert result.reasoning_tokens == 0
+
+    def test_a_malformed_breakdown_is_read_as_unknown(self) -> None:
+        """A flag, a negative count, or a string is not a measurement. `True` is
+        the one that would slip through a plain `isinstance(int)` — it would read
+        as one reasoning token, which is a number the table would then print."""
+        provider = LiteLLMProvider(model="openai/gpt-5.5")
+
+        for value in (True, -1, "900", None, 3.5):
+            with patch("litellm.completion", return_value=_reasoning_response(value)):
+                result = provider.complete(
+                    [{"role": "user", "content": "hi"}], model="openai/gpt-5.5"
+                )
+
+            assert result.reasoning_tokens is None, value
+
+    def test_no_ceiling_configured_reports_none(self) -> None:
+        provider = LiteLLMProvider(model="openai/gpt-5.5")
+
+        with patch("litellm.completion", return_value=_fake_response("{}")):
+            result = provider.complete([{"role": "user", "content": "hi"}], model="openai/gpt-5.5")
+
+        assert result.output_ceiling is None
+
+    def test_a_route_with_no_breakdown_reports_unknown_not_zero(self) -> None:
+        """`None` and `0` are different claims: "it never said" versus "it did no
+        thinking". `ProviderTruncated` already draws that line; the success path
+        drew it as a zero."""
+        provider = LiteLLMProvider(model="openai/gpt-5.5")
+
+        with patch("litellm.completion", return_value=_fake_response("{}")):
+            result = provider.complete([{"role": "user", "content": "hi"}], model="openai/gpt-5.5")
+
+        assert result.reasoning_tokens is None
+
+
+class TestSteppingReasoningEffortDown:
+    """The lever the engine pulls when a truncation went on THOUGHT.
+
+    Splitting the payload cannot shrink a thinking budget, so the engine retries
+    the lens once at a lower effort instead — and the effort lives in one of two
+    provider-shaped places, which is why the adapter answers this rather than the
+    engine deriving it.
+    """
+
+    def test_a_flat_effort_steps_down_one_level(self) -> None:
+        provider = LiteLLMProvider(model="openai/gpt-5.5", reasoning_effort="medium")
+
+        assert provider.lower_reasoning_effort() == {"reasoning_effort": "low"}
+
+    def test_the_bottom_of_the_ladder_has_nowhere_to_go(self) -> None:
+        provider = LiteLLMProvider(model="openai/gpt-5.5", reasoning_effort="none")
+
+        assert provider.lower_reasoning_effort() is None
+
+    def test_an_unset_effort_steps_to_the_floor(self) -> None:
+        """The case that matters most and used to have no answer.
+
+        A model that reasons by DEFAULT, run without an explicit effort, is
+        exactly the configuration that burns its whole output ceiling thinking —
+        and returning None here meant the one lever that can move a thinking
+        budget was unavailable to it. There is no configured rung to step down
+        from, so the step is to a named floor instead.
+
+        Safe because this is only ever consulted after a reasoning-bound
+        truncation: a healthy call still sends byte-identical requests."""
+        provider = LiteLLMProvider(model="openai/gpt-5.5")
+
+        assert provider.lower_reasoning_effort() == {"reasoning_effort": _EFFORT_FLOOR}
+
+    def test_the_floor_is_a_real_reduction_not_the_bottom(self) -> None:
+        """Not `none`: a model whose thinking overran is still a reasoning model,
+        and switching thought off entirely trades a truncated review for a worse
+        one. The floor bounds the thinking rather than removing it."""
+        assert _EFFORT_FLOOR in _EFFORT_LADDER
+        assert _EFFORT_LADDER.index(_EFFORT_FLOOR) > 0
+
+    def test_the_floor_takes_openrouters_nested_shape(self) -> None:
+        """OpenRouter carries the effort in a nested object, and the models that
+        truncate this way are mostly reached through it — so the floor has to be
+        available on that route too, without losing the rest of extra_body."""
+        provider = LiteLLMProvider(
+            model="openrouter/z-ai/glm-4.7-flash",
+            extra_body={"provider": {"sort": "latency"}},
+        )
+
+        assert provider.lower_reasoning_effort() == {
+            "extra_body": {
+                "provider": {"sort": "latency"},
+                "reasoning": {"effort": _EFFORT_FLOOR},
+            }
+        }
+
+    def test_the_floor_takes_the_nested_shape_with_no_extra_body_at_all(self) -> None:
+        """The shape follows the ROUTE, not whether extra_body happens to exist.
+
+        litellm forwards the flat param only for models its capability map flags
+        reasoning-capable, and the newest models are not in it — which is exactly
+        the set that truncates this way. A flat param here would be dropped and
+        the retry would fail identically. OpenRouter takes the nested object
+        regardless of model, so that is what the floor uses."""
+        provider = LiteLLMProvider(model="openrouter/nvidia/nemotron")
+
+        assert provider.lower_reasoning_effort() == {
+            "extra_body": {"reasoning": {"effort": _EFFORT_FLOOR}}
+        }
+
+    def test_an_unrelated_extra_body_does_not_make_a_route_nested(self) -> None:
+        """extra_body is not evidence of the nested shape — a caller can set it
+        for any provider option. Only OpenRouter reads a nested `reasoning`, so
+        anywhere else the floor must go out as the flat param the route wants."""
+        provider = LiteLLMProvider(model="openai/gpt-5.5", extra_body={"service_tier": "priority"})
+
+        assert provider.lower_reasoning_effort() == {"reasoning_effort": _EFFORT_FLOOR}
+
+    def test_stepping_to_the_floor_is_still_not_a_mutation(self) -> None:
+        provider = LiteLLMProvider(model="openai/gpt-5.5")
+
+        provider.lower_reasoning_effort()
+
+        assert "reasoning_effort" not in provider.default_opts
+
+    def test_default_is_a_sentinel_not_a_rung(self) -> None:
+        """`default` says "let the route decide" — there is no telling what sits
+        one level below it, so it is left alone rather than guessed at."""
+        provider = LiteLLMProvider(model="openai/gpt-5.5", reasoning_effort="default")
+
+        assert provider.lower_reasoning_effort() is None
+
+    def test_openrouters_nested_reasoning_object_steps_down_in_place(self) -> None:
+        """The factory re-routes `reasoning_effort` into a top-level `reasoning`
+        object for OpenRouter (sending both is a 400), so the step-down has to
+        find it there — and must not lose the rest of extra_body doing it."""
+        provider = LiteLLMProvider(
+            model="openrouter/openai/gpt-5.6-luna",
+            extra_body={"reasoning": {"effort": "high"}, "provider": {"sort": "latency"}},
+        )
+
+        assert provider.lower_reasoning_effort() == {
+            "extra_body": {
+                "reasoning": {"effort": "medium"},
+                "provider": {"sort": "latency"},
+            }
+        }
+
+    def test_the_step_down_is_an_override_not_a_mutation(self) -> None:
+        """One retry's request, not a new setting for the rest of the run: the
+        next lens must still go out at the effort the user configured."""
+        provider = LiteLLMProvider(model="openai/gpt-5.5", reasoning_effort="high")
+
+        provider.lower_reasoning_effort()
+
+        assert provider.default_opts["reasoning_effort"] == "high"
+
+
+class TestSchemaDropIsVisibleAndScoped:
+    """Dropping ``response_format`` silently downgrades every later call to
+    prompt-instructed JSON, and a weaker model then plausibly answers in prose —
+    which reads as "every review lens returned unparseable output" with nothing
+    in the log to connect the two. The repo's own spec already says a configured
+    param is never discarded in silence (``provider.param-support``); this is
+    that rule applied to the one drop that was exempt from it."""
+
+    BEDROCK_400 = TestRejectedStructuredOutputParam.BEDROCK_400
+
+    def _rejecting(self, *, reject_model: str) -> Any:
+        def side_effect(*args: Any, **kwargs: Any) -> Any:
+            if "response_format" in kwargs and kwargs["model"] == reject_model:
+                raise litellm.BadRequestError(
+                    message=self.BEDROCK_400, model=kwargs["model"], llm_provider="bedrock"
+                )
+            return _fake_response('{"findings": []}')
+
+        return side_effect
+
+    def test_rejection_is_announced(self, caplog: pytest.LogCaptureFixture) -> None:
+        model = "bedrock/us.anthropic.claude-opus-4-8"
+        with patch("litellm.completion", side_effect=self._rejecting(reject_model=model)):
+            provider = LiteLLMProvider()
+            with caplog.at_level(logging.WARNING, logger="lgtmaybe.providers.litellm_provider"):
+                provider.complete(
+                    [{"role": "user", "content": "a"}], model, response_format={"x": 1}
+                )
+        warnings = [r for r in caplog.records if "structured output" in r.getMessage()]
+        assert warnings, "a silent downgrade is exactly what left this undiagnosable"
+        assert getattr(warnings[0], "model", None) == model
+        assert getattr(warnings[0], "reason", None) == "rejected"
+
+    def test_the_announcement_fires_once_per_model_not_once_per_lens(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        model = "bedrock/us.anthropic.claude-opus-4-8"
+        with patch("litellm.completion", side_effect=self._rejecting(reject_model=model)):
+            provider = LiteLLMProvider()
+            with caplog.at_level(logging.WARNING, logger="lgtmaybe.providers.litellm_provider"):
+                for _ in range(4):
+                    provider.complete(
+                        [{"role": "user", "content": "a"}], model, response_format={"x": 1}
+                    )
+        assert len([r for r in caplog.records if "structured output" in r.getMessage()]) == 1
+
+    def test_an_empty_structured_response_is_announced(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        calls: list[bool] = []
+
+        def side_effect(*args: Any, **kwargs: Any) -> Any:
+            has_rf = "response_format" in kwargs
+            calls.append(has_rf)
+            return _fake_response("" if has_rf else '{"findings": []}')
+
+        with patch("litellm.completion", side_effect=side_effect):
+            provider = LiteLLMProvider()
+            with caplog.at_level(logging.WARNING, logger="lgtmaybe.providers.litellm_provider"):
+                provider.complete(
+                    [{"role": "user", "content": "a"}], "openai/gpt-4o", response_format={"x": 1}
+                )
+        warnings = [r for r in caplog.records if "structured output" in r.getMessage()]
+        assert warnings
+        assert getattr(warnings[0], "reason", None) == "empty-response"
+
+    def test_the_drop_is_scoped_to_the_model_that_rejected_it(self) -> None:
+        """One provider serves the primary and the fallback, and the triage,
+        review and reflect slots all share it. Scoped to the instance, a
+        rejection by ANY of them silently downgrades the rest — a quality
+        regression on the strong model triggered by a model it never ran."""
+        primary = "bedrock/us.anthropic.claude-opus-4-8"
+        fallback = "openai/gpt-4o"
+        seen: list[tuple[str, bool]] = []
+
+        def side_effect(*args: Any, **kwargs: Any) -> Any:
+            has_rf = "response_format" in kwargs
+            seen.append((kwargs["model"], has_rf))
+            if has_rf and kwargs["model"] == primary:
+                raise litellm.BadRequestError(
+                    message=self.BEDROCK_400, model=kwargs["model"], llm_provider="bedrock"
+                )
+            return _fake_response('{"findings": []}')
+
+        # No pinned model: one instance, two model slots, exactly as the factory
+        # builds it for triage_model / model / reflect_model.
+        with patch("litellm.completion", side_effect=side_effect):
+            provider = LiteLLMProvider()
+            provider.complete([{"role": "user", "content": "a"}], primary, response_format={"x": 1})
+            provider.complete(
+                [{"role": "user", "content": "b"}], fallback, response_format={"x": 1}
+            )
+
+        assert (fallback, True) in seen, "the second model never rejected anything"
+
+    def test_the_drop_is_queryable_for_the_review_notice(self) -> None:
+        model = "bedrock/us.anthropic.claude-opus-4-8"
+        with patch("litellm.completion", side_effect=self._rejecting(reject_model=model)):
+            provider = LiteLLMProvider()
+            assert provider.schema_dropped() is False
+            provider.complete([{"role": "user", "content": "a"}], model, response_format={"x": 1})
+            assert provider.schema_dropped() is True
+
+    def test_the_engine_can_ask_for_the_drop_and_later_calls_honour_it(self) -> None:
+        """The one trigger the adapter cannot see for itself: a reply that
+        arrives well-formed and turns out not to be findings. Only the engine
+        parses, so only the engine can ask — and the ask has to reach the same
+        keyed entry `_call` looks up, or every later call repeats the failure."""
+        model = "openai/gpt-4o"
+        seen: list[bool] = []
+
+        def side_effect(*_args: Any, **kwargs: Any) -> Any:
+            seen.append("response_format" in kwargs)
+            return _fake_response('{"findings": []}')
+
+        with patch("litellm.completion", side_effect=side_effect):
+            provider = LiteLLMProvider()
+            provider.complete([{"role": "user", "content": "a"}], model, response_format={"x": 1})
+            assert provider.sends_response_format(model) is True
+
+            provider.drop_response_format(model, "unparseable-output")
+            assert provider.sends_response_format(model) is False
+
+            provider.complete([{"role": "user", "content": "b"}], model, response_format={"x": 1})
+
+        assert seen == [True, False], "the schema must stop going out after the ask"
+
+    def test_the_ask_is_keyed_by_the_provider_s_own_model_string(self) -> None:
+        """A factory-built provider carries the resolved litellm model string
+        while the engine only knows `cfg.model`. Both name the same call, so both
+        must land on the same entry — else the drop is recorded against a model
+        nothing ever calls."""
+        provider = LiteLLMProvider(model="openrouter/anthropic/claude-haiku-4.5")
+
+        provider.drop_response_format("claude-haiku-4.5", "unparseable-output")
+
+        assert provider.sends_response_format("claude-haiku-4.5") is False
+        assert provider.schema_dropped() is True
+
+
+class TestTheFloorRespectsRouteCapability:
+    """The floor is only worth sending if the route will actually carry it.
+
+    litellm runs with `drop_params=True`, so a `reasoning_effort` a model's
+    capability entry omits is stripped silently — and the retry then goes out
+    byte-identical to the request that just failed, which is exactly what
+    `engine.rescue` forbids: "the identical request is not re-issued: it fails
+    the same way, at cost."
+
+    Narrow but reachable: it needs a route that REPORTS reasoning tokens (or
+    `_reasoning_exhausted_reason` never fires) while not ACCEPTING the param.
+    Those come from different places — `completion_tokens_details` versus
+    litellm's capability map — so they can disagree.
+    """
+
+    def test_a_route_that_cannot_take_the_param_steps_nowhere(self) -> None:
+        provider = LiteLLMProvider(model="openai/gpt-5.5", effort_override_supported=False)
+
+        assert provider.lower_reasoning_effort() is None
+
+    def test_an_unknown_route_still_gets_the_floor(self) -> None:
+        """Fail OPEN. litellm's map does not know the newest models — precisely
+        the set that truncates this way — so treating silence as "cannot" would
+        withhold the retry from the models it was built for."""
+        provider = LiteLLMProvider(model="openai/gpt-5.5")
+
+        assert provider.lower_reasoning_effort() == {"reasoning_effort": _EFFORT_FLOOR}
+
+    def test_openrouter_ignores_the_capability_answer(self) -> None:
+        """The nested object never passes through litellm's param mapping, so
+        drop_params cannot strip it — OpenRouter takes it regardless of model."""
+        provider = LiteLLMProvider(
+            model="openrouter/z-ai/glm-4.7-flash", effort_override_supported=False
+        )
+
+        assert provider.lower_reasoning_effort() == {
+            "extra_body": {"reasoning": {"effort": _EFFORT_FLOOR}}
+        }
+
+    def test_a_configured_effort_still_steps_down_regardless(self) -> None:
+        """The user asked for this param by name. If the route drops it, that was
+        already true of every healthy call — the step-down is not the place to
+        start second-guessing a configured setting."""
+        provider = LiteLLMProvider(
+            model="openai/gpt-5.5", reasoning_effort="high", effort_override_supported=False
+        )
+
+        assert provider.lower_reasoning_effort() == {"reasoning_effort": "medium"}
+
+
+class TestOpenAICompatibleToolRejectionWording:
+    """The tool-config fallback is matched off the backend's own error prose, and
+    every existing test uses Bedrock's wording. vLLM refuses a tool call with
+    "requires --enable-auto-tool-choice and --tool-call-parser to be set", which
+    carries none of the phrases the matcher looked for — so the BadRequestError
+    read as permanent and killed the review instead of degrading to
+    prompt-instructed JSON, the exact failure this machinery exists to prevent.
+    """
+
+    # vLLM's own wording, as served by an instance started without the tool
+    # flags; the JSON envelope around it is litellm's.
+    VLLM_400 = (
+        "litellm.BadRequestError: OpenAIException - "
+        "'auto' tool choice requires --enable-auto-tool-choice "
+        "and --tool-call-parser to be set"
+    )
+    MODEL = "openai/local-model"
+
+    def test_vllms_missing_flags_error_reads_as_a_tool_rejection(self) -> None:
+        from lgtmaybe.providers.litellm_provider import _rejects_tool_config
+
+        assert _rejects_tool_config(
+            litellm.BadRequestError(message=self.VLLM_400, model=self.MODEL, llm_provider="openai")
+        )
+
+    def test_an_unrelated_bad_request_is_still_not_a_tool_rejection(self) -> None:
+        """The matcher must stay narrow: a genuine 400 has to keep failing."""
+        from lgtmaybe.providers.litellm_provider import _rejects_tool_config
+
+        assert not _rejects_tool_config(
+            litellm.BadRequestError(
+                message="litellm.BadRequestError: context length exceeded",
+                model=self.MODEL,
+                llm_provider="openai",
+            )
+        )
+
+    def test_a_route_refusing_both_shapes_falls_back_to_prompted_json(self) -> None:
+        """End to end: response_format refused, then the forced tool call
+        refused with vLLM's wording — the review still gets its findings."""
+        seen: list[dict[str, Any]] = []
+
+        def side_effect(*args: Any, **kwargs: Any) -> Any:
+            seen.append(kwargs)
+            if "response_format" in kwargs:
+                raise litellm.BadRequestError(
+                    message="response_format is not supported by this model",
+                    model=kwargs["model"],
+                    llm_provider="openai",
+                )
+            if "tools" in kwargs:
+                raise litellm.BadRequestError(
+                    message=self.VLLM_400, model=kwargs["model"], llm_provider="openai"
+                )
+            return _fake_response('{"findings": []}')
+
+        with patch("litellm.completion", side_effect=side_effect):
+            provider = LiteLLMProvider()
+            result = provider.complete(
+                [{"role": "user", "content": "hi"}], self.MODEL, response_format=ReviewResult
+            )
+
+        assert result.text == '{"findings": []}'
+        assert "tools" not in seen[-1] and "response_format" not in seen[-1]
+
+
+class TestBedrockConverseOutputConfigWording:
+    """litellm's bedrock route sends Claude structured output as the
+    Converse-level ``outputConfig`` field (camelCase), so the endpoint's
+    refusals name THAT spelling — ``extraneous key [outputConfig] is not
+    permitted`` from a region or model without the feature, or AWS's "This
+    model doesn't support …" prose. The matcher only knew the snake_case
+    ``output_config`` the Anthropic model layer uses, so these 400s read as
+    permanent and killed every lens at once instead of degrading to the forced
+    tool call — the exact failure the recovery ladder exists to prevent."""
+
+    MODEL = "bedrock/us.anthropic.claude-sonnet-4-6"
+
+    CONVERSE_400 = (
+        "litellm.BadRequestError: BedrockException - "
+        '{"message":"Malformed input request: #: extraneous key [outputConfig] '
+        'is not permitted, please reformat your input and try again."}'
+    )
+    UNSUPPORTED_400 = (
+        "litellm.BadRequestError: BedrockException - "
+        '{"message":"This model doesn\'t support the outputConfig field."}'
+    )
+
+    def test_converse_extraneous_key_reads_as_a_schema_rejection(self) -> None:
+        from lgtmaybe.providers.litellm_provider import _rejects_response_format
+
+        assert _rejects_response_format(
+            litellm.BadRequestError(
+                message=self.CONVERSE_400, model=self.MODEL, llm_provider="bedrock"
+            )
+        )
+
+    def test_aws_doesnt_support_prose_reads_as_a_schema_rejection(self) -> None:
+        from lgtmaybe.providers.litellm_provider import _rejects_response_format
+
+        assert _rejects_response_format(
+            litellm.BadRequestError(
+                message=self.UNSUPPORTED_400, model=self.MODEL, llm_provider="bedrock"
+            )
+        )
+
+    def test_an_unrelated_bedrock_400_is_still_not_a_schema_rejection(self) -> None:
+        """The matcher must stay narrow: a genuine 400 has to keep failing."""
+        from lgtmaybe.providers.litellm_provider import _rejects_response_format
+
+        assert not _rejects_response_format(
+            litellm.BadRequestError(
+                message=(
+                    "litellm.BadRequestError: BedrockException - "
+                    '{"message":"Input is too long for requested model."}'
+                ),
+                model=self.MODEL,
+                llm_provider="bedrock",
+            )
+        )
+
+    def test_converse_rejection_recovers_into_tool_mode(self) -> None:
+        """End to end: the camelCase refusal swaps the schema for the forced
+        tool call, exactly as the snake_case one always did."""
+        seen: list[dict[str, Any]] = []
+
+        def side_effect(*args: Any, **kwargs: Any) -> Any:
+            seen.append(kwargs)
+            if "response_format" in kwargs:
+                raise litellm.BadRequestError(
+                    message=self.CONVERSE_400, model=kwargs["model"], llm_provider="bedrock"
+                )
+            return _fake_response('{"findings": []}')
+
+        with patch("litellm.completion", side_effect=side_effect):
+            provider = LiteLLMProvider()
+            result = provider.complete(
+                [{"role": "user", "content": "hi"}], self.MODEL, response_format=ReviewResult
+            )
+
+        assert result.text == '{"findings": []}'
+        assert "tools" in seen[-1] and "response_format" not in seen[-1]
+
+
+class TestBedrockRejectedReasoningEffort:
+    """litellm maps a configured ``reasoning_effort`` for adaptive Claude models
+    into Anthropic's ``output_config.effort``, and some Bedrock models/regions
+    reject that field. The refusal names ``output_config`` — which without a
+    guard reads as a STRUCTURED-OUTPUT rejection: the schema (the wrong param)
+    is dropped, the re-send still carries the effort and fails identically, and
+    the review dies having also disabled structured output for the run."""
+
+    MODEL = "bedrock/us.anthropic.claude-sonnet-4-6"
+
+    EFFORT_400 = (
+        "litellm.BadRequestError: BedrockException - "
+        '{"message":"The model returned the following errors: '
+        'output_config.effort: Extra inputs are not permitted"}'
+    )
+
+    def test_the_effort_is_dropped_and_the_schema_is_kept(self) -> None:
+        seen: list[dict[str, Any]] = []
+
+        def side_effect(*args: Any, **kwargs: Any) -> Any:
+            seen.append(kwargs)
+            if "reasoning_effort" in kwargs:
+                raise litellm.BadRequestError(
+                    message=self.EFFORT_400, model=kwargs["model"], llm_provider="bedrock"
+                )
+            return _fake_response('{"findings": []}')
+
+        with patch("litellm.completion", side_effect=side_effect):
+            provider = LiteLLMProvider()
+            for _ in range(2):
+                result = provider.complete(
+                    [{"role": "user", "content": "hi"}],
+                    self.MODEL,
+                    response_format=ReviewResult,
+                    reasoning_effort="medium",
+                )
+
+        assert result.text == '{"findings": []}'
+        assert len(seen) == 3
+        assert "reasoning_effort" not in seen[-1]
+        assert "response_format" in seen[-1], "the schema was blamed for the effort's refusal"
+
+    def test_without_an_effort_in_flight_the_schema_recovery_still_runs(self) -> None:
+        """The guard is scoped to a request that actually carried the effort:
+        the same wording on an effort-less request keeps the schema recovery."""
+        seen: list[dict[str, Any]] = []
+
+        def side_effect(*args: Any, **kwargs: Any) -> Any:
+            seen.append(kwargs)
+            if "response_format" in kwargs:
+                raise litellm.BadRequestError(
+                    message=self.EFFORT_400, model=kwargs["model"], llm_provider="bedrock"
+                )
+            return _fake_response('{"findings": []}')
+
+        with patch("litellm.completion", side_effect=side_effect):
+            provider = LiteLLMProvider()
+            result = provider.complete(
+                [{"role": "user", "content": "hi"}], self.MODEL, response_format=ReviewResult
+            )
+
+        assert result.text == '{"findings": []}'
+        assert "response_format" not in seen[-1]
+
+
+def _truncated_response() -> Any:
+    """A reply the route cut off at the output ceiling."""
+    return SimpleNamespace(
+        choices=[
+            SimpleNamespace(
+                message=SimpleNamespace(content='{"findings": [{"path": "a.py"'),
+                finish_reason="length",
+            )
+        ],
+        usage=SimpleNamespace(prompt_tokens=6281, completion_tokens=32768),
+    )
+
+
+class TestTruncationDeferredToTheCaller:
+    """A truncation is the one failure the ENGINE has a better answer for than
+    the adapter does. It holds the batch and the token counts, so it can pick the
+    remedy the diagnosis names — a smaller payload, or a lower reasoning effort —
+    both of which run on the model the user chose. The adapter can only re-send
+    the identical oversized request to a second model, which is the expensive
+    guess. `defer_truncation` hands the failure back so the cheap remedy goes
+    first; every other failure still falls back where it always did."""
+
+    MESSAGES = [{"role": "user", "content": "hi"}]
+
+    def test_a_deferred_truncation_is_handed_back_instead_of_fallen_back_on(self) -> None:
+        called: list[str] = []
+
+        def side_effect(*args: Any, **kwargs: Any) -> Any:
+            called.append(kwargs["model"])
+            return _truncated_response()
+
+        with patch("litellm.completion", side_effect=side_effect):
+            provider = LiteLLMProvider(fallback_model="openrouter/backup")
+            with pytest.raises(ProviderTruncated):
+                provider.complete(self.MESSAGES, "openrouter/deepseek", defer_truncation=True)
+
+        assert called == ["openrouter/deepseek"]
+
+    def test_deferring_leaves_every_other_failure_falling_back(self) -> None:
+        """Narrow on purpose: only the truncation has a caller-side remedy, so
+        only the truncation is deferred. A 5xx under the same flag is still the
+        adapter's to rescue."""
+
+        def side_effect(*args: Any, **kwargs: Any) -> Any:
+            if kwargs["model"] == "openrouter/deepseek":
+                raise litellm.InternalServerError(
+                    message="upstream exploded", model=kwargs["model"], llm_provider="openrouter"
+                )
+            return _fake_response('{"findings": []}')
+
+        with patch("litellm.completion", side_effect=side_effect):
+            provider = LiteLLMProvider(fallback_model="openrouter/backup")
+            result = provider.complete(self.MESSAGES, "openrouter/deepseek", defer_truncation=True)
+
+        assert result.text == '{"findings": []}'
+
+    def test_the_default_is_unchanged(self) -> None:
+        """Every caller that has no remedy of its own — describe, diagram, triage,
+        reflect, repair — keeps today's automatic fallback by saying nothing."""
+
+        def side_effect(*args: Any, **kwargs: Any) -> Any:
+            if kwargs["model"] == "openrouter/deepseek":
+                return _truncated_response()
+            return _fake_response('{"findings": []}')
+
+        with patch("litellm.completion", side_effect=side_effect):
+            provider = LiteLLMProvider(fallback_model="openrouter/backup")
+            result = provider.complete(self.MESSAGES, "openrouter/deepseek")
+
+        assert result.text == '{"findings": []}'
+
+    def test_the_flag_never_reaches_the_wire(self) -> None:
+        seen: dict[str, Any] = {}
+
+        def side_effect(*args: Any, **kwargs: Any) -> Any:
+            seen.update(kwargs)
+            return _fake_response()
+
+        with patch("litellm.completion", side_effect=side_effect):
+            LiteLLMProvider().complete(self.MESSAGES, "openai/gpt-4o", defer_truncation=True)
+
+        assert "defer_truncation" not in seen
+
+
+class TestExplicitModelOverride:
+    """The escalation itself. A caller that owns the ordering needs to be able to
+    say "run this one on the fallback" without re-billing the primary first, and
+    the model string is the adapter's to resolve — the engine only ever sees the
+    raw name from config."""
+
+    MESSAGES = [{"role": "user", "content": "hi"}]
+
+    def test_escalate_model_reports_the_resolved_fallback(self) -> None:
+        provider = LiteLLMProvider(model="openrouter/deepseek", fallback_model="openrouter/backup")
+        assert provider.escalate_model() == "openrouter/backup"
+
+    def test_escalate_model_is_none_without_one_configured(self) -> None:
+        assert LiteLLMProvider(model="openrouter/deepseek").escalate_model() is None
+
+    def test_an_override_routes_the_call(self) -> None:
+        called: list[str] = []
+
+        def side_effect(*args: Any, **kwargs: Any) -> Any:
+            called.append(kwargs["model"])
+            return _fake_response('{"findings": []}')
+
+        with patch("litellm.completion", side_effect=side_effect):
+            provider = LiteLLMProvider(model="openrouter/deepseek", fallback_model="x/backup")
+            provider.complete(self.MESSAGES, "openrouter/deepseek", model_override="x/backup")
+
+        assert called == ["x/backup"]
+
+    def test_an_override_never_falls_back_again(self) -> None:
+        """The override IS the fallback. Falling back from it would re-send the
+        request to the model that just failed it."""
+        called: list[str] = []
+
+        def side_effect(*args: Any, **kwargs: Any) -> Any:
+            called.append(kwargs["model"])
+            return _truncated_response()
+
+        with patch("litellm.completion", side_effect=side_effect):
+            provider = LiteLLMProvider(model="openrouter/deepseek", fallback_model="x/backup")
+            with pytest.raises(ProviderTruncated):
+                provider.complete(self.MESSAGES, "openrouter/deepseek", model_override="x/backup")
+
+        assert called == ["x/backup"]
+
+    def test_the_option_never_reaches_the_wire(self) -> None:
+        seen: dict[str, Any] = {}
+
+        def side_effect(*args: Any, **kwargs: Any) -> Any:
+            seen.update(kwargs)
+            return _fake_response()
+
+        with patch("litellm.completion", side_effect=side_effect):
+            LiteLLMProvider(model="a/b").complete(self.MESSAGES, "a/b", model_override="a/c")
+
+        assert "model_override" not in seen
+
+
+class TestTheAnsweringModelRidesTheResult:
+    """Which model produced a result is not knowable downstream: the adapter can
+    switch to the fallback on its own, and the resolved litellm string never
+    leaves this module. Without it on the result, a review rescued by a second
+    model is indistinguishable from one the primary answered — which is exactly
+    the measurement anyone comparing routing rules needs."""
+
+    MESSAGES = [{"role": "user", "content": "hi"}]
+
+    def test_a_successful_call_names_the_model_that_answered(self) -> None:
+        with patch("litellm.completion", return_value=_fake_response()):
+            result = LiteLLMProvider(model="openai/gpt-5.5").complete(self.MESSAGES, "ignored")
+
+        assert result.model == "openai/gpt-5.5"
+
+    def test_a_fallback_rescue_names_the_fallback(self) -> None:
+        def side_effect(*args: Any, **kwargs: Any) -> Any:
+            if kwargs["model"] == "openrouter/deepseek":
+                return _truncated_response()
+            return _fake_response('{"findings": []}')
+
+        with patch("litellm.completion", side_effect=side_effect):
+            provider = LiteLLMProvider(
+                model="openrouter/deepseek", fallback_model="openrouter/backup"
+            )
+            result = provider.complete(self.MESSAGES, "openrouter/deepseek")
+
+        assert result.model == "openrouter/backup"

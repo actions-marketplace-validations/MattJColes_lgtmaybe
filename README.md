@@ -4,44 +4,54 @@
 
 # lgtmaybe
 
-Provider-agnostic PR reviewer. Six hosted providers plus local ollama, one
-flag, no static keys for cloud providers. Posts inline review comments and a
-summary.
+Provider-agnostic code reviewer for **GitHub, GitLab, and Gitea**. Seven hosted
+model providers, local ollama, and any OpenAI-compatible endpoint — one flag, no
+static keys for cloud providers. Posts inline review comments and a summary.
 
-📖 **Full documentation:** <https://mattjcoles.github.io/lgtmaybe/>
+📖 **Full documentation:** <https://lgtmaybe.coles.codes/>
 
 ## What it reviews
 
-lgtmaybe fetches the PR diff from the GitHub API and reviews the lines a pull
-request changes. It never checks out or runs your code. To judge each change in
-context it also reads a few surrounding lines from the file, but it only ever
+lgtmaybe fetches the diff through your code host's API and reviews the lines a
+pull request (or merge request) changes. It never checks out or runs your code. To judge each change in
+context it also reads a few surrounding lines from the file. It only ever
 comments on what the PR actually changed, not the whole repository.
 
 Reviews surface the kind of thing a careful reviewer would flag, each graded from
-`info` up to `critical`: **logic and correctness bugs** (edge cases, null
-dereferences, off-by-one and boundary errors, mismatched ranges, unhandled error
-paths, races and TOCTOU, missed `await`s, numeric and timezone bugs), **missing
-or weak tests** for changed code paths (with a suggested test to drop in), and
-**undocumented public APIs or stale docs** the change just made wrong. The model
-is prompted with an **OWASP-aligned security checklist** — injection, XSS, CSRF
-and open redirects, hardcoded secrets, broken authn/authz (including JWT
-pitfalls), path traversal, unrestricted uploads, SSRF, insecure deserialization
-and XXE, mass assignment, weak crypto, resource/DoS safety (including ReDoS),
-secrets or PII (passwords, tokens, SSNs, card data) leaking into logs, and CI/IaC
-misconfiguration (workflow script injection, unpinned actions, broad IAM, public
-buckets) — so security findings are first-class, not an afterthought. It also
-flags **factually outdated** code — deprecated APIs, end-of-life or vulnerable
-dependencies, typosquat-looking additions — when the diff shows them,
-**performance regressions** (N+1 queries, accidentally quadratic work, redundant
-computation, allocations or blocking I/O on hot paths, unbounded queries, caches
-that never evict), and needless **complexity** (deep nesting / high cyclomatic
-complexity, over-long functions, duplicated logic). An **intent lens** checks
-that the PR does what it says: it reads the PR title, description, and commit
-names (or your `git log` commit names on the CLI) and flags out-of-scope hunks,
-code that contradicts the stated intent, and promised behaviour the diff never
-implements. Generated and non-reviewable files (lockfiles, minified bundles,
-vendored directories, binaries) are skipped automatically, and secrets are
-redacted from the diff before it is sent to the model.
+`info` up to `critical`:
+
+- **Logic and correctness bugs** — edge cases, null dereferences, off-by-one and
+  boundary errors, mismatched ranges, unhandled error paths, races and TOCTOU,
+  missed `await`s, numeric and timezone bugs.
+- **Security vulnerabilities** — the model is prompted with an **OWASP-aligned
+  checklist**: injection, XSS, CSRF and open redirects, hardcoded secrets,
+  broken authn/authz (including JWT pitfalls), path traversal, unrestricted
+  uploads, SSRF, insecure deserialization and XXE, mass assignment, weak crypto,
+  resource/DoS safety (including ReDoS), secrets or PII (passwords, tokens,
+  SSNs, card data) leaking into logs, and CI/IaC misconfiguration (workflow
+  script injection, unpinned actions, broad IAM, public buckets). Security
+  findings are first-class, not an afterthought.
+- **Missing or weak tests** for changed code paths, with a suggested test to
+  drop in.
+- **Undocumented public APIs or stale docs** the change just made wrong.
+- **Factually outdated code** — deprecated APIs, end-of-life or vulnerable
+  dependencies, typosquat-looking additions — when the diff shows them.
+- **Performance regressions** — N+1 queries, accidentally quadratic work,
+  redundant computation, allocations or blocking I/O on hot paths, unbounded
+  queries, caches that never evict.
+- **Needless complexity** — deep nesting / high cyclomatic complexity, over-long
+  functions, duplicated logic.
+- **Intent** — does the PR do what it says? lgtmaybe reads the PR title,
+  description, and commit names (or your `git log` commit names on the CLI) and
+  flags out-of-scope hunks, code that contradicts the stated intent, and
+  promised behaviour the diff never implements.
+- **Ponytail** — the "lazy senior dev" lens: the best code is the code you never
+  wrote. Flags code that needn't exist at all — YAGNI, reach for the standard
+  library, do it in fewer lines.
+
+Generated and non-reviewable files (lockfiles, minified bundles, vendored
+directories, binaries) are skipped automatically, and secrets are redacted from
+the diff before it is sent to the model.
 
 **Hardened against malicious PRs.** lgtmaybe never checks out or runs PR code,
 treats the diff as untrusted input, defends against prompt injection (including
@@ -50,25 +60,55 @@ forged delimiter break-out attempts), and redacts a broad set of secret formats
 credentials in connection strings) before anything leaves your environment. See
 [Data and Privacy](docs/explanation/data-and-privacy.md).
 
+**Fast by default.** Reviews run the **`fast` preset** by default: all nine
+categories in **four model calls**, one per concern — security, correctness
+(including stated intent), code health
+(performance/complexity/ponytail/deprecation), and artefacts
+(tests/documentation). The same four run on every provider; worker count
+changes only how they are scheduled, so a cloud review overlaps them while a
+single-slot local one runs them in turn. `--preset full` (or `preset: full` in
+`.lgtmaybe.yml`) restores the one-call-per-lens deep audit for release branches.
+On top of that, all calls across all batches share **one concurrency pool**
+(`max_concurrency`, default 6 on cloud providers) and share a **cached
+preamble-plus-diff prefix** on the routes that support it, so the diff is
+processed once per batch, not once per lens. Add `--profile` to any run to see exactly where
+the time and tokens went.
+
 **How the scope is bounded.** Every run is capped so a large PR can't blow up
 latency:
 
+- `preset` (default `fast`) — four calls, one per concern (security, correctness, code health, artefacts), the same on every provider; `full` runs one call per lens.
 - `max_files` (default 50) — reviews the top-N changed files and notes how many were skipped.
 - `max_input_tokens` (default 100k) — batches the diff to fit the model's budget.
-- `categories` (default all eight) — which review lenses to run; each is a concurrent model call, so narrowing the list means fewer calls.
-- `min_severity` (default `info`) plus `include_paths` / `exclude_paths` — focus the review on what you care about.
+- `max_concurrency` (default 6, every provider) — concurrent model calls across the whole fan-out. What decides local throughput is the server's own setting (`OLLAMA_NUM_PARALLEL`, llama.cpp `-np`, vLLM batching); set `1` to run serially.
+- `recursive` (default on) — when a single file's diff exceeds that budget, walks it hunk-by-hunk instead of sending it whole; `--no-recursive` sends files whole.
+- `categories` (default all nine) — which review lenses to run; an explicit list overrides the preset grouping and runs exactly those lenses, one call each.
+- `min_severity` (default `low`) plus `include_paths` / `exclude_paths` — focus the review on what you care about.
 
 See [Configure .lgtmaybe.yml](docs/how-to/configure-lgtmaybe-yml.md) for every knob.
+
+**Big files, small models.** When one file's diff is too big for a single model
+call, lgtmaybe reviews it **hunk-by-hunk** rather than whole, so the model never
+loses the tail of a large file. On by default; `--no-recursive` turns it off.
+Smaller local models gain the most — across 8 runs on two fixtures, a local
+**qwen3.5:4b** averaged **88% recall** reviewing hunk-by-hunk versus **61%**
+reviewing files whole, with its *worst* run matching the whole-file method's
+*best* (a real effect, not noise), at ~2.4× the tokens. See
+[the benchmark](DEVELOPMENT.md#benchmarking-the-recursive-rlm-walk).
 
 **What you get back.** Each finding is structured data — file, line, severity, a
 title, an explanation, and an optional suggested fix — so it renders the same
 everywhere:
 
-- **On a GitHub PR** — an inline comment on the exact changed line for each finding, plus one summary comment naming the model used. Re-running updates the same comments instead of duplicating them, and a clean PR gets a 👍 **LGTM!**.
-- **On the CLI** — `lgtmaybe review` reads your local `git` diff and prints the findings (a readable listing, a JSON array with `--json`, or `--format agent` for an AI coding agent to read and apply); nothing is posted to GitHub.
+- **On a pull or merge request** — an inline comment on the exact changed line for each finding, plus one summary comment naming the model used. Re-running updates the summary instead of duplicating it, never repeats a finding it already posted, and a clean change gets a 👍 **LGTM!**. On GitHub and GitLab a conversation auto-resolves once its finding is verified fixed; Gitea has no thread-resolution API, so its comments stay open. See [Where it posts](#where-it-posts).
+- **On the CLI** — `lgtmaybe review` reads your local `git` diff and prints the findings (a readable listing, a JSON array with `--json`, or `--format agent` for an AI coding agent to read and apply); nothing is posted anywhere.
+
+Beyond the review, slash commands on the PR route to the same engine: **`/review`** and **`/improve`** post (or refresh) the review, **`/ask <question>`** answers a question about the change in-thread, **`/describe`** posts a standalone **structured description**, and **`/diagram`** (`auto_diagram`) posts the **change overview** — one comment carrying a description of the change, a bold **High Impact Areas** section calling out what could bite (infrastructure, security posture, production-outage risk, data migrations, backups and recovery, compatibility, observability, dependencies, cost, compliance), and an automatically laid-out Mermaid flowchart of the components the PR touches plus a Mermaid **sequence diagram** of the run-time flow it alters (omitted when there isn't one), both rendered natively in the comment, with a text fallback that also prints from `lgtmaybe diagram` locally. See [Generate a change overview](docs/how-to/generate-a-change-diagram.md).
+
+On re-runs and big PRs the review stays cheap: a `synchronize` push triggers an **incremental review** of just the new commits, an optional cheap **triage model** (`triage_model`) skips plainly-non-substantive files before the strong model runs, and optional **static-analysis fusion** (`static_analysis`) runs deterministic tools over the changed files — ruff/bandit/mypy/semgrep feed the review as untrusted hints, while gitleaks (secrets), zizmor (GitHub Actions workflow security), ast-grep (your own structural rules) and osv-scanner (known dependency vulnerabilities) post findings directly with no model call. semgrep ships with a small MIT rule pack, so it works without configuration.
 
 <p align="center">
-  <img src="docs/assets/review-sql-injection.png" alt="An inline lgtmaybe review comment on a GitHub pull request flagging a [CRITICAL] SQL injection vulnerability, with an explanation and a suggested parameterized-query fix" width="640">
+  <img src="docs/assets/marketplace/marketplace-screenshot-1.png" alt="An inline lgtmaybe review comment on a GitHub pull request flagging a [CRITICAL] SQL injection vulnerability, with an explanation and a suggested parameterized-query fix" width="640">
 </p>
 
 <p align="center"><em>On a GitHub PR — an inline comment on the changed line. The same findings on the CLI:</em></p>
@@ -86,7 +126,7 @@ From inside a git repo, on a branch with changes, review your diff against the
 remote primary branch and print the findings:
 
 ```bash
-pip install lgtmaybe
+pip install lgtmaybe        # or Homebrew — see docs/how-to/install-the-cli.md
 
 lgtmaybe review \
   --provider ollama \
@@ -95,26 +135,71 @@ lgtmaybe review \
 ```
 
 No GitHub token and no pull request needed — `lgtmaybe review` reads your local
-`git` diff and prints the findings. To post reviews on real pull requests, wire
-up the [GitHub Action](#use-as-a-github-action). See
+`git` diff and prints the findings. Its companion, `lgtmaybe diagram`, takes the
+same flags and prints the change overview — what your change is, its high impact
+areas, and a picture of the components it touches and the flow it alters.
+`review` then `diagram` is the pair to run before opening a pull request. See
+[Generate a change overview](docs/how-to/generate-a-change-diagram.md).
+
+`lgtmaybe --help` lists every command with usage examples; `lgtmaybe review --help`
+shows the full option reference. To post reviews on real pull requests, wire up
+the [GitHub Action](#use-as-a-github-action) — or, on another host,
+[GitLab CI](docs/how-to/review-on-gitlab.md) or
+[Gitea Actions](docs/how-to/review-on-gitea.md). See
 [Getting Started](docs/tutorial/getting-started.md) for the full walkthrough.
+
+> **Picking a model:** compare cloud and local models separately. In the current
+> cloud breadth results, Qwen 3.8 Max and GLM 5.2 scored 71.4% and 72.2%
+> balanced F1; Qwen reported 8 false positives and GLM reported 24. The only
+> current local breadth run is Qwen 3.6 35B at 57.1% balanced F1. See the
+> [cloud and local model guide](docs/how-to/choose-a-review-model.md), or inspect
+> the
+> [live benchmark results](https://github.com/MattJColes/lgtmaybe-benchmarks).
 
 ## Providers
 
-| Provider | Auth |
-|---|---|
-| `openai` | `OPENAI_API_KEY` |
-| `anthropic` | `ANTHROPIC_API_KEY` |
-| `openrouter` | `OPENROUTER_API_KEY` |
-| `bedrock` | Ambient AWS creds — GitHub OIDC, no static key |
-| `vertex` | Ambient GCP creds — Workload Identity Federation, no key |
-| `azure` | Ambient Azure AD creds — GitHub OIDC, no static key (or `AZURE_API_KEY`) + endpoint |
-| `ollama` | None — local only, zero cost |
+| Provider | Auth | Guide |
+|---|---|---|
+| `openai` | `OPENAI_API_KEY` | [OpenAI](docs/how-to/review-with-openai.md) |
+| `anthropic` | `ANTHROPIC_API_KEY` | [Claude](docs/how-to/review-with-anthropic.md) |
+| `openrouter` | `OPENROUTER_API_KEY` | [OpenRouter](docs/how-to/review-with-openrouter.md) |
+| `zai` | `ZAI_API_KEY` — GLM / Zhipu AI (`glm-4.6`, `glm-4.7`, `glm-4.5-air`, …; newer `glm-5.x` too). Optional `--api-base` for the China / coding-plan endpoint | [z.ai (GLM)](docs/how-to/review-with-zai.md) |
+| `bedrock` | Ambient AWS creds — GitHub OIDC, no static key | [Bedrock](docs/how-to/review-with-bedrock-oidc.md) |
+| `vertex` | Ambient GCP creds — Workload Identity Federation, no key | [Vertex](docs/how-to/review-with-vertex-wif.md) |
+| `azure` | Ambient Azure AD creds — GitHub OIDC, no static key (or `AZURE_API_KEY`) + endpoint | [Azure](docs/how-to/review-with-azure.md) |
+| `ollama` | None — local only, zero cost | [ollama](docs/how-to/run-locally-with-ollama.md) |
+| `openai-compatible` | Any OpenAI `/v1` endpoint via `--api-base` (DeepSeek, llama.cpp, LM Studio, vLLM). Key optional — `--api-key` / `OPENAI_COMPATIBLE_API_KEY`, or none for local servers | [Local & OpenAI-compatible](docs/how-to/use-a-custom-openai-compatible-endpoint.md) |
+
+## Where it posts
+
+The model provider and the code host are independent choices — any provider
+above works on any host below.
+
+| Host | How it runs | Token | Guide |
+|---|---|---|---|
+| GitHub | GitHub Action (`MattJColes/lgtmaybe@v2`) | `GITHUB_TOKEN` | [GitHub Action](docs/how-to/use-as-github-action.md) |
+| GitLab | GitLab CI job (`lgtmaybe gitlab-ci`) | `GITLAB_TOKEN` | [Review on GitLab](docs/how-to/review-on-gitlab.md) |
+| Gitea | Gitea Actions (same container) | `GITEA_TOKEN` | [Review on Gitea](docs/how-to/review-on-gitea.md) |
+| None | `lgtmaybe review` on your local diff | — | [Install the CLI](docs/how-to/install-the-cli.md) |
+
+The review is the same everywhere — same lenses, same reflection pass, same
+findings. What differs is what each host's API can do with the result:
+
+| | GitHub | GitLab | Gitea |
+|---|---|---|---|
+| Inline comments + summary | ✅ | ✅ | ✅ |
+| Slash commands | ✅ | ✅ | ✅ |
+| Auto-resolve a fixed finding | ✅ | ✅ | ✗ no thread API |
+| Incremental re-review | ✅ | not yet | ✗ no compare diff |
+| Keyless cloud auth (OIDC/WIF) | ✅ | ✗ use an API key | ✗ use an API key |
 
 ## Documentation
 
-Browse the rendered docs at <https://mattjcoles.github.io/lgtmaybe/>, or read the
-Markdown sources below.
+Browse the rendered docs at <https://lgtmaybe.coles.codes/>, or read the
+Markdown sources below. For LLM agents, a curated
+[`llms.txt`](https://lgtmaybe.coles.codes/llms.txt) index (and a
+whole-corpus [`llms-full.txt`](https://lgtmaybe.coles.codes/llms-full.txt))
+are published at the docs root.
 
 **Tutorial** — learn by doing
 
@@ -122,11 +207,19 @@ Markdown sources below.
 
 **How-to guides** — task recipes
 
-- [Run locally with ollama](docs/how-to/run-locally-with-ollama.md)
+- [Choose a review model](docs/how-to/choose-a-review-model.md)
+- [Review with OpenAI](docs/how-to/review-with-openai.md)
+- [Review with Claude (Anthropic)](docs/how-to/review-with-anthropic.md)
+- [Review with OpenRouter](docs/how-to/review-with-openrouter.md)
+- [Review with z.ai (GLM)](docs/how-to/review-with-zai.md)
 - [Review with Bedrock OIDC](docs/how-to/review-with-bedrock-oidc.md)
 - [Review with Vertex WIF](docs/how-to/review-with-vertex-wif.md)
 - [Review with Azure OpenAI](docs/how-to/review-with-azure.md)
+- [Run locally with ollama](docs/how-to/run-locally-with-ollama.md)
+- [Local models & other OpenAI providers](docs/how-to/use-a-custom-openai-compatible-endpoint.md)
 - [Use as a GitHub Action](docs/how-to/use-as-github-action.md)
+- [Review on GitLab](docs/how-to/review-on-gitlab.md)
+- [Review on Gitea](docs/how-to/review-on-gitea.md)
 - [Configure .lgtmaybe.yml](docs/how-to/configure-lgtmaybe-yml.md)
 - [Releasing (maintainers)](docs/how-to/releasing.md)
 
@@ -144,6 +237,13 @@ Markdown sources below.
 
 ## Use as a GitHub Action
 
+Use lgtmaybe from the
+[GitHub Marketplace](https://github.com/marketplace/actions/lgtmaybe). It is a
+GitHub Action, so its settings live in your workflow. In
+`.github/workflows/lgtmaybe.yml`, set `provider`, `model`, and the matching
+authentication input in the step's `with:` block. This complete example uses
+OpenAI:
+
 ```yaml
 name: lgtmaybe
 
@@ -158,24 +258,58 @@ permissions:
 
 jobs:
   review:
-    if: ${{ github.event_name == 'pull_request_target' || github.event.issue.pull_request }}
+    # A comment only starts a job when it carries one of lgtmaybe's slash
+    # commands — issue_comment fires on every comment on every PR.
+    if: >-
+      github.event_name == 'pull_request_target' ||
+      (github.event.issue.pull_request &&
+       (contains(github.event.comment.body, '/review') ||
+        contains(github.event.comment.body, '/improve') ||
+        contains(github.event.comment.body, '/ask') ||
+        contains(github.event.comment.body, '/describe') ||
+        contains(github.event.comment.body, '/diagram')))
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-      - uses: MattJColes/lgtmaybe@v0
+      - uses: MattJColes/lgtmaybe@v2
         with:
           provider: openai
           model: gpt-5.5
           api_key: ${{ secrets.OPENAI_API_KEY }}
 ```
 
-Copy-paste workflows for every cloud and API-key provider live in
+Using a different **model provider**? Copy-paste workflows for every cloud and
+API-key provider live in
 [`examples/workflows/`](examples/workflows/). Cloud providers (Bedrock, Vertex,
 Azure) are **keyless** — pass `aws_role_arn` / `gcp_wif_provider` /
 `azure_client_id` and the action does the OIDC/WIF exchange for you (needs
 `id-token: write`). See
 [Use as a GitHub Action](docs/how-to/use-as-github-action.md). ollama is local
 only — run it through the [CLI](docs/how-to/run-locally-with-ollama.md) instead.
+
+### Not on GitHub?
+
+lgtmaybe runs the same review on GitLab and Gitea. Only the wiring changes:
+
+- **GitLab** — a CI job running `lgtmaybe gitlab-ci`, gated on merge request
+  pipelines. See [Review on GitLab](docs/how-to/review-on-gitlab.md) and
+  [`examples/gitlab/`](examples/gitlab/).
+- **Gitea** — Gitea Actions runs the same container as GitHub, because it
+  reimplements the same runtime. See
+  [Review on Gitea](docs/how-to/review-on-gitea.md) and
+  [`examples/gitea/`](examples/gitea/).
+
+Keyless cloud auth is a GitHub Actions feature, so on GitLab and Gitea use an
+API-key provider — or `ollama` against a runner-local model for zero cost.
+
+By default, reviews post as `github-actions[bot]`. To post as
+`lgtmaybe[bot]`, install the public
+[lgtmaybe App](https://github.com/apps/lgtmaybe/installations/new), grant the
+workflow `id-token: write`, and add `github_identity: lgtmaybe` beside the
+provider settings. You never receive or manage the App's private key. lgtmaybe
+is still the Action running in your workflow; the App changes only the GitHub
+author identity. See
+[Post as lgtmaybe[bot]](docs/how-to/post-as-a-github-app.md).
 
 > **🔧 Choose who can trigger reviews.** You decide who reviews run for —
 > everyone, trusted contributors, or just admins. The example workflows default
@@ -187,8 +321,12 @@ only — run it through the [CLI](docs/how-to/run-locally-with-ollama.md) instea
 
 ## Distribution
 
-- **CLI** — `pip install lgtmaybe`
-- **GitHub Action** — `uses: MattJColes/lgtmaybe@v0`
+- **CLI (PyPI)** — `pip install lgtmaybe`
+- **CLI (Homebrew)** — `brew tap MattJColes/tap && brew trust MattJColes/tap && brew install lgtmaybe`
+  ([details](docs/how-to/install-the-cli.md) — the `brew trust` step is required for third-party taps)
+- **CLI (WinGet, Windows x64)** — `winget install --id MattJColes.lgtmaybe --exact`
+  ([details](docs/how-to/install-the-cli.md#install-on-windows-winget))
+- **GitHub Action** — `uses: MattJColes/lgtmaybe@v2`
 
 ## Contributing
 

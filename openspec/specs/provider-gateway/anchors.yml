@@ -1,0 +1,87 @@
+# ast-grep anchors for provider-gateway — see "Living specs" in CLAUDE.md.
+
+provider.factory:
+  rule:
+    kind: function_definition
+    has: { field: name, regex: '^build_provider$' }
+  files: [src/lgtmaybe/providers/**/*.py]
+
+provider.credentials:
+  rule:
+    kind: function_definition
+    has: { field: name, regex: '^resolve_credentials$' }
+  files: [src/lgtmaybe/providers/**/*.py]
+
+provider.reasoning-accounting:
+  rule:
+    kind: function_definition
+    has: { field: name, regex: '^_reasoning_tokens$' }
+  files: [src/lgtmaybe/providers/**/*.py]
+
+provider.complete:
+  rule:
+    kind: function_definition
+    has: { field: name, regex: '^complete$' }
+    inside:
+      kind: class_definition
+      has: { field: name, regex: '^LiteLLMProvider$' }
+      stopBy: end
+  files: [src/lgtmaybe/providers/**/*.py]
+
+provider.escalation:
+  rule:
+    kind: function_definition
+    has: { field: name, regex: '^escalate_model$' }
+  files: [src/lgtmaybe/providers/**/*.py]
+
+provider.backoff:
+  rule:
+    kind: function_definition
+    has: { field: name, regex: '^_retry_wait$' }
+  files: [src/lgtmaybe/providers/**/*.py]
+
+provider.param-drop:
+  rule:
+    kind: function_definition
+    has: { field: name, regex: '^_drop_rejected_param$' }
+  files: [src/lgtmaybe/providers/**/*.py]
+
+provider.schema-subset:
+  rule:
+    kind: function_definition
+    has: { field: name, regex: '^_bedrock_wire_response_format$' }
+  files: [src/lgtmaybe/providers/**/*.py]
+
+provider.param-support:
+  rule:
+    kind: function_definition
+    has: { field: name, regex: '^dropped_params$' }
+  files: [src/lgtmaybe/providers/**/*.py]
+
+provider.truncation:
+  rule:
+    kind: function_definition
+    has: { field: name, regex: '^_finish_reason$' }
+  files: [src/lgtmaybe/providers/**/*.py]
+
+provider.ceiling-detection:
+  rule:
+    kind: function_definition
+    has: { field: name, regex: '^_spent_the_ceiling$' }
+  files: [src/lgtmaybe/providers/**/*.py]
+
+provider.output-ceiling:
+  rule:
+    kind: function_definition
+    has: { field: name, regex: '^resolve_max_tokens$' }
+  files: [src/lgtmaybe/providers/**/*.py]
+
+provider.defaults:
+  - rule:
+      kind: function_definition
+      has: { field: name, regex: '^default_timeout_for$' }
+    files: [src/lgtmaybe/providers/**/*.py]
+  - rule:
+      kind: function_definition
+      has: { field: name, regex: '^litellm_model_string$' }
+    files: [src/lgtmaybe/providers/**/*.py]

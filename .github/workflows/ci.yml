@@ -6,15 +6,26 @@ on:
     branches: [main]
 
 jobs:
-  check:
-    runs-on: ubuntu-latest
+  test:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    env:
+      PYTHONWARNDEFAULTENCODING: "1"
     steps:
-      - uses: actions/checkout@v6
+      - name: Disable autocrlf
+        if: runner.os == 'Windows'
+        shell: bash
+        run: git config --global core.autocrlf input
+
+      - uses: actions/checkout@v7
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v7
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
         with:
-          python-version: "3.12"
+          python-version: "3.11"
           enable-cache: true
 
       - name: Sync (with dev deps)
@@ -34,3 +45,19 @@ jobs:
 
       - name: Tests
         run: uv run pytest -q
+
+  # Single, matrix-independent status for branch protection to require. The `test`
+  # job above reports one status per OS. This gate reports a stable `check` context
+  # that is green only when every `test` leg passed, so the required check never
+  # dangles as "Expected" when the matrix is edited.
+  check:
+    needs: [test]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: All test legs passed
+        run: |
+          if [ "${{ needs.test.result }}" != "success" ]; then
+            echo "test matrix result: ${{ needs.test.result }}"
+            exit 1
+          fi

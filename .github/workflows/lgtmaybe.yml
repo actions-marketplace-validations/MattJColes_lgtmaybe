@@ -1,0 +1,136 @@
+# Dogfood: lgtmaybe reviews its own PRs via OpenRouter (google/gemini-3.7-flash).
+# Runs the in-repo action (./) so changes to action.yml are exercised too.
+# Add an OPENROUTER_API_KEY repo secret.
+#
+# Reviews post as lgtmaybe[bot] (name + avatar) via the public GitHub App
+# identity. The workflow proves its repository identity with GitHub OIDC; no
+# App private key is stored in this repository.
+#
+# Reviews run automatically on PRs from trusted authors (owner / member /
+# collaborator), and on demand via slash commands (/review, /improve, /ask,
+# /describe, /diagram) — a maintainer can opt an external PR in by commenting
+# /review on it. gemini-3.7-flash is cheap enough to run per-PR; on a
+# `synchronize` push the review is incremental (only the new commits).
+name: lgtmaybe
+
+on:
+  pull_request_target:
+  issue_comment:
+    types: [created]
+
+# pull_request_target and issue_comment run against the BASE repo (secrets
+# available); the action only ever reads the diff via the API and never checks
+# out PR code.
+permissions:
+  contents: read
+  id-token: write
+  pull-requests: write
+
+jobs:
+  review:
+    # Only trusted authors (repo owner / org member / collaborator) trigger a
+    # review — automatically on their PRs, or via a slash command. This keeps a
+    # drive-by /ask or /review from a stranger from spending the provider
+    # budget, and skips comments that aren't on a pull request.
+    #
+    # The issue_comment arm also requires the body to carry one of our slash
+    # commands. issue_comment fires on EVERY comment on every PR, and without
+    # this a plain "lgtm, merging" claims a runner, pulls the container and boots
+    # Python only for the CLI to find no command and exit. Free of provider
+    # spend, but a whole job — and on a contended runner pool that queueing is
+    # what delays the reviews that do have work to do. The check is deliberately
+    # looser than `parse_command`, which additionally requires the command at the
+    # START of the body: `contains` is case-insensitive (so /REVIEW passes) and
+    # substring-based (so `/review full` passes). A guard tighter than the parser
+    # would silently disable a command that used to work.
+    if: >-
+      (github.event_name == 'pull_request_target' &&
+       contains(fromJson('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.pull_request.author_association)) ||
+      (github.event.issue.pull_request &&
+       contains(fromJson('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association) &&
+       (contains(github.event.comment.body, '/review') ||
+        contains(github.event.comment.body, '/improve') ||
+        contains(github.event.comment.body, '/ask') ||
+        contains(github.event.comment.body, '/describe') ||
+        contains(github.event.comment.body, '/diagram')))
+    # Two independent guards against cancelling our own review. The job scope
+    # keeps an ineligible run (a bot comment that fails the guard above) out of
+    # the group entirely. The event name in the key handles eligible slash-command
+    # runs: without it, a maintainer's /ask during a review shares this group and
+    # cancel-in-progress kills the review. A new push still cancels an in-flight review —
+    # two pushes are both
+    # pull_request_target, so they still collide.
+    concurrency:
+      group: lgtmaybe-${{ github.event.pull_request.number || github.event.issue.number }}-${{ github.event_name }}
+      cancel-in-progress: true
+    runs-on: ubuntu-latest
+    # A healthy full review runs in a handful of minutes; cap it so a wedged
+    # model call can't sit on the runner for GitHub's 6-hour default. Fail-fast on
+    # permanent provider errors (quota/auth) means this only ever trips on a real
+    # hang, not on an out-of-credit key. Kept above the review's own
+    # `max_review_seconds` ceiling (60 min) so the soft deadline fires first and
+    # posts partial findings calmly; if the runner does cut the job short, the
+    # CLI's SIGINT/SIGTERM wind-down posts what it has as the backstop.
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v7 # base repo only — for action.yml + .lgtmaybe.yml config
+      # Dogfood the code in this repo, not the last release. `uses: ./` only ever
+      # ran action.yml from the checkout — the container itself came from the
+      # floating `ghcr.io/mattjcoles/lgtmaybe:v1` tag, so every review ran the
+      # previously published image. That gap is how a fix could sit on main for
+      # days while the reviews it was meant to change kept running the old code
+      # (and how a review's timeout could contradict the action.yml right next to
+      # it). Building here closes it.
+      #
+      # This builds the BASE checkout — `pull_request_target` deliberately never
+      # checks out PR code — so it dogfoods main, not the PR head. That is the
+      # trade: current trusted code instead of a stale release, without ever
+      # executing a contributor's diff.
+      - name: Build the reviewer image from this checkout
+        run: docker build --tag lgtmaybe:dogfood .
+      - uses: ./
+        with:
+          image: lgtmaybe:dogfood
+          provider: openrouter
+          # google/gemini-3.7-flash (released 2026-08-13) is Google's Flash-class
+          # workhorse for coding and agentic work: cheap enough to run on every
+          # PR — which is what a per-PR dogfood needs; a pricier model exhausts
+          # the key's monthly limit, and OpenRouter then rejects each call with
+          # a 402 — with a 1M-token context no dogfood diff comes near. Routed
+          # through OpenRouter so the existing OPENROUTER_API_KEY keeps working:
+          # lgtmaybe has no native gemini provider, and vertex would mean
+          # standing up WIF for a dogfood.
+          # The id is OpenRouter's exact catalogue form. A guessed variant is
+          # what OpenRouter rejected on #319 — `{"message": "... is not a valid
+          # model ID","code": 400}` on every lens, so the review posted a
+          # failure instead of a review.
+          model: "google/gemini-3.7-flash"
+          # Gemini 3 models are tuned for their default temperature of 1.0:
+          # Google's Gemini 3 developer guide warns that lowering it risks
+          # looping and degraded reasoning, and its migration advice is to
+          # remove explicit low-temperature settings outright. lgtmaybe
+          # defaults to 0.0 for reproducible reviews, so this override is
+          # load-bearing — do not delete it for determinism's sake.
+          # `reasoning_effort: medium` (.lgtmaybe.yml) maps onto this model's
+          # thinking levels, where MEDIUM is also the model default (3.7 Flash
+          # rejects MINIMAL with a validation error).
+          temperature: "1.0"
+          # The default 100k input budget hands one call more diff than its
+          # output budget can answer for: the response is cut off mid-JSON and
+          # the lens is lost (three of four on #309). Smaller batches keep each
+          # answer inside the output ceiling.
+          #
+          # That ceiling is lgtmaybe's own `max_tokens` (16,384 in
+          # .lgtmaybe.yml), NOT the model's — an earlier revision of this
+          # comment said the model "tops out at 16k", which sent the reader to
+          # a knob they cannot move. The 16k is ours, against models that ran
+          # to 65,536 when a lens went away (gemini-3.7-flash's output window
+          # is also 65,536). Reasoning models spend that same budget on thought
+          # before writing a finding; `--profile` reports the split
+          # (`think_tok`). Two models in a row truncated lenses at that cap on
+          # bigger batches, so the smaller batches stay until re-measured on
+          # this one.
+          max_input_tokens: 40000
+          profile: true
+          api_key: ${{ secrets.OPENROUTER_API_KEY }}
+          github_identity: lgtmaybe

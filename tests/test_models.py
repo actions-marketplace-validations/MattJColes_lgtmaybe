@@ -6,9 +6,11 @@ import json
 from pathlib import Path
 
 import pytest
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from lgtmaybe.core.models import (
+    CustomLens,
+    DirectoryRule,
     PRContext,
     Provider,
     ProviderResult,
@@ -67,6 +69,51 @@ def test_severity_is_ordered() -> None:
     assert not (Severity.low >= Severity.high)
 
 
+def test_severity_is_totally_ordered() -> None:
+    """All four comparisons rank by severity, never alphabetically (a StrEnum
+    would otherwise fall back to string order, where "critical" < "high")."""
+    assert Severity.critical > Severity.high
+    assert Severity.info < Severity.low
+    assert Severity.medium <= Severity.medium
+    assert not (Severity.high < Severity.medium)
+    assert sorted([Severity.high, Severity.info, Severity.critical, Severity.medium]) == [
+        Severity.info,
+        Severity.medium,
+        Severity.high,
+        Severity.critical,
+    ]
+
+
+def test_review_finding_severity_is_case_insensitive() -> None:
+    """Models emit "High"/"MEDIUM"; the finding coerces case rather than failing."""
+    cases = [("High", Severity.high), ("MEDIUM", Severity.medium), (" low ", Severity.low)]
+    for raw, expected in cases:
+        finding = ReviewFinding(path="x.py", line=1, severity=raw, title="t", body="b")
+        assert finding.severity is expected
+
+
+def test_review_finding_failure_scenario_defaults_to_none() -> None:
+    finding = ReviewFinding(path="x.py", line=1, severity=Severity.high, title="bug", body="broken")
+
+    assert finding.failure_scenario is None
+
+
+def test_review_finding_failure_scenario_round_trips() -> None:
+    scenario = "When the lookup misses, the new dereference raises AttributeError."
+    finding = ReviewFinding(
+        path="x.py",
+        line=1,
+        severity=Severity.low,
+        title="unchecked lookup",
+        body="The lookup result can be None.",
+        failure_scenario=scenario,
+    )
+
+    restored = ReviewFinding.model_validate_json(finding.model_dump_json())
+
+    assert restored.failure_scenario == scenario
+
+
 def test_review_config_accepts_api_base() -> None:
     cfg = ReviewConfig(provider=Provider.ollama, model="llama3", api_base="http://localhost:11434")
     assert cfg.api_base == "http://localhost:11434"
@@ -90,9 +137,100 @@ def test_review_config_accepts_timeout() -> None:
     assert cfg.timeout == 600
 
 
+def test_review_config_recursive_defaults_true() -> None:
+    # RLM-style hunk walk for over-budget files is active by default.
+    cfg = ReviewConfig(provider=Provider.ollama, model="llama3")
+    assert cfg.recursive is True
+
+
+def test_review_config_accepts_recursive_false() -> None:
+    cfg = ReviewConfig(provider=Provider.ollama, model="llama3", recursive=False)
+    assert cfg.recursive is False
+
+
+def test_review_config_symbol_resolution_defaults_true() -> None:
+    # ast-grep cross-file symbol resolution during reflection is on by default.
+    cfg = ReviewConfig(provider=Provider.ollama, model="llama3")
+    assert cfg.symbol_resolution is True
+
+
+def test_review_config_accepts_symbol_resolution_false() -> None:
+    cfg = ReviewConfig(provider=Provider.ollama, model="llama3", symbol_resolution=False)
+    assert cfg.symbol_resolution is False
+
+
 def test_review_config_structured_output_defaults_true() -> None:
     cfg = ReviewConfig(provider=Provider.ollama, model="llama3")
     assert cfg.structured_output is True
+
+
+def test_review_config_min_severity_defaults_to_low() -> None:
+    # The floor sits at `low`, not `info`: pure-info narration ("X was removed")
+    # is the weak-model noise tier and is dropped by default.
+    cfg = ReviewConfig(provider=Provider.ollama, model="llama3")
+    assert cfg.min_severity is Severity.low
+
+
+def test_review_config_unanchored_min_severity_defaults_to_high() -> None:
+    # A failed anchor is a low-confidence signal: only a high/critical guess is
+    # worth surfacing without a precise line.
+    cfg = ReviewConfig(provider=Provider.ollama, model="llama3")
+    assert cfg.unanchored_min_severity is Severity.high
+
+
+def test_review_config_fail_on_defaults_none() -> None:
+    # The merge-gate is off by default (non-breaking): no check run is created.
+    cfg = ReviewConfig(provider=Provider.ollama, model="llama3")
+    assert cfg.fail_on is None
+
+
+def test_review_config_accepts_fail_on() -> None:
+    # A plain severity string coerces to the ordered Severity enum, so the gate
+    # can compare `finding.severity >= cfg.fail_on`.
+    cfg = ReviewConfig(provider=Provider.ollama, model="llama3", fail_on="high")
+    restored = ReviewConfig.model_validate_json(cfg.model_dump_json())
+    assert restored.fail_on is Severity.high
+
+
+def test_review_finding_broad_defaults_false() -> None:
+    # `broad` is engine-set (like `anchored`); a fresh finding is not broad.
+    f = ReviewFinding(path="x.py", line=1, severity=Severity.high, title="t", body="b")
+    assert f.broad is False
+    broad = f.model_copy(update={"broad": True})
+    assert ReviewFinding.model_validate_json(broad.model_dump_json()).broad is True
+
+
+def test_review_config_reflect_model_defaults_none() -> None:
+    cfg = ReviewConfig(provider=Provider.ollama, model="llama3")
+    assert cfg.reflect_model is None
+
+
+def test_review_config_accepts_reflect_model() -> None:
+    cfg = ReviewConfig(provider=Provider.ollama, model="llama3", reflect_model="big-judge")
+    restored = ReviewConfig.model_validate_json(cfg.model_dump_json())
+    assert restored.reflect_model == "big-judge"
+
+
+def test_review_config_language_defaults_none() -> None:
+    cfg = ReviewConfig(provider=Provider.ollama, model="llama3")
+    assert cfg.language is None
+
+
+def test_review_config_accepts_language() -> None:
+    cfg = ReviewConfig(provider=Provider.ollama, model="llama3", language="Japanese")
+    restored = ReviewConfig.model_validate_json(cfg.model_dump_json())
+    assert restored.language == "Japanese"
+
+
+def test_review_config_ignore_fingerprints_defaults_empty() -> None:
+    cfg = ReviewConfig(provider=Provider.ollama, model="llama3")
+    assert cfg.ignore_fingerprints == []
+
+
+def test_review_config_accepts_ignore_fingerprints() -> None:
+    cfg = ReviewConfig(provider=Provider.ollama, model="llama3", ignore_fingerprints=["abc123"])
+    restored = ReviewConfig.model_validate_json(cfg.model_dump_json())
+    assert restored.ignore_fingerprints == ["abc123"]
 
 
 def test_review_config_temperature_defaults_to_zero() -> None:
@@ -105,6 +243,117 @@ def test_review_config_accepts_temperature() -> None:
     assert cfg.temperature == 0.7
 
 
+def test_custom_lens_minimal_fields() -> None:
+    lens = CustomLens(id="simplify", instructions="Flag needless code.")
+    assert lens.id == "simplify"
+    assert lens.title == ""
+    assert lens.example_diff is None and lens.example_finding is None
+
+
+def test_reasoning_effort_rejects_an_unknown_level() -> None:
+    """Caught at config load, not by the provider mid-review.
+
+    A typo that reaches the route comes back as a 400 on every lens call, i.e.
+    a whole review lost to a one-character mistake — the same failure mode that
+    an invalid model id produced on this repo.
+    """
+    with pytest.raises(ValidationError):
+        ReviewConfig(provider=Provider.openrouter, model="vendor/m", reasoning_effort="lowish")
+
+
+def test_reasoning_effort_defaults_to_unset() -> None:
+    """Off unless asked for: a route that does not accept the param must not
+    start receiving it because lgtmaybe upgraded."""
+    cfg = ReviewConfig(provider=Provider.openrouter, model="vendor/m")
+    assert cfg.reasoning_effort is None
+
+
+def test_custom_lens_id_must_not_collide_with_builtin() -> None:
+    with pytest.raises(ValidationError):
+        CustomLens(id="security", instructions="x")
+
+
+def test_custom_lens_id_must_be_non_empty() -> None:
+    with pytest.raises(ValidationError):
+        CustomLens(id="   ", instructions="x")
+
+
+def test_custom_lens_example_diff_and_finding_must_be_paired() -> None:
+    finding = ReviewFinding(path="x.py", line=1, severity=Severity.low, title="t", body="b")
+    with pytest.raises(ValidationError):
+        CustomLens(id="simplify", instructions="x", example_diff="@@ -1 +1 @@\n+x\n")
+    with pytest.raises(ValidationError):
+        CustomLens(id="simplify", instructions="x", example_finding=finding)
+    # Both together is valid.
+    lens = CustomLens(
+        id="simplify", instructions="x", example_diff="@@ -1 +1 @@\n+x\n", example_finding=finding
+    )
+    assert lens.example_finding is not None
+
+
+def test_review_config_accepts_extra_lenses() -> None:
+    cfg = ReviewConfig(
+        provider=Provider.ollama,
+        model="llama3",
+        extra_lenses=[{"id": "simplify", "instructions": "Flag needless code."}],
+    )
+    assert cfg.extra_lenses[0].id == "simplify"
+    restored = ReviewConfig.model_validate_json(cfg.model_dump_json())
+    assert restored.extra_lenses[0].id == "simplify"
+
+
+def test_review_config_extra_lens_ids_must_be_unique() -> None:
+    with pytest.raises(ValidationError):
+        ReviewConfig(
+            provider=Provider.ollama,
+            model="llama3",
+            extra_lenses=[
+                {"id": "simplify", "instructions": "a"},
+                {"id": "simplify", "instructions": "b"},
+            ],
+        )
+
+
+def test_review_config_extra_lenses_defaults_empty() -> None:
+    cfg = ReviewConfig(provider=Provider.ollama, model="llama3")
+    assert cfg.extra_lenses == []
+
+
+def test_directory_rule_defaults_to_every_path() -> None:
+    """An empty `paths` is the 'everywhere' rule, mirroring FindingRuleMatch."""
+    rule = DirectoryRule(instructions="Be strict.")
+    assert rule.paths == []
+    assert rule.context_files == []
+
+
+def test_directory_rule_rejects_unknown_keys() -> None:
+    with pytest.raises(ValidationError):
+        DirectoryRule(instructions="x", path="payments/**")  # type: ignore[call-arg]
+
+
+def test_review_config_accepts_directory_rules() -> None:
+    cfg = ReviewConfig(
+        provider=Provider.ollama,
+        model="llama3",
+        directory_rules=[
+            {
+                "paths": ["payments/**"],
+                "instructions": "Money code is strict.",
+                "context_files": ["ARCHITECTURE.md"],
+            }
+        ],
+    )
+    assert cfg.directory_rules[0].paths == ["payments/**"]
+    assert cfg.directory_rules[0].context_files == ["ARCHITECTURE.md"]
+    restored = ReviewConfig.model_validate_json(cfg.model_dump_json())
+    assert restored.directory_rules[0].instructions == "Money code is strict."
+
+
+def test_review_config_directory_rules_default_empty() -> None:
+    cfg = ReviewConfig(provider=Provider.ollama, model="llama3")
+    assert cfg.directory_rules == []
+
+
 def test_review_config_reflect_defaults_to_true() -> None:
     cfg = ReviewConfig(provider=Provider.ollama, model="llama3")
     assert cfg.reflect is True
@@ -113,6 +362,21 @@ def test_review_config_reflect_defaults_to_true() -> None:
 def test_review_config_accepts_reflect_false() -> None:
     cfg = ReviewConfig(provider=Provider.ollama, model="llama3", reflect=False)
     assert cfg.reflect is False
+
+
+def test_review_config_rejects_removed_answer_replies_option() -> None:
+    with pytest.raises(ValidationError, match="answer_replies"):
+        ReviewConfig(provider=Provider.ollama, model="llama3", answer_replies=True)
+
+
+def test_review_config_resolve_fixed_defaults_to_true() -> None:
+    cfg = ReviewConfig(provider=Provider.ollama, model="llama3")
+    assert cfg.resolve_fixed is True
+
+
+def test_review_config_accepts_resolve_fixed_false() -> None:
+    cfg = ReviewConfig(provider=Provider.ollama, model="llama3", resolve_fixed=False)
+    assert cfg.resolve_fixed is False
 
 
 def test_pr_context_intent_fields_default_empty() -> None:
@@ -151,3 +415,72 @@ def test_extra_fields_forbidden() -> None:
                 "bogus": True,
             }
         )
+
+
+def test_review_finding_accepts_anchor() -> None:
+    f = ReviewFinding(
+        path="a.py",
+        line=42,
+        severity=Severity.high,
+        title="t",
+        body="b",
+        anchor="    return x",
+    )
+    assert f.anchor == "    return x"
+    restored = ReviewFinding.model_validate_json(f.model_dump_json())
+    assert restored.anchor == "    return x"
+
+
+def test_review_finding_anchor_defaults_to_none() -> None:
+    f = ReviewFinding(path="a.py", line=1, severity=Severity.low, title="t", body="b")
+    assert f.anchor is None
+
+
+def test_review_finding_anchored_defaults_true() -> None:
+    f = ReviewFinding(path="a.py", line=1, severity=Severity.low, title="t", body="b")
+    assert f.anchored is True
+    restored = ReviewFinding.model_validate_json(
+        f.model_copy(update={"anchored": False}).model_dump_json()
+    )
+    assert restored.anchored is False
+
+
+def test_review_finding_line_must_be_positive() -> None:
+    """Line numbers are 1-based; a 0/negative line is bogus model output and would
+    map to no real diff line (or worse, a wrong one) — reject it at the boundary."""
+    for bad in (0, -1):
+        with pytest.raises(ValidationError):
+            ReviewFinding(path="a.py", line=bad, severity=Severity.low, title="t", body="b")
+    # The first valid line is accepted.
+    f = ReviewFinding(path="a.py", line=1, severity=Severity.low, title="t", body="b")
+    assert f.line == 1
+
+
+def test_overview_sections_are_on_by_default() -> None:
+    """The change overview posts in full with zero config: description,
+    High Impact Areas, and the diagrams."""
+    cfg = ReviewConfig(provider=Provider.ollama, model="llama3")
+
+    assert cfg.auto_diagram is True
+    assert cfg.auto_describe is True
+    assert cfg.high_impact is True
+
+
+def test_high_impact_area_rejects_an_unknown_area() -> None:
+    """The taxonomy is a closed set — a model inventing an area is drifted
+    output, and _Strict rejects it rather than rendering an unknown heading."""
+    from lgtmaybe.core.models import HighImpactArea
+
+    with pytest.raises(ValidationError):
+        HighImpactArea(area="vibes", title="t")
+
+    area = HighImpactArea(area="backup_and_recovery", title="Retention halved")
+    assert area.severity == "high"
+    assert area.files == []
+
+
+def test_high_impact_result_defaults_to_no_areas() -> None:
+    """An empty answer must be expressible: "nothing qualifies" is a result."""
+    from lgtmaybe.core.models import HighImpactResult
+
+    assert HighImpactResult.model_validate({"areas": []}).areas == []

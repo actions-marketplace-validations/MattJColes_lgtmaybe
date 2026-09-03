@@ -1,0 +1,46 @@
+# Copy into your repo at .github/workflows/lgtmaybe.yml
+#
+# Advanced: use this only if your organisation already operates a GitHub App.
+# Store its ID in LGTMAYBE_APP_ID and PEM private key in
+# LGTMAYBE_APP_PRIVATE_KEY. The App should have contents: read,
+# pull requests: write, and issues: write on the selected repositories.
+name: lgtmaybe (self-managed app)
+
+on:
+  pull_request_target:
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+
+jobs:
+  review:
+    # The issue_comment arm also requires a slash command in the body. That event
+    # fires on EVERY comment on every PR, so without it an ordinary "lgtm,
+    # merging" starts a job that claims a runner, pulls the container and boots
+    # Python only to find no command and exit — no provider spend, but a runner
+    # held ahead of the reviews that do have work to do. `contains` is
+    # case-insensitive and substring-based, so the guard stays looser than the
+    # parser (which additionally wants the command at the START of the body):
+    # /REVIEW and `/review full` both pass.
+    if: >-
+      (github.event_name == 'pull_request_target' &&
+       contains(fromJson('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.pull_request.author_association)) ||
+      (github.event.issue.pull_request &&
+       contains(fromJson('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association) &&
+       (contains(github.event.comment.body, '/review') ||
+        contains(github.event.comment.body, '/improve') ||
+        contains(github.event.comment.body, '/ask') ||
+        contains(github.event.comment.body, '/describe') ||
+        contains(github.event.comment.body, '/diagram')))
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7 # base repository only
+      - uses: MattJColes/lgtmaybe@v2
+        with:
+          provider: openai
+          model: gpt-5.5
+          api_key: ${{ secrets.OPENAI_API_KEY }}
+          app_id: ${{ vars.LGTMAYBE_APP_ID }}
+          app_private_key: ${{ secrets.LGTMAYBE_APP_PRIVATE_KEY }}

@@ -1,7 +1,21 @@
+---
+description: Run lgtmaybe on Google Vertex AI with keyless Workload Identity Federation — no service-account JSON in secrets.
+---
+
 # Review with Google Vertex AI (keyless WIF)
 
 Use this guide to run lgtmaybe with **Google Vertex AI** using Workload Identity
 Federation — no service-account JSON or static keys in secrets.
+
+## Contents
+
+- [How it works](#how-it-works)
+- [One-time GCP setup](#one-time-gcp-setup)
+- [Workflow example](#workflow-example)
+- [Environment variables](#environment-variables)
+- [Available Vertex AI models](#available-vertex-ai-models)
+- [Running locally with ADC](#running-locally-with-adc)
+- [Troubleshooting](#troubleshooting)
 
 ## How it works
 
@@ -45,11 +59,23 @@ permissions:
 
 jobs:
   review:
-    if: ${{ github.event_name == 'pull_request_target' || github.event.issue.pull_request }}
+    # Only trusted authors (repo owner / org member / collaborator) can trigger
+    # a review, so fork PRs and drive-by comments cannot spend your provider
+    # budget. A maintainer can still opt in to an external PR with /review.
+    if: >-
+      (github.event_name == 'pull_request_target' &&
+       contains(fromJson('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.pull_request.author_association)) ||
+      (github.event.issue.pull_request &&
+       contains(fromJson('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association) &&
+       (contains(github.event.comment.body, '/review') ||
+        contains(github.event.comment.body, '/improve') ||
+        contains(github.event.comment.body, '/ask') ||
+        contains(github.event.comment.body, '/describe') ||
+        contains(github.event.comment.body, '/diagram')))
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
-      - uses: MattJColes/lgtmaybe@v0
+      - uses: actions/checkout@v7
+      - uses: MattJColes/lgtmaybe@v2
         with:
           provider: vertex
           model: gemini-3-pro
@@ -76,9 +102,9 @@ jobs:
 
 ## Running locally with ADC
 
-If your local shell has application default credentials (`gcloud auth
-application-default login`). Vertex token minting needs `google-auth`, so install
-the extra (the Action image already bundles it):
+Sign in with `gcloud auth application-default login` so your shell has
+Application Default Credentials. Vertex token minting needs `google-auth`, so
+install the extra (the Action image already bundles it):
 
 ```bash
 pip install 'lgtmaybe[vertex]'

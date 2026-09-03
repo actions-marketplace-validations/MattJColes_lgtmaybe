@@ -1,24 +1,26 @@
 """lgtmaybe.engine — the review pipeline (Track C)."""
 
-from .compress import batch_files, context_lines_for_budget, count_tokens
-from .engine import LLMReviewEngine, ReviewIncompleteError
-from .injection import wrap_diff
-from .parse import ParseError, parse_findings
-from .prompt import build_system_prompt
-from .redact import redact
-from .reflect import reflect_findings
+from .astgrep import SymbolResolver, build_symbol_resolver
+from .engine import (
+    INCOMPLETE_MARKER,
+    LLMReviewEngine,
+    ReviewIncompleteError,
+    clear_interrupt,
+    concurrency_cap,
+    interrupt_requested,
+    request_interrupt,
+)
+from .retrieve import FileFetcher
 
 __all__ = [
+    "INCOMPLETE_MARKER",
     "LLMReviewEngine",
     "ReviewIncompleteError",
-    # building blocks
-    "batch_files",
-    "context_lines_for_budget",
-    "count_tokens",
-    "wrap_diff",
-    "ParseError",
-    "parse_findings",
-    "build_system_prompt",
-    "redact",
-    "reflect_findings",
+    "clear_interrupt",
+    "concurrency_cap",
+    "interrupt_requested",
+    "request_interrupt",
+    "FileFetcher",
+    "SymbolResolver",
+    "build_symbol_resolver",
 ]

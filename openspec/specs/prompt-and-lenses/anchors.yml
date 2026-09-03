@@ -1,0 +1,77 @@
+# ast-grep anchors for prompt-and-lenses — see "Living specs" in CLAUDE.md.
+
+prompt.shared-preamble:
+  rule:
+    kind: function_definition
+    has: { field: name, regex: '^build_shared_preamble$' }
+  files: [src/lgtmaybe/engine/**/*.py]
+
+prompt.system:
+  rule:
+    kind: function_definition
+    has: { field: name, regex: '^build_lens_block$' }
+  files: [src/lgtmaybe/engine/**/*.py]
+
+prompt.response-style:
+  rule:
+    kind: function_definition
+    has: { field: name, regex: '^build_shared_preamble$' }
+  files: [src/lgtmaybe/engine/prompt.py]
+
+prompt.custom-lens:
+  rule:
+    kind: function_definition
+    has: { field: name, regex: '^build_custom_lens_block$' }
+  files: [src/lgtmaybe/engine/**/*.py]
+
+prompt.groups:
+  - rule:
+      kind: function_definition
+      has: { field: name, regex: '^build_group_block$' }
+    files: [src/lgtmaybe/engine/**/*.py]
+  - rule:
+      kind: function_definition
+      has: { field: name, regex: '^build_correctness_block$' }
+    files: [src/lgtmaybe/engine/**/*.py]
+  - rule:
+      kind: function_definition
+      has: { field: name, regex: '^_build_lenses$' }
+    files: [src/lgtmaybe/engine/**/*.py]
+
+prompt.intent-visibility:
+  - rule:
+      kind: function_definition
+      has: { field: name, regex: '^files_not_visible$' }
+    files: [src/lgtmaybe/engine/**/*.py]
+  - rule:
+      kind: function_definition
+      has: { field: name, regex: '^wrap_not_shown$' }
+    files: [src/lgtmaybe/engine/**/*.py]
+
+prompt.directory-rules:
+  rule:
+    kind: function_definition
+    has: { field: name, regex: '^build_directory_block$' }
+  files: [src/lgtmaybe/engine/**/*.py]
+
+prompt.failure-scenario:
+  rule:
+    kind: function_definition
+    has: { field: name, regex: '^build_shared_preamble$' }
+  files: [src/lgtmaybe/engine/**/*.py]
+
+prompt.dependency-health:
+  rule:
+    kind: function_definition
+    has: { field: name, regex: '^_category_section$' }
+  files: [src/lgtmaybe/engine/prompt.py]
+
+prompt.spec-lens:
+  - rule:
+      kind: function_definition
+      has: { field: name, regex: '^_resolve_spec$' }
+    files: [src/lgtmaybe/engine/**/*.py]
+  - rule:
+      kind: function_definition
+      has: { field: name, regex: '^build_spec_text$' }
+    files: [src/lgtmaybe/engine/**/*.py]

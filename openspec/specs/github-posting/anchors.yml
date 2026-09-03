@@ -1,0 +1,126 @@
+# ast-grep anchors for github-posting — see "Living specs" in CLAUDE.md.
+
+github.context:
+  rule:
+    kind: function_definition
+    has: { field: name, regex: '^get_pr_context$' }
+    inside:
+      kind: class_definition
+      has: { field: name, regex: '^RestGitHubGateway$' }
+      stopBy: end
+  files: [src/lgtmaybe/github/**/*.py]
+
+github.post-review:
+  rule:
+    kind: function_definition
+    has: { field: name, regex: '^post_review$' }
+    inside:
+      kind: class_definition
+      has: { field: name, regex: '^RestGitHubGateway$' }
+      stopBy: end
+  files: [src/lgtmaybe/github/**/*.py]
+
+github.fingerprint:
+  - rule:
+      kind: function_definition
+      has: { field: name, regex: '^finding_fingerprint$' }
+    files: [src/lgtmaybe/core/findings.py]
+  - rule:
+      kind: function_definition
+      has: { field: name, regex: '^finding_identity$' }
+    files: [src/lgtmaybe/core/findings.py]
+
+github.demote:
+  rule:
+    kind: function_definition
+    has: { field: name, regex: '^render_demoted$' }
+  files: [src/lgtmaybe/core/comment.py]
+
+github.finding-badge:
+  rule:
+    kind: function_definition
+    has: { field: name, regex: '^finding_badge$' }
+  files: [src/lgtmaybe/core/comment.py]
+
+github.incremental:
+  - rule:
+      kind: function_definition
+      has: { field: name, regex: '^compare_diff$' }
+    files: [src/lgtmaybe/github/**/*.py]
+  - rule:
+      kind: function_definition
+      has: { field: name, regex: '^mark_reviewed$' }
+    files: [src/lgtmaybe/github/**/*.py]
+  - rule:
+      kind: function_definition
+      has: { field: name, regex: '^last_completed_sha$' }
+    files: [src/lgtmaybe/github/**/*.py]
+
+github.resolve-fixed:
+  - rule:
+      kind: function_definition
+      has: { field: name, regex: '^_resolve_fixed_threads$' }
+    files: [src/lgtmaybe/github/**/*.py]
+  - rule:
+      kind: function_definition
+      has: { field: name, regex: '^validate_findings$' }
+    files: [src/lgtmaybe/engine/**/*.py]
+
+github.feedback:
+  rule:
+    kind: function_definition
+    has: { field: name, regex: '^list_downvoted_fingerprints$' }
+  files: [src/lgtmaybe/github/**/*.py]
+
+github.reply-in-thread:
+  rule:
+    kind: function_definition
+    has: { field: name, regex: '^reply_in_thread$' }
+    inside:
+      kind: class_definition
+      has: { field: name, regex: '^RestGitHubGateway$' }
+      stopBy: end
+  files: [src/lgtmaybe/github/**/*.py]
+
+github.reviewable:
+  rule:
+    kind: function_definition
+    has: { field: name, regex: '^is_reviewable$' }
+  files: [src/lgtmaybe/core/diff.py]
+
+github.labels:
+  - rule:
+      kind: function_definition
+      has: { field: name, regex: '^compute_labels$' }
+    files: [src/lgtmaybe/engine/**/*.py]
+  - rule:
+      kind: function_definition
+      has: { field: name, regex: '^apply_pr_labels$' }
+    files: [src/lgtmaybe/github/**/*.py]
+
+github.check-run:
+  rule:
+    kind: function_definition
+    has: { field: name, regex: '^create_check_run$' }
+    inside:
+      kind: class_definition
+      has: { field: name, regex: '^RestGitHubGateway$' }
+      stopBy: end
+  files: [src/lgtmaybe/github/**/*.py]
+
+github.app-attribution:
+  rule:
+    kind: function_definition
+    has: { field: name, regex: '^__init__$' }
+    inside:
+      kind: class_definition
+      has: { field: name, regex: '^RestGitHubGateway$' }
+      stopBy: end
+  files: [src/lgtmaybe/github/**/*.py]
+
+github.workflow-concurrency:
+  rule:
+    kind: block_mapping_pair
+    has: { field: key, regex: '^review$' }
+  language: yaml
+  files: [.github/workflows/lgtmaybe.yml]

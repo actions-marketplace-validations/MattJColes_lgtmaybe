@@ -18,6 +18,20 @@ def test_aws_key_redacted() -> None:
     assert REDACTED_PLACEHOLDER in result
 
 
+def test_aws_secret_access_key_redacted() -> None:
+    secret = "wJalrXUtnFEMI" + "/K7MDENG/bPxRfiCYEXAMPLEKEY"
+    result = redact(f'+AWS_SECRET_ACCESS_KEY = "{secret}"\n')
+    assert secret not in result
+    assert "AWS_SECRET_ACCESS_KEY" in result
+
+
+def test_aws_session_token_redacted() -> None:
+    token = "AQoDYXdzEJr" + "//////////wEaEXAMPLETEMPORARYTOKEN"
+    result = redact(f'+AWS_SESSION_TOKEN = "{token}"\n')
+    assert token not in result
+    assert "AWS_SESSION_TOKEN" in result
+
+
 def test_openai_key_redacted() -> None:
     diff = f"+OPENAI_API_KEY={_OPENAI_KEY}\n"
     result = redact(diff)
@@ -107,12 +121,42 @@ def test_pem_private_key_block_redacted() -> None:
     assert REDACTED_PLACEHOLDER in result
 
 
+def test_pem_block_redaction_preserves_line_count() -> None:
+    """A multi-line PEM block is replaced line-for-line, never collapsed: hunk
+    expansion indexes into the redacted head text by line number, so a
+    count-shrinking replacement would desync (and crash) it."""
+    before = f"header line\n{_PRIVATE_KEY}\ntrailing line\n"
+
+    after = redact(before)
+
+    assert after.count("\n") == before.count("\n")
+    assert "MIIEowIBAAKCAQEA" not in after
+    # One placeholder per original PEM line (the fixture block spans 4 lines).
+    assert after.count(REDACTED_PLACEHOLDER) == 4
+
+
+def test_pem_block_in_diff_redaction_preserves_line_count() -> None:
+    """A PEM block committed in a diff keeps one line per original `+` line, so
+    the hunk header's line counts still describe the redacted hunk."""
+    diff_block = "\n".join("+" + ln for ln in _PRIVATE_KEY.split("\n"))
+    before = f"@@ -1,0 +1,4 @@\n{diff_block}\n"
+
+    after = redact(before)
+
+    assert after.count("\n") == before.count("\n")
+    assert "MIIEowIBAAKCAQEA" not in after
+
+
 def test_quoted_password_literal_redacted() -> None:
     result = redact('+    password = "hunter2pass"\n')
     assert "hunter2pass" not in result
     assert REDACTED_PLACEHOLDER in result
     # The key name survives so the reviewer still sees what was assigned.
     assert "password" in result
+
+
+def test_password_value_overlapping_key_name_is_redacted() -> None:
+    assert redact('password: "sword"') == 'password: "[REDACTED]"'
 
 
 def test_password_prose_not_redacted() -> None:
@@ -138,6 +182,12 @@ def test_connection_string_password_redacted() -> None:
     # Host stays visible — only the password segment is scrubbed.
     assert "db.internal" in result
     assert "admin" in result
+
+
+def test_connection_password_matching_username_is_redacted() -> None:
+    result = redact('url = "postgres://alice:alice@db.example.com/app"')
+
+    assert result == 'url = "postgres://alice:[REDACTED]@db.example.com/app"'
 
 
 def test_value_pattern_preserves_key_name() -> None:
@@ -177,6 +227,40 @@ def test_jwt_redacted() -> None:
     assert REDACTED_PLACEHOLDER in result
 
 
+_JWE = (
+    "eyJ" + "hbGciOiJSU0EtT0FFUCIsImVuYyI6IkEyNTZHQ00ifQ"  # protected header (eyJ…)
+    ".OKOawDo13gRp2ojaHV7LFpZcgV7T6DVZKTyKOMTYUmKoTCVJRgckCL9kiMT03JGe"  # encrypted key
+    ".48V1_ALb6US04U3b"  # iv
+    ".5eym8TW_c8SuK0ltJ3rpYIzOeDQz7TALvtu6UG9oMo4vpzs9tX_EFShS8iB7j6ji"  # ciphertext
+    ".XFBoMYUZodetZdvTiFvSkQ"  # auth tag
+)
+
+
+def test_jwe_compact_token_redacted() -> None:
+    """A five-segment compact JWE (common with cloud OIDC/Entra) must be scrubbed.
+
+    The three-segment JWT pattern can't match a JWE — its second segment is an
+    encrypted key, not a base64url JSON header (`eyJ…`) — so without a dedicated
+    pattern the whole token would egress. Framed without an assignment keyword so
+    the generic value pattern can't take credit by scrubbing only the first
+    segment; the middle (ciphertext) segment must be gone for this to pass.
+    """
+    result = redact(f"+  cookie {_JWE}\n")
+    assert _JWE not in result
+    # A middle segment — not just the leading header — must be scrubbed.
+    assert "5eym8TW_c8SuK0lt" not in result
+    assert REDACTED_PLACEHOLDER in result
+
+
+def test_jwt_still_redacted_alongside_jwe_pattern() -> None:
+    """The new JWE pattern must not stop a plain three-segment JWT being scrubbed."""
+    result = redact(f"+  cookie {_JWT}\n")
+    assert _JWT not in result
+    # The payload segment carries claims/PII — none of it may survive.
+    assert "zdWIiOiIxMjM0" not in result
+    assert REDACTED_PLACEHOLDER in result
+
+
 def test_npm_token_redacted() -> None:
     result = redact(f"+//registry.npmjs.org/:_authToken={_NPM_TOKEN}\n")
     assert _NPM_TOKEN not in result
@@ -199,3 +283,41 @@ def test_azure_storage_account_key_redacted() -> None:
     assert REDACTED_PLACEHOLDER in result
     # Non-secret structure stays readable for the reviewer.
     assert "AccountName=devstore" in result
+
+
+def test_connection_string_pattern_is_not_quadratic() -> None:
+    """A long credential-free line must not blow up the connection-string regex.
+
+    The diff is attacker-controlled on a fork PR; with an unbounded scheme the
+    pattern was O(n^2) (~18s for 100k chars), stalling every review. Bounding the
+    scheme keeps it linear. A generous bound stays robust on a slow CI box.
+    """
+    import time
+
+    pathological = "x://" + "a" * 200_000  # scheme-like prefix, no credentials
+    start = time.perf_counter()
+    redact(pathological)
+    assert time.perf_counter() - start < 2.0
+
+
+def test_web_token_patterns_are_not_quadratic() -> None:
+    """Repeated token prefixes must not start a full backtracking scan at every offset."""
+    import time
+
+    pathological = "eyJ" * 20_000
+    start = time.perf_counter()
+    redact(pathological)
+    assert time.perf_counter() - start < 2.0
+
+
+def test_redact_memoizes_repeated_text() -> None:
+    """The same file head text is redacted at several pipeline stages (hunk
+    expansion, reflection grounding, every deferral hop) — repeats must hit a
+    cache instead of re-running the whole pattern battery."""
+    redact.cache_clear()
+    text = 'api_key = "abcdefghijklmnop1234"\n' + ("plain line\n" * 50)
+    first = redact(text)
+    assert redact(text) == first
+    info = redact.cache_info()
+    assert info.hits >= 1
+    assert info.misses == 1

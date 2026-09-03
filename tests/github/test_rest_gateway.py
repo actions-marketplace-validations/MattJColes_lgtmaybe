@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 
 import httpx
+import pytest
 import respx
 
 from lgtmaybe.github import RestGitHubGateway
@@ -65,6 +66,22 @@ def test_get_pr_context_returns_expected_shas_and_diff() -> None:
     assert ctx.repo == REPO
     assert ctx.pr_number == PR_NUMBER
     assert "src/app.py" in ctx.diff
+
+
+@respx.mock
+def test_get_pr_context_raises_clear_error_when_metadata_lacks_shas() -> None:
+    """A PR-detail response missing base/head must surface a clear error.
+
+    Regression: ``meta["base"]["sha"]`` raised a bare ``KeyError`` on a
+    malformed/partial GitHub response — an opaque traceback rather than the
+    clear, surfaced error the project requires. Should raise with a message that
+    names the missing base/head SHA, not a KeyError.
+    """
+    respx.route(method="GET", url=PR_URL).mock(return_value=httpx.Response(200, json={}))
+
+    gw = RestGitHubGateway(repo=REPO, pr_number=PR_NUMBER, token=TOKEN, client=httpx.Client())
+    with pytest.raises(RuntimeError, match="base/head"):
+        gw.get_pr_context()
 
 
 @respx.mock
@@ -213,3 +230,231 @@ def test_get_pr_context_degrades_when_commits_fetch_fails() -> None:
 
     assert ctx.commit_messages == []
     assert ctx.title == "Add rate limiting"  # the rest of the context is intact
+
+
+@respx.mock
+def test_base_checkout_root_clones_once_and_caches(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """The base tree is cloned at most once per gateway and the result is cached:
+    a second symbol deferral reuses it instead of re-cloning."""
+    respx.route(method="GET", url=PR_URL).mock(
+        return_value=httpx.Response(200, json={"base": {"ref": "main"}})
+    )
+
+    calls: list[tuple[str, str]] = []
+
+    def fake_clone(repo: str, ref: str, token: str, **_: object) -> Path:
+        calls.append((repo, ref))
+        return Path("/tmp/fake-base")
+
+    monkeypatch.setattr("lgtmaybe.github.rest_gateway.clone_base_tree", fake_clone)
+
+    gw = RestGitHubGateway(repo=REPO, pr_number=PR_NUMBER, token=TOKEN, client=httpx.Client())
+    first = gw.base_checkout_root()
+    second = gw.base_checkout_root()
+
+    assert first == Path("/tmp/fake-base")
+    assert second == first
+    assert calls == [(REPO, "main")]  # cloned exactly once, with the base ref
+
+
+@respx.mock
+def test_base_checkout_root_returns_none_when_ref_unavailable(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """If the base ref can't be fetched, no clone is attempted and None is returned."""
+    respx.route(method="GET", url=PR_URL).mock(return_value=httpx.Response(500))
+
+    cloned = False
+
+    def fake_clone(*_a: object, **_k: object) -> Path:
+        nonlocal cloned
+        cloned = True
+        return Path("/x")
+
+    monkeypatch.setattr("lgtmaybe.github.rest_gateway.clone_base_tree", fake_clone)
+
+    gw = RestGitHubGateway(repo=REPO, pr_number=PR_NUMBER, token=TOKEN, client=httpx.Client())
+    assert gw.base_checkout_root() is None
+    assert cloned is False  # never tried to clone without a ref
+
+
+@respx.mock
+def test_open_thread_count_overlaps_the_file_fetches() -> None:
+    """The count is disclosure metadata, so it must not sit in FRONT of the
+    content fetches — it shares nothing with them and rides the same pool. Run
+    serially it would add a round trip to every review's startup.
+
+    Each handler waits for the OTHER to be in flight rather than sleeping a fixed
+    span. A sleep only asserts overlap if the scheduler happens to start the
+    second request inside it, which a loaded CI runner does not guarantee — this
+    test failed exactly that way, on a diff that touched nothing near the
+    gateway. The handshake proves the same property with no clock in it: on
+    concurrent code both events are set immediately and neither side waits, and
+    on serial code the first handler waits out `_OVERLAP_TIMEOUT` and the
+    assertion below fails on the events, which is the real regression signal."""
+    import threading
+
+    respx.route(
+        method="GET", url=PR_URL, headers={"Accept": "application/vnd.github.v3.diff"}
+    ).mock(return_value=httpx.Response(200, content=_load("pr_diff.patch").encode()))
+    respx.route(method="GET", url=PR_URL).mock(
+        return_value=httpx.Response(200, json=_load_json("pr_detail.json"))
+    )
+    respx.route(method="GET", url__startswith=FILES_URL).mock(
+        return_value=httpx.Response(200, json=_load_json("pr_files_page1.json"))
+    )
+    respx.route(method="GET", url__startswith=COMMITS_URL).mock(
+        return_value=httpx.Response(200, json=_load_json("pr_commits.json"))
+    )
+
+    lock = threading.Lock()
+    events: list[str] = []
+    # Long enough that a busy runner is never mistaken for serial execution,
+    # short enough that a genuine regression fails rather than hangs.
+    _OVERLAP_TIMEOUT = 10.0
+    in_flight = {"threads": threading.Event(), "content": threading.Event()}
+
+    def slow(label: str):
+        def handler(request: httpx.Request) -> httpx.Response:
+            with lock:
+                events.append(f"start-{label}")
+            in_flight[label].set()
+            other = "content" if label == "threads" else "threads"
+            in_flight[other].wait(_OVERLAP_TIMEOUT)
+            with lock:
+                events.append(f"end-{label}")
+            if label == "threads":
+                return httpx.Response(
+                    200,
+                    json={
+                        "data": {
+                            "repository": {
+                                "pullRequest": {
+                                    "reviewThreads": {
+                                        "pageInfo": {"hasNextPage": False, "endCursor": None},
+                                        "nodes": [],
+                                    }
+                                }
+                            }
+                        }
+                    },
+                )
+            return httpx.Response(200, text="raw file content")
+
+        return handler
+
+    respx.route(method="POST", url="https://api.github.com/graphql").mock(
+        side_effect=slow("threads")
+    )
+    respx.route(method="GET", url__startswith=f"{BASE_URL}/repos/{REPO}/contents/").mock(
+        side_effect=slow("content")
+    )
+
+    gw = RestGitHubGateway(repo=REPO, pr_number=PR_NUMBER, token=TOKEN, client=httpx.Client())
+    gw.get_pr_context()
+
+    assert "start-threads" in events, "the thread count never ran"
+    first_end = next(i for i, e in enumerate(events) if e.startswith("end-"))
+    assert len([e for e in events[:first_end] if e.startswith("start-")]) >= 2, (
+        f"the thread count did not overlap the content fetches: {events}"
+    )
+
+
+@respx.mock
+def test_content_fetches_keep_full_concurrency_while_the_count_runs() -> None:
+    """The count rides the pool on a dedicated worker, not a borrowed one.
+
+    Sizing the pool at `_CONTENT_FETCH_WORKERS` let the count take a slot from
+    the content fetches, so a PR with at least that many reviewable files
+    fetched content one worker narrower for as long as the count ran — the
+    overlap became a slowdown on exactly the wide PRs the sizing exists for.
+
+    Asserted as a property (how many fetches are actually in flight together),
+    not by mocking the executor to read back its `max_workers`: the latter only
+    restates the line of code, and would still pass if the count were moved
+    somewhere that genuinely stole capacity.
+    """
+    import threading
+
+    from lgtmaybe.github.rest_gateway import _CONTENT_FETCH_WORKERS
+
+    files = [{"filename": f"src/mod{i}.py", "status": "modified"} for i in range(20)]
+    respx.route(
+        method="GET", url=PR_URL, headers={"Accept": "application/vnd.github.v3.diff"}
+    ).mock(return_value=httpx.Response(200, content=_load("pr_diff.patch").encode()))
+    respx.route(method="GET", url=PR_URL).mock(
+        return_value=httpx.Response(200, json=_load_json("pr_detail.json"))
+    )
+    respx.route(method="GET", url__startswith=FILES_URL).mock(
+        return_value=httpx.Response(200, json=files)
+    )
+    respx.route(method="GET", url__startswith=COMMITS_URL).mock(
+        return_value=httpx.Response(200, json=_load_json("pr_commits.json"))
+    )
+
+    lock = threading.Lock()
+    in_flight = 0
+    peak = 0
+
+    def content(request: httpx.Request) -> httpx.Response:
+        nonlocal in_flight, peak
+        with lock:
+            in_flight += 1
+            peak = max(peak, in_flight)
+        threading.Event().wait(0.02)
+        with lock:
+            in_flight -= 1
+        return httpx.Response(200, text="raw file content")
+
+    def slow_count(request: httpx.Request) -> httpx.Response:
+        # Outlives the content fetches, so it is in flight for all of them.
+        threading.Event().wait(0.2)
+        return httpx.Response(
+            200,
+            json={
+                "data": {
+                    "repository": {
+                        "pullRequest": {
+                            "reviewThreads": {
+                                "pageInfo": {"hasNextPage": False, "endCursor": None},
+                                "nodes": [],
+                            }
+                        }
+                    }
+                }
+            },
+        )
+
+    respx.route(method="GET", url__startswith=f"{BASE_URL}/repos/{REPO}/contents/").mock(
+        side_effect=content
+    )
+    respx.route(method="POST", url="https://api.github.com/graphql").mock(side_effect=slow_count)
+
+    gw = RestGitHubGateway(repo=REPO, pr_number=PR_NUMBER, token=TOKEN, client=httpx.Client())
+    gw.get_pr_context()
+
+    assert peak >= _CONTENT_FETCH_WORKERS, (
+        f"content fetches peaked at {peak} concurrent while the count ran; "
+        f"the count is taking a worker from them (expected {_CONTENT_FETCH_WORKERS})"
+    )
+
+
+@respx.mock
+def test_a_path_with_a_fragment_character_still_reaches_the_server() -> None:
+    """`#` in a path starts a client-side URL fragment, so an unescaped path
+    truncates the request to `.../contents/src/C` and drops the `?ref=` with it —
+    a silent 404 that reads exactly like a deleted file."""
+    captured: list[httpx.Request] = []
+
+    def _record(request: httpx.Request) -> httpx.Response:
+        captured.append(request)
+        return httpx.Response(200, text="class Foo {}")
+
+    respx.route(method="GET", url__startswith=f"{BASE_URL}/repos/{REPO}/contents/").mock(
+        side_effect=_record
+    )
+
+    gw = RestGitHubGateway(repo=REPO, pr_number=PR_NUMBER, token=TOKEN, client=httpx.Client())
+
+    assert gw._get_file_content("src/C#/Foo.cs", "deadbeef") == "class Foo {}"
+    # `.path` decodes; the wire form is what the `#` breaks.
+    assert captured[0].url.raw_path.endswith(b"/contents/src/C%23/Foo.cs?ref=deadbeef")
+    assert captured[0].url.params["ref"] == "deadbeef"

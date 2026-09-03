@@ -1,11 +1,17 @@
+---
+description: How lgtmaybe authenticates to each provider — keyless OIDC/WIF for cloud, ambient credentials, API keys only where unavoidable.
+---
+
 # Auth Model
 
-lgtmaybe supports six hosted providers plus local ollama. The design principle is **no static cloud
-credentials**: cloud providers use ambient, short-lived tokens; key-based SaaS
-providers (openai, anthropic, openrouter) require an API key that stays in
-secrets rather than being committed to config. Azure straddles both — it prefers
-ambient Azure AD (Entra) credentials but accepts a resource key — and always
-needs the resource endpoint (`AZURE_API_BASE`), since each Azure OpenAI
+lgtmaybe supports seven hosted providers plus local ollama, and an
+`openai-compatible` escape hatch for any server speaking the OpenAI `/v1` wire
+format (DeepSeek's API, llama.cpp, LM Studio, vLLM). The design principle is **no
+static cloud credentials**: cloud providers use ambient, short-lived tokens;
+key-based SaaS providers (openai, anthropic, openrouter, zai) require an API key that
+stays in secrets rather than being committed to config. Azure straddles both:
+it prefers ambient Azure AD (Entra) credentials but accepts a resource key. It
+always needs the resource endpoint (`AZURE_API_BASE`), since each Azure OpenAI
 deployment lives at its own URL.
 
 ## Why keyless for cloud
@@ -24,6 +30,22 @@ Entra app (Azure) issue tokens that:
   variables)
 - Are tied to the specific repository and branch via the OIDC claim set
 
+The exchange is the same shape on all three clouds — no secret ever enters the
+workflow:
+
+```mermaid
+sequenceDiagram
+    participant W as GitHub Actions run
+    participant O as GitHub OIDC issuer
+    participant STS as Cloud token service<br/>(AWS STS / GCP STS / Entra)
+    participant M as Model API<br/>(Bedrock / Vertex / Azure OpenAI)
+    W->>O: request identity token (id-token: write)
+    O-->>W: signed JWT with repo + branch claims
+    W->>STS: exchange JWT for cloud credentials
+    STS-->>W: short-lived, scoped credentials
+    W->>M: lgtmaybe review calls with ambient creds
+```
+
 For these reasons, lgtmaybe treats Bedrock and Vertex as **ambient-credential
 only** providers. There is no `--api-key` flag for them. Azure defaults to the
 same keyless path (GitHub OIDC → Entra, via `azure-identity`'s
@@ -39,9 +61,12 @@ chain:
 2. **Ambient cloud creds** — for Bedrock and Vertex, the chain stops here.
    If no ambient creds exist, lgtmaybe fails immediately with a clear
    "how to auth this provider" message. It does not fall back to a key.
-3. **API key** — for openai, anthropic, and openrouter, lgtmaybe reads the
-   key from the environment (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`,
-   `OPENROUTER_API_KEY`). The `--api-key` flag can override this at the CLI.
+3. **API key** — for openai, anthropic, openrouter, and zai (GLM / Zhipu AI),
+   lgtmaybe reads the key from the environment (`OPENAI_API_KEY`,
+   `ANTHROPIC_API_KEY`, `OPENROUTER_API_KEY`, `ZAI_API_KEY`). The `--api-key` flag
+   can override this at the CLI. `zai` also accepts an optional `--api-base` /
+   `ZAI_API_BASE` override for the China / coding-plan GLM endpoint; without it
+   litellm's native `zai/` route targets the international endpoint.
 4. **Azure** — always needs the resource endpoint (`AZURE_API_BASE` or
    `--api-base`). For the credential it prefers a key when one is present
    (`AZURE_API_KEY` / `--api-key`); otherwise it goes **keyless**, minting an
@@ -50,6 +75,12 @@ chain:
    available, lgtmaybe fails with a message naming both options.
 5. **None** — ollama requires no credentials. Only `--api-base` is needed
    to reach the local or remote server.
+6. **openai-compatible** — always needs the endpoint (`--api-base` or
+   `OPENAI_COMPATIBLE_API_BASE`), since the whole point is to choose your own.
+   The key is **optional**: hosted endpoints like DeepSeek take one
+   (`--api-key` / `OPENAI_COMPATIBLE_API_KEY`), while local servers (llama.cpp,
+   LM Studio, vLLM) need none — lgtmaybe sends a harmless placeholder key when
+   you supply none, because the underlying OpenAI client rejects an empty one.
 
 ## Provider auth summary
 
@@ -58,10 +89,35 @@ chain:
 | openai | API key | `OPENAI_API_KEY` env var or `--api-key` |
 | anthropic | API key | `ANTHROPIC_API_KEY` env var or `--api-key` |
 | openrouter | API key | `OPENROUTER_API_KEY` env var or `--api-key` |
+| zai | API key (+ optional endpoint) | `ZAI_API_KEY` env var or `--api-key` (GLM / Zhipu AI); optional `ZAI_API_BASE` / `--api-base` for the China / coding-plan endpoint |
 | bedrock | Ambient AWS creds | GitHub OIDC role or local `~/.aws`; IAM requires only `bedrock:InvokeModel*` |
 | vertex | Ambient GCP creds | GitHub WIF or local ADC (`gcloud auth application-default login`) |
 | azure | Ambient Azure AD creds (keyless) or API key, + endpoint | GitHub OIDC → Entra federated credential, or local `az login` / managed identity; or `AZURE_API_KEY`. Always with `AZURE_API_BASE` / `--api-base` |
 | ollama | None | `--api-base` pointing to the local or remote server |
+| openai-compatible | Optional key, + endpoint | `--api-base` / `OPENAI_COMPATIBLE_API_BASE` (e.g. `https://api.deepseek.com/v1` or `http://localhost:8000/v1`); key via `--api-key` / `OPENAI_COMPATIBLE_API_KEY`, or none for keyless local servers |
+
+## Code-host auth
+
+Everything above authenticates lgtmaybe to a **model provider**. Reaching the
+change itself — reading the diff, posting the review — is a separate credential,
+resolved from the host in the change-request URL:
+
+| Host | Variable | What it needs |
+|---|---|---|
+| GitHub | `GITHUB_TOKEN` | `contents: read` and `pull-requests: write`. The Action's default token is sufficient |
+| GitLab | `GITLAB_TOKEN` | A project access token with the `api` scope, Developer role or above |
+| Gitea | `GITEA_TOKEN` | A token with `read:repository` and `write:issue` |
+
+These are always tokens — there is no keyless path to a code host, and lgtmaybe
+does not attempt one. The token is read from the environment only; like a
+provider key it is never persisted to `.lgtmaybe.yml` or logged.
+
+!!! note "Keyless cloud auth is GitHub-only"
+
+    Bedrock, Vertex, and Azure go keyless by exchanging a **GitHub Actions**
+    OIDC token. GitLab CI and Gitea Actions have no equivalent exchange wired
+    up, so on those hosts use an API-key provider — or `ollama` against a
+    runner-local model, which needs no credential at all.
 
 ## Least-privilege IAM
 
@@ -79,7 +135,8 @@ contributor role is required.
 
 ## API keys in secrets, not config
 
-For openai, anthropic, and openrouter, the key must live in a GitHub Actions
-secret (or an equivalent secret store). It must never be committed to
+For openai, anthropic, and openrouter, the key must live in a secret store —
+a GitHub Actions secret, a GitLab masked CI/CD variable, or a Gitea Actions
+secret. It must never be committed to
 `.lgtmaybe.yml` or any other file in the repository. lgtmaybe does not log or
 display key values.

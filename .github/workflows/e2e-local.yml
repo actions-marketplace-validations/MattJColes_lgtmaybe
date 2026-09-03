@@ -1,0 +1,43 @@
+# Live local-provider e2e (tests/e2e/) — drives the real `lgtmaybe` CLI against a
+# local model server and asserts a review round-trips end-to-end. This is a
+# COMPATIBILITY smoke, not a gate, and it needs a live model, so it never runs on
+# a normal PR: dispatch it manually.
+#
+# Only the ollama leg runs on a hosted runner (it installs + serves locally, like
+# rlm-bench). The llama.cpp and vLLM legs of the suite auto-skip here — they want
+# docker images / a GPU that a default runner doesn't have — so run those two
+# locally with `scripts/e2e-up.sh`. The pytest test is the SAME one a developer
+# runs locally, so CI and local can't drift.
+name: e2e-local
+
+on:
+  workflow_dispatch:
+    inputs:
+      model:
+        description: "ollama model tag (a tiny qwen keeps it fast)"
+        required: false
+        default: "qwen3:0.6b"
+
+concurrency:
+  group: e2e-local-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      LGTMAYBE_E2E_OLLAMA_MODEL: ${{ github.event.inputs.model || 'qwen3:0.6b' }}
+      OLLAMA_MODELS: /home/runner/.ollama/models
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Bring up ollama
+        uses: ./.github/actions/ollama-bringup
+        with:
+          model: ${{ env.LGTMAYBE_E2E_OLLAMA_MODEL }}
+          models-path: ${{ env.OLLAMA_MODELS }}
+
+      # llama.cpp + vLLM legs auto-skip (no server here); the ollama leg runs.
+      - name: Run the e2e suite
+        run: uv run pytest -m e2e -v

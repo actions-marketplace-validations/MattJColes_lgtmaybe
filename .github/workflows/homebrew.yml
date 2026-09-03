@@ -1,0 +1,137 @@
+name: homebrew
+
+# Publishes lgtmaybe to the Homebrew tap (MattJColes/homebrew-tap, i.e. the tap
+# MattJColes/tap — so the formula is MattJColes/tap/lgtmaybe).
+#
+# The formula installs lgtmaybe + its dependency tree from PyPI **wheels** into an
+# isolated virtualenv (see scripts/update-homebrew-formula.sh). Building every
+# dependency from source as `resource` stanzas does not work for this tree —
+# tokenizers/hf-xet are Rust sdists that can't build in Homebrew's sandbox — so we
+# use the upstream wheels instead. The CI install smoke-test below gates the
+# commit, so we never publish a formula that doesn't install.
+#
+# Invocation: workflow_call (release-please calls it post-release, since a
+# `release: published` event isn't delivered for a GITHUB_TOKEN release),
+# workflow_dispatch (manual; `force` re-publishes the same version), a daily
+# schedule safety net, and release: published (for a human-cut release).
+#
+# One-time setup (see docs/how-to/releasing.md): create MattJColes/homebrew-tap
+# and add repo secret HOMEBREW_TAP_TOKEN (a PAT with contents:write on the tap).
+on:
+  workflow_call:
+    inputs:
+      version:
+        description: "Version (or tag) to publish to the tap, e.g. 0.7.2 or lgtmaybe-v0.7.2."
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to publish to the tap, e.g. 0.7.2 (no leading v)."
+        required: true
+        type: string
+      force:
+        description: "Regenerate even if the tap is already on this version."
+        required: false
+        default: false
+        type: boolean
+  schedule:
+    - cron: "17 7 * * *"
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+jobs:
+  formula:
+    runs-on: macos-latest
+    steps:
+      - name: Resolve version
+        id: ver
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          raw="${{ inputs.version }}"
+          if [ -z "$raw" ] && [ "${{ github.event_name }}" = "release" ]; then
+            raw="$RELEASE_TAG"
+          fi
+          if [ -z "$raw" ]; then
+            raw="$(curl -fsSL https://pypi.org/pypi/lgtmaybe/json \
+              | python3 -c 'import json,sys; print(json.load(sys.stdin)["info"]["version"])')"
+          fi
+          v="${raw#lgtmaybe-v}"
+          v="${v#v}"
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout lgtmaybe (for the generator script)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          path: lgtmaybe
+
+      - name: Checkout the tap
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          repository: MattJColes/homebrew-tap
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          path: tap
+
+      - name: Skip if the tap is already on this version
+        id: idem
+        run: |
+          f="tap/Formula/lgtmaybe.rb"
+          cur=""
+          if [ -f "$f" ]; then
+            cur="$(grep -oE '/lgtmaybe-[0-9][^/]*\.tar\.gz' "$f" | head -n1 | sed -E 's#/lgtmaybe-##; s#\.tar\.gz$##')"
+          fi
+          echo "Current formula version: '${cur}', target: '${{ steps.ver.outputs.version }}', force: '${{ inputs.force }}'"
+          if [ "${{ inputs.force }}" = "true" ]; then
+            echo "force=true; regenerating regardless of the current version."
+          elif [ "$cur" = "${{ steps.ver.outputs.version }}" ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "Tap already at ${cur}; nothing to do."
+          fi
+
+      - name: Regenerate the formula
+        id: gen
+        if: steps.idem.outputs.skip != 'true'
+        run: |
+          lgtmaybe/scripts/update-homebrew-formula.sh \
+            "${{ steps.ver.outputs.version }}" \
+            "tap/Formula/lgtmaybe.rb"
+
+      # Install the regenerated formula exactly as a user would (sandbox on, no
+      # build-bottle), so the commit is gated on a real, working install.
+      - name: Smoke-test that the formula installs and runs
+        if: steps.idem.outputs.skip != 'true'
+        run: |
+          # The directory name sets the tap slug: homebrew-tap -> local/tap.
+          tap_link="$(brew --repository)/Library/Taps/local/homebrew-tap"
+          mkdir -p "$(dirname "$tap_link")"
+          ln -sfn "$GITHUB_WORKSPACE/tap" "$tap_link"
+          # Satisfy the tap-trust requirement the way the install docs tell users to,
+          # rather than switching it off with HOMEBREW_NO_REQUIRE_TAP_TRUST — that
+          # would leave the documented step as the one thing this gate can't fail on,
+          # and it is slated for removal upstream. Non-interactive and idempotent
+          # ("Already trusted"); a single-slash name is trusted as a tap, so nothing
+          # has to load the untrusted formula first.
+          brew trust local/tap
+          # Exactly what a user runs. With `preserve_rpath` the install must now
+          # exit cleanly AND link `lgtmaybe` onto the prefix bin.
+          brew install --formula "local/tap/lgtmaybe"
+          "$(brew --prefix)/bin/lgtmaybe" --help | grep -qi usage
+          echo "smoke test passed: lgtmaybe installs cleanly and runs"
+
+      - name: Commit and push
+        if: ${{ success() && steps.idem.outputs.skip != 'true' }}
+        working-directory: tap
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Formula/lgtmaybe.rb
+          if git diff --cached --quiet; then
+            echo "Formula already up to date for ${{ steps.ver.outputs.version }}."
+            exit 0
+          fi
+          git commit -m "lgtmaybe ${{ steps.ver.outputs.version }}"
+          git push
