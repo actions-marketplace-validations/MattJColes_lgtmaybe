@@ -44,7 +44,7 @@ jobs:
       # `uv lock` is the only correct fix: uv.lock holds a `version` key per
       # dependency, so a text/TOML updater aimed at it could rewrite the wrong
       # one — and silently no-ops if its path stops matching.
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
         if: ${{ steps.rp.outputs.pr }}
         with:
           ref: ${{ fromJSON(steps.rp.outputs.pr).headBranchName }}
@@ -72,7 +72,7 @@ jobs:
     permissions:
       id-token: write # trusted publishing — no PyPI token in secrets
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
         with:
           ref: ${{ github.event_name == 'workflow_dispatch' && inputs.publish_tag || needs.release-please.outputs.tag_name }}
       - name: Install uv
