@@ -56,7 +56,7 @@ jobs:
             Write-Output "Release asset already exists; nothing to do."
           }
 
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
         if: steps.idem.outputs.skip != 'true'
         with:
           ref: ${{ steps.ver.outputs.tag }}
