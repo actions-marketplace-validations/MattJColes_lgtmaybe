@@ -21,7 +21,7 @@ jobs:
     runs-on: ubuntu-latest
     continue-on-error: true # belt and braces — the script itself always exits 0
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
         with:
           fetch-depth: 0 # the dangling check scans a merge-base worktree
 

@@ -30,7 +30,7 @@ jobs:
       LGTMAYBE_E2E_OLLAMA_MODEL: ${{ github.event.inputs.model || 'qwen3:0.6b' }}
       OLLAMA_MODELS: /home/runner/.ollama/models
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
 
       - name: Bring up ollama
         uses: ./.github/actions/ollama-bringup

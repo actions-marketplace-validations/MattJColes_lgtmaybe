@@ -73,7 +73,7 @@ jobs:
     # CLI's SIGINT/SIGTERM wind-down posts what it has as the backstop.
     timeout-minutes: 75
     steps:
-      - uses: actions/checkout@v7 # base repo only — for action.yml + .lgtmaybe.yml config
+      - uses: actions/checkout@v7.0.1 # base repo only — for action.yml + .lgtmaybe.yml config
       # Dogfood the code in this repo, not the last release. `uses: ./` only ever
       # ran action.yml from the checkout — the container itself came from the
       # floating `ghcr.io/mattjcoles/lgtmaybe:v1` tag, so every review ran the

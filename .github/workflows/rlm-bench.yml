@@ -42,7 +42,7 @@ jobs:
       BUDGET: ${{ github.event.inputs.budget || '300' }}
       OLLAMA_MODELS: /home/runner/.ollama/models
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
 
       - name: Bring up ollama
         uses: ./.github/actions/ollama-bringup
